@@ -52,6 +52,10 @@ async def accept_channel_message(
     session_id = None
     message_id = None
     if route == RouteTarget.HERMES_DIRECT and request.app.state.hermes_session is not None:
+        request.app.state.channel_budget_ledger.reserve(
+            provider=message.provider.value,
+            channel=message.channel,
+        )
         hermes_response = await request.app.state.hermes_session.ask(
             HermesSessionRequest(
                 provider=message.provider.value,

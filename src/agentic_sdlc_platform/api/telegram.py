@@ -39,6 +39,7 @@ async def telegram_webhook(
         channel_authorizer=request.app.state.channel_authorizer,
         repository=request.app.state.repository,
         task_orchestrator=request.app.state.task_orchestrator,
+        channel_budget_ledger=request.app.state.channel_budget_ledger,
     )
 
 
@@ -50,6 +51,7 @@ async def handle_telegram_update(
     channel_authorizer,
     repository: PersistenceRepository,
     task_orchestrator: TaskOrchestratorPort | None,
+    channel_budget_ledger,
 ) -> dict[str, object]:
     _verify_telegram_secret(configured_secret, provided_secret)
     message = _object(payload.get("message") or payload.get("edited_message"))
@@ -95,6 +97,7 @@ async def handle_telegram_update(
     session_id = None
     message_id = None
     if route == RouteTarget.HERMES_DIRECT and hermes_session is not None:
+        channel_budget_ledger.reserve(provider="telegram", channel=channel)
         hermes_response = await hermes_session.ask(
             HermesSessionRequest(
                 provider="telegram",

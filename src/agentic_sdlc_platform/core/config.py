@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     slack_signature_tolerance_seconds: int = 300
     telegram_secret_token: str | None = Field(default=None, repr=False)
     channel_mapping_path: str | None = None
+    channel_cost_cap_usd: float | None = None
+    channel_default_request_cost_usd: float = 0.01
     multica_http_enabled: bool = False
     multica_base_url: str | None = None
     multica_api_key: str | None = Field(default=None, repr=False)

@@ -107,6 +107,7 @@ async def slack_events(
     session_id = None
     message_id = None
     if route == RouteTarget.HERMES_DIRECT and request.app.state.hermes_session is not None:
+        request.app.state.channel_budget_ledger.reserve(provider="slack", channel=channel)
         hermes_response = await request.app.state.hermes_session.ask(
             HermesSessionRequest(
                 provider="slack",
@@ -166,7 +167,7 @@ def _verify_slack_signature(
 def _parse_payload(body: bytes) -> dict[str, object]:
     try:
         payload = json.loads(body.decode("utf-8"))
-    except json.JSONDecodeError as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Malformed Slack event",
