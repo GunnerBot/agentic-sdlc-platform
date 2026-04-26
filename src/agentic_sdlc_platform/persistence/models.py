@@ -76,6 +76,63 @@ class Task(Base):
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
 
     inbound_event: Mapped[InboundEvent] = relationship(back_populates="tasks")
+    dags: Mapped[list["TaskDag"]] = relationship(back_populates="task")
+
+
+class TaskDag(Base):
+    __tablename__ = "task_dags"
+    __table_args__ = (Index("ix_task_dags_task_id", "task_id"),)
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(nullable=False, default="planned")
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+
+    task: Mapped[Task] = relationship(back_populates="dags")
+    nodes: Mapped[list["TaskDagNode"]] = relationship(
+        back_populates="dag",
+        cascade="all, delete-orphan",
+        order_by="TaskDagNode.position",
+    )
+
+
+class TaskDagNode(Base):
+    __tablename__ = "task_dag_nodes"
+    __table_args__ = (
+        UniqueConstraint("dag_id", "node_key", name="uq_task_dag_nodes_dag_node_key"),
+        Index("ix_task_dag_nodes_dag_status", "dag_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    dag_id: Mapped[str] = mapped_column(
+        ForeignKey("task_dags.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    node_key: Mapped[str] = mapped_column(nullable=False)
+    title: Mapped[str] = mapped_column(nullable=False)
+    repo: Mapped[str | None] = mapped_column(nullable=True)
+    depends_on_json: Mapped[dict[str, object]] = mapped_column(
+        MutableDict.as_mutable(JsonDocument),
+        nullable=False,
+        default=dict,
+    )
+    status: Mapped[str] = mapped_column(nullable=False, default="ready")
+    position: Mapped[int] = mapped_column(nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+
+    dag: Mapped[TaskDag] = relationship(back_populates="nodes")
+
+    @property
+    def depends_on(self) -> tuple[str, ...]:
+        values = self.depends_on_json.get("nodes", [])
+        if not isinstance(values, list):
+            return ()
+        return tuple(value for value in values if isinstance(value, str))
 
 
 class AuditEvent(Base):

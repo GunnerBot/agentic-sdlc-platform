@@ -3,6 +3,7 @@ from hypothesis import HealthCheck, settings
 
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.ports.model_provider import ModelResponse
 
 
 class FakeEvent:
@@ -16,6 +17,21 @@ class FakeTask:
 class FakeWriteResult:
     event = FakeEvent()
     created = True
+
+
+class FakeDagNode:
+    node_key = "api"
+    title = "Add API contract"
+    repo = "keychain-os-erp"
+    depends_on = ()
+    status = "ready"
+
+
+class FakeDag:
+    id = "dag-1"
+    task_id = "task-1"
+    status = "planned"
+    nodes = [FakeDagNode()]
 
 
 class FakeRepository:
@@ -34,10 +50,26 @@ class FakeRepository:
     async def record_audit_event(self, **kwargs):
         return None
 
+    async def create_task_dag(self, **kwargs):
+        return FakeDag()
+
+
+class FakeModelProvider:
+    async def complete(self, request):
+        return ModelResponse(
+            provider="fake",
+            model="fake-model",
+            content='[{"id":"api","title":"Add API contract"}]',
+        )
+
 
 schema = schemathesis.openapi.from_asgi(
     "/openapi.json",
-    create_app(Settings(), repository=FakeRepository()),
+    create_app(
+        Settings(),
+        repository=FakeRepository(),
+        model_provider=FakeModelProvider(),
+    ),
 )
 
 

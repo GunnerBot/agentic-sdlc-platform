@@ -3,8 +3,17 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
-from agentic_sdlc_platform.persistence.models import AuditEvent, InboundEvent, Task, utc_now
+from agentic_sdlc_platform.glue.dag_decomposer import Subtask
+from agentic_sdlc_platform.persistence.models import (
+    AuditEvent,
+    InboundEvent,
+    Task,
+    TaskDag,
+    TaskDagNode,
+    utc_now,
+)
 
 
 @dataclass(frozen=True)
@@ -120,6 +129,62 @@ class PersistenceRepository:
             await session.refresh(task)
             return task
 
+    async def create_task_dag(self, task_id: str, subtasks: list[Subtask]) -> TaskDag:
+        async with self._session_factory() as session:
+            dag = TaskDag(task_id=task_id)
+            for index, subtask in enumerate(subtasks):
+                dag.nodes.append(
+                    TaskDagNode(
+                        node_key=subtask.id,
+                        title=subtask.title,
+                        repo=subtask.repo,
+                        depends_on_json={"nodes": list(subtask.depends_on)},
+                        status="blocked" if subtask.depends_on else "ready",
+                        position=index,
+                    )
+                )
+            session.add(dag)
+            await session.commit()
+            return await self._get_task_dag(session, dag.id)
+
+    async def list_ready_dag_nodes(self, task_id: str) -> list[TaskDagNode]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskDag)
+                .where(TaskDag.task_id == task_id)
+                .options(selectinload(TaskDag.nodes))
+                .order_by(TaskDag.created_at.desc())
+            )
+            dag = result.scalars().first()
+            if dag is None:
+                return []
+
+            completed = {
+                node.node_key for node in dag.nodes if node.status == "completed"
+            }
+            ready_nodes = []
+            for node in dag.nodes:
+                if node.status == "completed":
+                    continue
+                if all(dependency in completed for dependency in node.depends_on):
+                    ready_nodes.append(node)
+            return ready_nodes
+
+    async def mark_dag_node_completed(self, dag_id: str, node_key: str) -> TaskDagNode:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskDagNode).where(
+                    TaskDagNode.dag_id == dag_id,
+                    TaskDagNode.node_key == node_key,
+                )
+            )
+            node = result.scalar_one()
+            node.status = "completed"
+            node.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(node)
+            return node
+
     async def _find_inbound_event(
         self,
         session: AsyncSession,
@@ -137,5 +202,13 @@ class PersistenceRepository:
     async def _find_task(self, session: AsyncSession, source: str, external_id: str) -> Task:
         result = await session.execute(
             select(Task).where(Task.source == source, Task.external_id == external_id)
+        )
+        return result.scalar_one()
+
+    async def _get_task_dag(self, session: AsyncSession, dag_id: str) -> TaskDag:
+        result = await session.execute(
+            select(TaskDag)
+            .where(TaskDag.id == dag_id)
+            .options(selectinload(TaskDag.nodes))
         )
         return result.scalar_one()

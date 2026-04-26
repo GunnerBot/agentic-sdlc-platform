@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from agentic_sdlc_platform.api.channels import router as channel_router
 from agentic_sdlc_platform.api.health import router as health_router
 from agentic_sdlc_platform.api.slack import router as slack_router
+from agentic_sdlc_platform.api.tasks import router as task_router
 from agentic_sdlc_platform.api.telegram import router as telegram_router
 from agentic_sdlc_platform.api.webhooks import router as webhook_router
 from agentic_sdlc_platform.core.config import Settings, get_settings
@@ -17,6 +18,7 @@ from agentic_sdlc_platform.core.dependencies import (
 )
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort
+from agentic_sdlc_platform.ports.model_provider import ModelProviderPort
 from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
 
 
@@ -25,6 +27,7 @@ def create_app(
     repository: PersistenceRepository | None = None,
     task_orchestrator: TaskOrchestratorPort | None = None,
     hermes_session: HermesSessionPort | None = None,
+    model_provider: ModelProviderPort | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     app = FastAPI(
@@ -35,7 +38,7 @@ def create_app(
     )
 
     app.state.settings = resolved_settings
-    app.state.model_provider = build_model_provider(resolved_settings)
+    app.state.model_provider = model_provider or build_model_provider(resolved_settings)
     app.state.graph_store = build_graph_store(resolved_settings)
     app.state.repository = repository or build_repository(resolved_settings)
     app.state.task_orchestrator = task_orchestrator or build_task_orchestrator(resolved_settings)
@@ -46,5 +49,6 @@ def create_app(
     app.include_router(channel_router, prefix="/channels")
     app.include_router(slack_router, prefix="/channels/slack")
     app.include_router(telegram_router, prefix="/channels/telegram")
+    app.include_router(task_router, prefix="/tasks")
     app.include_router(webhook_router, prefix="/webhooks")
     return app
