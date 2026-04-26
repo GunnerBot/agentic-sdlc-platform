@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     graphify_timeout_seconds: float = 10.0
     graphify_max_retries: int = 2
 
+    hermes_http_enabled: bool = False
+    hermes_base_url: str | None = None
+    hermes_api_key: str | None = Field(default=None, repr=False)
+    hermes_timeout_seconds: float = 10.0
+    hermes_max_retries: int = 2
+
 
 @lru_cache
 def get_settings() -> Settings:

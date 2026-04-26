@@ -15,6 +15,7 @@ class ChannelMessageRequest(BaseModel):
     channel: str = Field(min_length=1)
     sender_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
+    repo: str | None = Field(default=None, min_length=1)
 
 
 class ChannelAcceptedResponse(BaseModel):
@@ -22,3 +23,5 @@ class ChannelAcceptedResponse(BaseModel):
     provider: ChannelProvider
     channel: str
     route: str
+    session_id: str | None = None
+    message_id: str | None = None
