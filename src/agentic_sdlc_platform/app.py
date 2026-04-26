@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from agentic_sdlc_platform.api.channels import router as channel_router
 from agentic_sdlc_platform.api.health import router as health_router
 from agentic_sdlc_platform.api.webhooks import router as webhook_router
 from agentic_sdlc_platform.core.config import Settings, get_settings
@@ -32,5 +33,6 @@ def create_app(
     app.state.repository = repository or build_repository(resolved_settings)
     app.state.task_orchestrator = task_orchestrator or build_task_orchestrator(resolved_settings)
     app.include_router(health_router)
+    app.include_router(channel_router, prefix="/channels")
     app.include_router(webhook_router, prefix="/webhooks")
     return app
