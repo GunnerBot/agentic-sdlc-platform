@@ -1,0 +1,39 @@
+from fastapi import APIRouter, Header, Request, status
+
+from agentic_sdlc_platform.glue.webhook_bridge import WebhookBridge
+from agentic_sdlc_platform.models.webhooks import WebhookAcceptedResponse
+
+router = APIRouter(tags=["webhooks"])
+
+
+@router.post(
+    "/linear",
+    response_model=WebhookAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def linear_webhook(
+    request: Request,
+    linear_signature: str | None = Header(default=None, alias="Linear-Signature"),
+) -> WebhookAcceptedResponse:
+    bridge = WebhookBridge(settings=request.app.state.settings)
+    payload = await request.body()
+    return await bridge.accept_linear(payload=payload, signature=linear_signature)
+
+
+@router.post(
+    "/github",
+    response_model=WebhookAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def github_webhook(
+    request: Request,
+    github_event: str | None = Header(default=None, alias="X-GitHub-Event"),
+    github_signature: str | None = Header(default=None, alias="X-Hub-Signature-256"),
+) -> WebhookAcceptedResponse:
+    bridge = WebhookBridge(settings=request.app.state.settings)
+    payload = await request.body()
+    return await bridge.accept_github(
+        payload=payload,
+        event=github_event,
+        signature=github_signature,
+    )
