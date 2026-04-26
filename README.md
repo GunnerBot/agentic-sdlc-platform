@@ -18,8 +18,7 @@ between Linear, GitHub, Multica, Hermes, model routing, and deploy automation.
 
 ```bash
 uv sync
-uv run pytest
-uv run ruff check .
+make quality
 uv run agentic-sdlc-platform
 ```
 
@@ -30,3 +29,8 @@ Copy `.env.example` to `.env` and fill only the integrations you are testing loc
 ## Delivery Plan
 
 See `docs/IMPLEMENTATION_BACKLOG.md`.
+
+## Development Discipline
+
+Implementation is test-first. Unit tests and Schemathesis contract tests are part of the default
+quality gate. See `docs/TDD_WORKFLOW.md`.

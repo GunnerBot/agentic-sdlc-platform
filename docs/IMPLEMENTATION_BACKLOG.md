@@ -11,6 +11,14 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 - Glue module placeholders for channel routing, DAG decomposition, auto-merge, cost routing, and deploy hooks
 - Unit tests, Dockerfile, Compose baseline
 
+## Phase 0.5: TDD And Contract Gates
+
+- TDD workflow documentation
+- Makefile quality gates
+- CI quality workflow
+- Schemathesis OpenAPI contract tests
+- Contract test coverage for existing health and webhook endpoints
+
 ## Phase 1: Webhook Bridge
 
 - Validate Linear webhook signatures

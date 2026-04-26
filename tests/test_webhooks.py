@@ -16,12 +16,12 @@ def test_linear_webhook_accepts_payload_when_secret_not_configured() -> None:
     assert response.json() == {"accepted": True, "source": "linear", "task_id": None}
 
 
-def test_github_webhook_requires_event_header() -> None:
+def test_github_webhook_schema_requires_event_header() -> None:
     client = TestClient(create_app(Settings()))
 
     response = client.post("/webhooks/github", content=b"{}")
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 def test_github_webhook_validates_signature_when_secret_configured() -> None:

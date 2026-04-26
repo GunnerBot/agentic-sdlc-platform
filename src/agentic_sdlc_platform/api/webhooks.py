@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Header, Request, status
 
 from agentic_sdlc_platform.glue.webhook_bridge import WebhookBridge
@@ -27,7 +29,7 @@ async def linear_webhook(
 )
 async def github_webhook(
     request: Request,
-    github_event: str | None = Header(default=None, alias="X-GitHub-Event"),
+    github_event: Annotated[str, Header(alias="X-GitHub-Event", min_length=1)],
     github_signature: str | None = Header(default=None, alias="X-Hub-Signature-256"),
 ) -> WebhookAcceptedResponse:
     bridge = WebhookBridge(settings=request.app.state.settings)
