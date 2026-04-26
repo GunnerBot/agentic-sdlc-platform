@@ -21,6 +21,7 @@ async def linear_webhook(
     bridge = WebhookBridge(
         settings=request.app.state.settings,
         repository=request.app.state.repository,
+        task_orchestrator=request.app.state.task_orchestrator,
     )
     payload = await request.body()
     return await bridge.accept_linear(
@@ -44,6 +45,7 @@ async def github_webhook(
     bridge = WebhookBridge(
         settings=request.app.state.settings,
         repository=request.app.state.repository,
+        task_orchestrator=request.app.state.task_orchestrator,
     )
     payload = await request.body()
     return await bridge.accept_github(

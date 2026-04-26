@@ -70,6 +70,8 @@ class Task(Base):
     title: Mapped[str] = mapped_column(nullable=False)
     repo: Mapped[str | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(nullable=False, default="queued")
+    orchestrator_task_id: Mapped[str | None] = mapped_column(nullable=True)
+    orchestrator_status: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
 

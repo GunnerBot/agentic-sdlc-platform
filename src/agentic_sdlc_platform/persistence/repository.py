@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from agentic_sdlc_platform.persistence.models import AuditEvent, InboundEvent, Task
+from agentic_sdlc_platform.persistence.models import AuditEvent, InboundEvent, Task, utc_now
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,23 @@ class PersistenceRepository:
             await session.commit()
             await session.refresh(audit_event)
             return audit_event
+
+    async def mark_task_orchestrated(
+        self,
+        task_id: str,
+        orchestrator_task_id: str,
+        orchestrator_status: str,
+    ) -> Task:
+        async with self._session_factory() as session:
+            task = await session.get(Task, task_id)
+            if task is None:
+                raise LookupError(f"task {task_id} not found")
+            task.orchestrator_task_id = orchestrator_task_id
+            task.orchestrator_status = orchestrator_status
+            task.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(task)
+            return task
 
     async def _find_inbound_event(
         self,

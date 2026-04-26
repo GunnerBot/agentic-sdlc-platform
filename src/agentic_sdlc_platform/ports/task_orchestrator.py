@@ -22,5 +22,7 @@ class TaskResponse:
 
 
 class TaskOrchestratorPort(Protocol):
+    provider: str
+
     async def create_task(self, request: TaskRequest) -> TaskResponse:
         raise NotImplementedError

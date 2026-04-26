@@ -12,6 +12,7 @@ from agentic_sdlc_platform.persistence.repository import (
     InboundEventWriteResult,
     PersistenceRepository,
 )
+from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort, TaskRequest
 
 
 @dataclass(frozen=True)
@@ -21,9 +22,15 @@ class RecordedDelivery:
 
 
 class WebhookBridge:
-    def __init__(self, settings: Settings, repository: PersistenceRepository) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        repository: PersistenceRepository,
+        task_orchestrator: TaskOrchestratorPort | None = None,
+    ) -> None:
         self._settings = settings
         self._repository = repository
+        self._task_orchestrator = task_orchestrator
         self._normalizer = TaskEventNormalizer()
 
     async def accept_linear(
@@ -149,6 +156,32 @@ class WebhookBridge:
                 "repo": task_event.repo,
             },
         )
+        if self._task_orchestrator is not None:
+            external_task = await self._task_orchestrator.create_task(
+                TaskRequest(
+                    source=task_event.source,
+                    external_id=task_event.external_id,
+                    title=task_event.title,
+                    repo=task_event.repo,
+                    inbound_event_id=result.event.id,
+                )
+            )
+            task = await self._repository.mark_task_orchestrated(
+                task_id=task.id,
+                orchestrator_task_id=external_task.external_task_id,
+                orchestrator_status=external_task.status,
+            )
+            await self._repository.record_audit_event(
+                action="task.orchestrated",
+                actor="system",
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "provider": self._task_orchestrator.provider,
+                    "external_task_id": external_task.external_task_id,
+                    "status": external_task.status,
+                },
+            )
         return task.id
 
     def _verify_optional_hmac(

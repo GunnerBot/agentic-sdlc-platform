@@ -55,6 +55,32 @@ async def test_create_task_from_event_persists_task_context() -> None:
     assert task.inbound_event_id == event_result.event.id
 
 
+async def test_mark_task_orchestrated_persists_external_task_state() -> None:
+    repository = await build_repository()
+    event_result = await repository.record_inbound_event(
+        source="linear",
+        delivery_id="delivery-1",
+        event_type="Issue",
+        payload={"id": "issue-1"},
+    )
+    task = await repository.create_task_from_event(
+        event_id=event_result.event.id,
+        source="linear",
+        external_id="OS-1284",
+        title="Build webhook bridge",
+        repo="keychain-os-erp",
+    )
+
+    updated = await repository.mark_task_orchestrated(
+        task_id=task.id,
+        orchestrator_task_id="multica-task-1",
+        orchestrator_status="queued",
+    )
+
+    assert updated.orchestrator_task_id == "multica-task-1"
+    assert updated.orchestrator_status == "queued"
+
+
 async def test_record_audit_event_persists_action_metadata() -> None:
     repository = await build_repository()
 
