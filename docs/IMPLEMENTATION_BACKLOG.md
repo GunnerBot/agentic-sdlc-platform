@@ -18,6 +18,15 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 - CI quality workflow
 - Schemathesis OpenAPI contract tests
 - Contract test coverage for existing health and webhook endpoints
+- Repo-native `AGENTS.md`, `CLAUDE.md`, `.agent/` protocols, skills, and agent role guidance
+
+## Phase 0.6: Claude And Graphify Seams
+
+- Provider-neutral model provider port
+- Provider-neutral graph store port
+- Claude model provider adapter seam
+- Graphify graph store adapter seam
+- Disabled and configured-path tests for both adapters
 
 ## Phase 1: Webhook Bridge
 

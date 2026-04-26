@@ -20,6 +20,18 @@ class Settings(BaseSettings):
     multica_base_url: str | None = None
     multica_api_key: str | None = Field(default=None, repr=False)
 
+    vendor_http_enabled: bool = False
+    claude_base_url: str = "https://api.anthropic.com"
+    claude_api_key: str | None = Field(default=None, repr=False)
+    claude_default_model: str | None = None
+    claude_timeout_seconds: float = 30.0
+    claude_max_retries: int = 2
+
+    graphify_base_url: str | None = None
+    graphify_api_key: str | None = Field(default=None, repr=False)
+    graphify_timeout_seconds: float = 10.0
+    graphify_max_retries: int = 2
+
 
 @lru_cache
 def get_settings() -> Settings:

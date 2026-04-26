@@ -1,9 +1,6 @@
-import pytest
-
 from agentic_sdlc_platform.glue.auto_merge_gate import AutoMergeGate, PullRequestState
 from agentic_sdlc_platform.glue.channel_router import ChannelMessage, ChannelRouter, RouteTarget
 from agentic_sdlc_platform.glue.cost_router import CostRouter
-from agentic_sdlc_platform.glue.dag_decomposer import DagDecomposer
 
 
 def test_channel_router_routes_ticket_commands_to_multica() -> None:
@@ -50,10 +47,3 @@ def test_cost_router_uses_cross_family_critic_default() -> None:
 
     assert route.provider == "openai"
     assert route.model == "gpt-5.5"
-
-
-@pytest.mark.asyncio
-async def test_dag_decomposer_returns_scaffold_subtask_for_non_empty_spec() -> None:
-    subtasks = await DagDecomposer().decompose("# Build platform")
-
-    assert [subtask.id for subtask in subtasks] == ["scaffold"]

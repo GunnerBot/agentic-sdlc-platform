@@ -34,3 +34,5 @@ See `docs/IMPLEMENTATION_BACKLOG.md`.
 
 Implementation is test-first. Unit tests and Schemathesis contract tests are part of the default
 quality gate. See `docs/TDD_WORKFLOW.md`.
+
+Agent/runtime instructions are in `AGENTS.md`, `CLAUDE.md`, and `.agent/`.

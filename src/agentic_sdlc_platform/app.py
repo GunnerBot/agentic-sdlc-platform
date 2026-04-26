@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from agentic_sdlc_platform.api.health import router as health_router
 from agentic_sdlc_platform.api.webhooks import router as webhook_router
 from agentic_sdlc_platform.core.config import Settings, get_settings
+from agentic_sdlc_platform.core.dependencies import build_graph_store, build_model_provider
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -15,6 +16,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     app.state.settings = resolved_settings
+    app.state.model_provider = build_model_provider(resolved_settings)
+    app.state.graph_store = build_graph_store(resolved_settings)
     app.include_router(health_router)
     app.include_router(webhook_router, prefix="/webhooks")
     return app
