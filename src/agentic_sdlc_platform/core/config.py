@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     linear_signing_secret: str | None = None
     github_webhook_secret: str | None = None
+    slack_signing_secret: str | None = Field(default=None, repr=False)
+    slack_signature_tolerance_seconds: int = 300
     multica_http_enabled: bool = False
     multica_base_url: str | None = None
     multica_api_key: str | None = Field(default=None, repr=False)

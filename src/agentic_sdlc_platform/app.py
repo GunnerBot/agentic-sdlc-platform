@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from agentic_sdlc_platform.api.channels import router as channel_router
 from agentic_sdlc_platform.api.health import router as health_router
+from agentic_sdlc_platform.api.slack import router as slack_router
 from agentic_sdlc_platform.api.webhooks import router as webhook_router
 from agentic_sdlc_platform.core.config import Settings, get_settings
 from agentic_sdlc_platform.core.dependencies import (
@@ -38,5 +39,6 @@ def create_app(
     app.state.hermes_session = hermes_session or build_hermes_session(resolved_settings)
     app.include_router(health_router)
     app.include_router(channel_router, prefix="/channels")
+    app.include_router(slack_router, prefix="/channels/slack")
     app.include_router(webhook_router, prefix="/webhooks")
     return app
