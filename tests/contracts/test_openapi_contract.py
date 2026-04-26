@@ -4,7 +4,28 @@ from hypothesis import settings
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
 
-schema = schemathesis.openapi.from_asgi("/openapi.json", create_app(Settings()))
+
+class FakeEvent:
+    id = "event-1"
+
+
+class FakeWriteResult:
+    event = FakeEvent()
+    created = True
+
+
+class FakeRepository:
+    async def record_inbound_event(self, **kwargs):
+        return FakeWriteResult()
+
+    async def record_audit_event(self, **kwargs):
+        return None
+
+
+schema = schemathesis.openapi.from_asgi(
+    "/openapi.json",
+    create_app(Settings(), repository=FakeRepository()),
+)
 
 
 @schema.parametrize()

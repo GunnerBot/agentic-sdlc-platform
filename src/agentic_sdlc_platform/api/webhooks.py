@@ -15,11 +15,19 @@ router = APIRouter(tags=["webhooks"])
 )
 async def linear_webhook(
     request: Request,
+    linear_delivery: Annotated[str, Header(alias="Linear-Delivery", min_length=1)],
     linear_signature: str | None = Header(default=None, alias="Linear-Signature"),
 ) -> WebhookAcceptedResponse:
-    bridge = WebhookBridge(settings=request.app.state.settings)
+    bridge = WebhookBridge(
+        settings=request.app.state.settings,
+        repository=request.app.state.repository,
+    )
     payload = await request.body()
-    return await bridge.accept_linear(payload=payload, signature=linear_signature)
+    return await bridge.accept_linear(
+        payload=payload,
+        delivery_id=linear_delivery,
+        signature=linear_signature,
+    )
 
 
 @router.post(
@@ -30,12 +38,17 @@ async def linear_webhook(
 async def github_webhook(
     request: Request,
     github_event: Annotated[str, Header(alias="X-GitHub-Event", min_length=1)],
+    github_delivery: Annotated[str, Header(alias="X-GitHub-Delivery", min_length=1)],
     github_signature: str | None = Header(default=None, alias="X-Hub-Signature-256"),
 ) -> WebhookAcceptedResponse:
-    bridge = WebhookBridge(settings=request.app.state.settings)
+    bridge = WebhookBridge(
+        settings=request.app.state.settings,
+        repository=request.app.state.repository,
+    )
     payload = await request.body()
     return await bridge.accept_github(
         payload=payload,
         event=github_event,
+        delivery_id=github_delivery,
         signature=github_signature,
     )
