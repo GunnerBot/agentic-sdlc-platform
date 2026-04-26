@@ -104,6 +104,22 @@ class PersistenceRepository:
             await session.refresh(task)
             return task
 
+    async def find_task_by_external_id(self, external_id: str) -> Task | None:
+        async with self._session_factory() as session:
+            result = await session.execute(select(Task).where(Task.external_id == external_id))
+            return result.scalars().first()
+
+    async def update_task_status(self, task_id: str, status: str) -> Task:
+        async with self._session_factory() as session:
+            task = await session.get(Task, task_id)
+            if task is None:
+                raise LookupError(f"task {task_id} not found")
+            task.status = status
+            task.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(task)
+            return task
+
     async def _find_inbound_event(
         self,
         session: AsyncSession,

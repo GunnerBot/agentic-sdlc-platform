@@ -8,6 +8,7 @@ from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskOrchestratorError,
     TaskRequest,
+    TaskUpdateRequest,
 )
 
 
@@ -91,3 +92,39 @@ async def test_multica_adapter_raises_structured_error_for_api_failure() -> None
                 repo="GunnerBot/agentic-sdlc-platform",
             )
         )
+
+
+async def test_multica_adapter_patches_task_status_update() -> None:
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(status_code=200, json={"id": "multica-task-1", "status": "pr_open"})
+
+    orchestrator = MulticaTaskOrchestrator(
+        Settings(
+            multica_http_enabled=True,
+            multica_base_url="https://multica.local",
+            multica_api_key="test-key",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = await orchestrator.update_task(
+        TaskUpdateRequest(
+            external_task_id="multica-task-1",
+            status="pr_open",
+            metadata={"pull_request": 17},
+        )
+    )
+
+    assert response.external_task_id == "multica-task-1"
+    assert response.status == "pr_open"
+    assert captured_request is not None
+    assert captured_request.method == "PATCH"
+    assert str(captured_request.url) == "https://multica.local/api/tasks/multica-task-1"
+    assert json.loads(captured_request.content) == {
+        "status": "pr_open",
+        "metadata": {"pull_request": 17},
+    }

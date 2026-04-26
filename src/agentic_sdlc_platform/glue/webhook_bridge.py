@@ -12,7 +12,11 @@ from agentic_sdlc_platform.persistence.repository import (
     InboundEventWriteResult,
     PersistenceRepository,
 )
-from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort, TaskRequest
+from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskOrchestratorPort,
+    TaskRequest,
+    TaskUpdateRequest,
+)
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,8 @@ class WebhookBridge:
             },
         )
         task_id = await self._normalize_task(result, source, event_type, parsed_payload)
+        if task_id is None:
+            task_id = await self._update_task_from_delivery(source, event_type, parsed_payload)
         return RecordedDelivery(inbound_event=result, task_id=task_id)
 
     async def _normalize_task(
@@ -182,6 +188,58 @@ class WebhookBridge:
                     "status": external_task.status,
                 },
             )
+        return task.id
+
+    async def _update_task_from_delivery(
+        self,
+        source: str,
+        event_type: str,
+        payload: dict[str, object],
+    ) -> str | None:
+        task_update = self._normalizer.normalize_update(
+            source=source,
+            event_type=event_type,
+            payload=payload,
+        )
+        if task_update is None:
+            return None
+
+        task = await self._repository.find_task_by_external_id(task_update.external_id)
+        if task is None:
+            return None
+
+        task = await self._repository.update_task_status(task_id=task.id, status=task_update.status)
+        if task.orchestrator_task_id and self._task_orchestrator is not None:
+            external_task = await self._task_orchestrator.update_task(
+                TaskUpdateRequest(
+                    external_task_id=task.orchestrator_task_id,
+                    status=task_update.status,
+                    metadata={
+                        "source": task_update.source,
+                        "event_type": event_type,
+                        "external_id": task_update.external_id,
+                        **(task_update.metadata or {}),
+                    },
+                )
+            )
+            task = await self._repository.mark_task_orchestrated(
+                task_id=task.id,
+                orchestrator_task_id=external_task.external_task_id,
+                orchestrator_status=external_task.status,
+            )
+
+        await self._repository.record_audit_event(
+            action="task.updated_from_github",
+            actor="system",
+            target_type="task",
+            target_id=task.id,
+            metadata={
+                "source": task_update.source,
+                "event_type": event_type,
+                "external_id": task_update.external_id,
+                "status": task_update.status,
+            },
+        )
         return task.id
 
     def _verify_optional_hmac(

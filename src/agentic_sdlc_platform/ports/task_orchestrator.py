@@ -21,8 +21,18 @@ class TaskResponse:
     status: str
 
 
+@dataclass(frozen=True)
+class TaskUpdateRequest:
+    external_task_id: str
+    status: str
+    metadata: dict[str, object] | None = None
+
+
 class TaskOrchestratorPort(Protocol):
     provider: str
 
     async def create_task(self, request: TaskRequest) -> TaskResponse:
+        raise NotImplementedError
+
+    async def update_task(self, request: TaskUpdateRequest) -> TaskResponse:
         raise NotImplementedError

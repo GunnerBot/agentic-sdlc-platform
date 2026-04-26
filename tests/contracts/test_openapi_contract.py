@@ -25,6 +25,12 @@ class FakeRepository:
     async def create_task_from_event(self, **kwargs):
         return FakeTask()
 
+    async def find_task_by_external_id(self, external_id):
+        return None
+
+    async def update_task_status(self, **kwargs):
+        return FakeTask()
+
     async def record_audit_event(self, **kwargs):
         return None
 

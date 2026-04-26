@@ -73,3 +73,52 @@ def test_ignores_github_issue_without_agent_label() -> None:
     )
 
     assert task_event is None
+
+
+def test_normalizes_github_pull_request_update_from_branch_ticket_key() -> None:
+    task_update = TaskEventNormalizer().normalize_update(
+        source="github",
+        event_type="pull_request",
+        payload={
+            "action": "opened",
+            "pull_request": {
+                "number": 17,
+                "title": "OS-1284 Build webhook bridge",
+                "html_url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/17",
+                "head": {"ref": "agent/OS-1284-build-webhook-bridge"},
+                "body": "Implements OS-1284.",
+                "merged": False,
+            },
+            "repository": {"full_name": "GunnerBot/agentic-sdlc-platform"},
+        },
+    )
+
+    assert task_update is not None
+    assert task_update.source == "github"
+    assert task_update.external_id == "OS-1284"
+    assert task_update.status == "pr_open"
+    assert task_update.repo == "GunnerBot/agentic-sdlc-platform"
+    assert task_update.metadata == {
+        "pull_request": 17,
+        "url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/17",
+    }
+
+
+def test_normalizes_github_pull_request_merged_status() -> None:
+    task_update = TaskEventNormalizer().normalize_update(
+        source="github",
+        event_type="pull_request",
+        payload={
+            "action": "closed",
+            "pull_request": {
+                "number": 17,
+                "title": "Build webhook bridge",
+                "head": {"ref": "agent/OS-1284-build-webhook-bridge"},
+                "merged": True,
+            },
+            "repository": {"full_name": "GunnerBot/agentic-sdlc-platform"},
+        },
+    )
+
+    assert task_update is not None
+    assert task_update.status == "merged"

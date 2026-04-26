@@ -5,6 +5,7 @@ from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskOrchestratorError,
     TaskRequest,
     TaskResponse,
+    TaskUpdateRequest,
 )
 
 
@@ -54,5 +55,40 @@ class MulticaTaskOrchestrator:
         status = response_payload.get("status")
         if not isinstance(external_task_id, str) or not isinstance(status, str):
             raise TaskOrchestratorError("multica create_task returned invalid response")
+
+        return TaskResponse(external_task_id=external_task_id, status=status)
+
+    async def update_task(self, request: TaskUpdateRequest) -> TaskResponse:
+        if not self._settings.multica_http_enabled:
+            raise TaskOrchestratorError("multica HTTP is disabled")
+        if not self._settings.multica_base_url:
+            raise TaskOrchestratorError("multica base URL is not configured")
+        if not self._settings.multica_api_key:
+            raise TaskOrchestratorError("multica API key is not configured")
+
+        payload = {
+            "status": request.status,
+            "metadata": request.metadata or {},
+        }
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.multica_base_url,
+                timeout=self._settings.multica_timeout_seconds,
+                transport=self._transport,
+            ) as client:
+                response = await client.patch(
+                    f"/api/tasks/{request.external_task_id}",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self._settings.multica_api_key}"},
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise TaskOrchestratorError("multica update_task failed") from exc
+
+        response_payload = response.json()
+        external_task_id = response_payload.get("id")
+        status = response_payload.get("status")
+        if not isinstance(external_task_id, str) or not isinstance(status, str):
+            raise TaskOrchestratorError("multica update_task returned invalid response")
 
         return TaskResponse(external_task_id=external_task_id, status=status)

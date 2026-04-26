@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 
@@ -11,6 +12,15 @@ class NormalizedTaskEvent:
     body: str | None = None
 
 
+@dataclass(frozen=True)
+class NormalizedTaskUpdate:
+    source: str
+    external_id: str
+    status: str
+    repo: str | None = None
+    metadata: dict[str, object] | None = None
+
+
 class TaskEventNormalizer:
     def normalize(
         self,
@@ -22,6 +32,16 @@ class TaskEventNormalizer:
             return self._normalize_linear(event_type=event_type, payload=payload)
         if source == "github":
             return self._normalize_github(event_type=event_type, payload=payload)
+        return None
+
+    def normalize_update(
+        self,
+        source: str,
+        event_type: str,
+        payload: dict[str, object],
+    ) -> NormalizedTaskUpdate | None:
+        if source == "github" and event_type == "pull_request":
+            return self._normalize_github_pull_request_update(payload)
         return None
 
     def _normalize_linear(
@@ -79,6 +99,37 @@ class TaskEventNormalizer:
             body=_str_value(issue.get("body")),
         )
 
+    def _normalize_github_pull_request_update(
+        self,
+        payload: dict[str, object],
+    ) -> NormalizedTaskUpdate | None:
+        pull_request = _dict_value(payload.get("pull_request"))
+        action = _str_value(payload.get("action"))
+        external_id = _extract_ticket_key(
+            _str_value(_dict_value(pull_request.get("head")).get("ref")),
+            _str_value(pull_request.get("title")),
+            _str_value(pull_request.get("body")),
+        )
+        status = _github_pull_request_status(action, pull_request.get("merged"))
+        if not external_id or not status:
+            return None
+
+        metadata: dict[str, object] = {}
+        number = pull_request.get("number")
+        if isinstance(number, int):
+            metadata["pull_request"] = number
+        url = _str_value(pull_request.get("html_url"))
+        if url:
+            metadata["url"] = url
+
+        return NormalizedTaskUpdate(
+            source="github",
+            external_id=external_id,
+            status=status,
+            repo=_str_value(_dict_value(payload.get("repository")).get("full_name")),
+            metadata=metadata,
+        )
+
 
 def _dict_value(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
@@ -117,4 +168,24 @@ def _repo_from_labels(label_names: list[str]) -> str | None:
     for label in label_names:
         if label and label.startswith("repo:"):
             return label.removeprefix("repo:")
+    return None
+
+
+def _extract_ticket_key(*candidates: str | None) -> str | None:
+    for candidate in candidates:
+        if not candidate:
+            continue
+        match = re.search(r"\b[A-Z][A-Z0-9]+-\d+\b", candidate)
+        if match:
+            return match.group(0)
+    return None
+
+
+def _github_pull_request_status(action: str | None, merged: object) -> str | None:
+    if action in {"opened", "reopened", "synchronize"}:
+        return "pr_open"
+    if action == "ready_for_review":
+        return "in_review"
+    if action == "closed":
+        return "merged" if merged is True else "pr_closed"
     return None

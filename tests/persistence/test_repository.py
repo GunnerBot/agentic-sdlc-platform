@@ -81,6 +81,30 @@ async def test_mark_task_orchestrated_persists_external_task_state() -> None:
     assert updated.orchestrator_status == "queued"
 
 
+async def test_find_and_update_task_status_by_external_id() -> None:
+    repository = await build_repository()
+    event_result = await repository.record_inbound_event(
+        source="linear",
+        delivery_id="delivery-1",
+        event_type="Issue",
+        payload={"id": "issue-1"},
+    )
+    created = await repository.create_task_from_event(
+        event_id=event_result.event.id,
+        source="linear",
+        external_id="OS-1284",
+        title="Build webhook bridge",
+        repo="keychain-os-erp",
+    )
+
+    found = await repository.find_task_by_external_id("OS-1284")
+    updated = await repository.update_task_status(task_id=created.id, status="pr_open")
+
+    assert found is not None
+    assert found.id == created.id
+    assert updated.status == "pr_open"
+
+
 async def test_record_audit_event_persists_action_metadata() -> None:
     repository = await build_repository()
 
