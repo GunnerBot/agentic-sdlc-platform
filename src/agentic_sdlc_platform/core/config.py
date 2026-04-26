@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     multica_api_key: str | None = Field(default=None, repr=False)
     multica_timeout_seconds: float = 10.0
     multica_max_retries: int = 2
+    multica_retry_backoff_seconds: float = 0.25
     database_url: str = "postgresql+asyncpg://agentic_sdlc:agentic_sdlc@localhost:5432/agentic_sdlc"
 
     vendor_http_enabled: bool = False

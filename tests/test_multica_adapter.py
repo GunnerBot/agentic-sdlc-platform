@@ -94,6 +94,76 @@ async def test_multica_adapter_raises_structured_error_for_api_failure() -> None
         )
 
 
+async def test_multica_adapter_retries_transient_create_task_failure() -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            return httpx.Response(status_code=503, json={"error": "try again"})
+        return httpx.Response(status_code=201, json={"id": "multica-task-1", "status": "queued"})
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    orchestrator = MulticaTaskOrchestrator(
+        Settings(
+            multica_http_enabled=True,
+            multica_base_url="https://multica.local",
+            multica_api_key="test-key",
+            multica_max_retries=2,
+            multica_retry_backoff_seconds=0.25,
+        ),
+        transport=httpx.MockTransport(handler),
+        sleep=sleep,
+    )
+
+    response = await orchestrator.create_task(
+        TaskRequest(
+            source="linear",
+            external_id="OS-1284",
+            title="Build webhook bridge",
+            repo="keychain-os-erp",
+        )
+    )
+
+    assert response.external_task_id == "multica-task-1"
+    assert attempts == 3
+    assert sleeps == [0.25, 0.5]
+
+
+async def test_multica_adapter_does_not_retry_permanent_create_task_failure() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(status_code=400, json={"error": "bad request"})
+
+    orchestrator = MulticaTaskOrchestrator(
+        Settings(
+            multica_http_enabled=True,
+            multica_base_url="https://multica.local",
+            multica_api_key="test-key",
+            multica_max_retries=2,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(TaskOrchestratorError, match="multica create_task failed"):
+        await orchestrator.create_task(
+            TaskRequest(
+                source="linear",
+                external_id="OS-1284",
+                title="Build webhook bridge",
+            )
+        )
+
+    assert attempts == 1
+
+
 async def test_multica_adapter_patches_task_status_update() -> None:
     captured_request: httpx.Request | None = None
 
