@@ -1,10 +1,12 @@
 import hmac
 import json
+from dataclasses import dataclass
 from hashlib import sha256
 
 from fastapi import HTTPException, status
 
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.task_event_normalizer import TaskEventNormalizer
 from agentic_sdlc_platform.models.webhooks import WebhookAcceptedResponse
 from agentic_sdlc_platform.persistence.repository import (
     InboundEventWriteResult,
@@ -12,10 +14,17 @@ from agentic_sdlc_platform.persistence.repository import (
 )
 
 
+@dataclass(frozen=True)
+class RecordedDelivery:
+    inbound_event: InboundEventWriteResult
+    task_id: str | None = None
+
+
 class WebhookBridge:
     def __init__(self, settings: Settings, repository: PersistenceRepository) -> None:
         self._settings = settings
         self._repository = repository
+        self._normalizer = TaskEventNormalizer()
 
     async def accept_linear(
         self,
@@ -38,8 +47,9 @@ class WebhookBridge:
         return WebhookAcceptedResponse(
             accepted=True,
             source="linear",
+            task_id=result.task_id,
             delivery_id=delivery_id,
-            duplicate=not result.created,
+            duplicate=not result.inbound_event.created,
         )
 
     async def accept_github(
@@ -70,8 +80,9 @@ class WebhookBridge:
         return WebhookAcceptedResponse(
             accepted=True,
             source=f"github:{event}",
+            task_id=result.task_id,
             delivery_id=delivery_id,
-            duplicate=not result.created,
+            duplicate=not result.inbound_event.created,
         )
 
     async def _record_delivery(
@@ -80,12 +91,13 @@ class WebhookBridge:
         delivery_id: str,
         event_type: str,
         payload: bytes,
-    ) -> InboundEventWriteResult:
+    ) -> RecordedDelivery:
+        parsed_payload = self._parse_payload(payload)
         result = await self._repository.record_inbound_event(
             source=source,
             delivery_id=delivery_id,
             event_type=event_type,
-            payload=self._parse_payload(payload),
+            payload=parsed_payload,
         )
         await self._repository.record_audit_event(
             action="webhook.accepted" if result.created else "webhook.duplicate",
@@ -98,7 +110,46 @@ class WebhookBridge:
                 "event_type": event_type,
             },
         )
-        return result
+        task_id = await self._normalize_task(result, source, event_type, parsed_payload)
+        return RecordedDelivery(inbound_event=result, task_id=task_id)
+
+    async def _normalize_task(
+        self,
+        result: InboundEventWriteResult,
+        source: str,
+        event_type: str,
+        payload: dict[str, object],
+    ) -> str | None:
+        if not result.created:
+            return None
+
+        task_event = self._normalizer.normalize(
+            source=source,
+            event_type=event_type,
+            payload=payload,
+        )
+        if task_event is None:
+            return None
+
+        task = await self._repository.create_task_from_event(
+            event_id=result.event.id,
+            source=task_event.source,
+            external_id=task_event.external_id,
+            title=task_event.title,
+            repo=task_event.repo,
+        )
+        await self._repository.record_audit_event(
+            action="task.normalized",
+            actor="system",
+            target_type="task",
+            target_id=task.id,
+            metadata={
+                "source": task_event.source,
+                "external_id": task_event.external_id,
+                "repo": task_event.repo,
+            },
+        )
+        return task.id
 
     def _verify_optional_hmac(
         self,

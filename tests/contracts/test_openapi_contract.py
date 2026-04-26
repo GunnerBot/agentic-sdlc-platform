@@ -9,6 +9,10 @@ class FakeEvent:
     id = "event-1"
 
 
+class FakeTask:
+    id = "task-1"
+
+
 class FakeWriteResult:
     event = FakeEvent()
     created = True
@@ -17,6 +21,9 @@ class FakeWriteResult:
 class FakeRepository:
     async def record_inbound_event(self, **kwargs):
         return FakeWriteResult()
+
+    async def create_task_from_event(self, **kwargs):
+        return FakeTask()
 
     async def record_audit_event(self, **kwargs):
         return None

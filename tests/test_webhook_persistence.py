@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
-from agentic_sdlc_platform.persistence.models import AuditEvent, Base, InboundEvent
+from agentic_sdlc_platform.persistence.models import AuditEvent, Base, InboundEvent, Task
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 
 
@@ -78,3 +78,36 @@ async def test_github_webhook_persists_delivery_id() -> None:
     assert response.json()["source"] == "github:pull_request"
     assert response.json()["delivery_id"] == "delivery-2"
     assert response.json()["duplicate"] is False
+
+
+async def test_linear_issue_webhook_creates_internal_task() -> None:
+    repository = await build_repository()
+    client = TestClient(create_app(Settings(), repository=repository))
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-task-1"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["task_id"] is not None
+    async with repository._session_factory() as session:
+        tasks = (await session.scalars(select(Task))).all()
+        audit_events = (await session.scalars(select(AuditEvent))).all()
+
+    assert len(tasks) == 1
+    assert tasks[0].source == "linear"
+    assert tasks[0].external_id == "OS-1284"
+    assert tasks[0].title == "Build webhook bridge"
+    assert tasks[0].repo == "keychain-os-erp"
+    assert "task.normalized" in {event.action for event in audit_events}
