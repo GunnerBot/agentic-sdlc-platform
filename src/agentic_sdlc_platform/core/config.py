@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     github_webhook_secret: str | None = None
     multica_base_url: str | None = None
     multica_api_key: str | None = Field(default=None, repr=False)
+    database_url: str = "postgresql+asyncpg://agentic_sdlc:agentic_sdlc@localhost:5432/agentic_sdlc"
 
     vendor_http_enabled: bool = False
     claude_base_url: str = "https://api.anthropic.com"

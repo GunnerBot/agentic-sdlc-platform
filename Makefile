@@ -1,4 +1,4 @@
-.PHONY: sync lint test contract quality run
+.PHONY: sync lint test contract quality run migrate
 
 sync:
 	uv sync
@@ -16,3 +16,6 @@ quality: lint test contract
 
 run:
 	uv run agentic-sdlc-platform
+
+migrate:
+	uv run alembic upgrade head

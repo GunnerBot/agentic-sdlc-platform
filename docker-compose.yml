@@ -1,9 +1,32 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: agentic_sdlc
+      POSTGRES_USER: agentic_sdlc
+      POSTGRES_PASSWORD: agentic_sdlc
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentic_sdlc -d agentic_sdlc"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   agentic-sdlc-platform:
     build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       ASDLC_ENVIRONMENT: local
       ASDLC_HOST: 0.0.0.0
       ASDLC_PORT: 8080
+      ASDLC_DATABASE_URL: postgresql+asyncpg://agentic_sdlc:agentic_sdlc@postgres:5432/agentic_sdlc
     ports:
       - "8080:8080"
+
+volumes:
+  postgres-data:

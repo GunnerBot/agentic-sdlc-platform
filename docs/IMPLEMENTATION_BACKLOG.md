@@ -30,6 +30,10 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 
 ## Phase 1: Webhook Bridge
 
+- Async SQLAlchemy persistence
+- Alembic migrations
+- Local Postgres service in Docker Compose
+- `InboundEvent`, `Task`, and `AuditEvent` control-plane tables
 - Validate Linear webhook signatures
 - Validate GitHub webhook signatures
 - Normalize incoming events into an internal task event model

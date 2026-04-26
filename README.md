@@ -19,6 +19,7 @@ between Linear, GitHub, Multica, Hermes, model routing, and deploy automation.
 ```bash
 uv sync
 make quality
+make migrate
 uv run agentic-sdlc-platform
 ```
 
