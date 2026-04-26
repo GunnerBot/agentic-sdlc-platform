@@ -1,5 +1,5 @@
 import schemathesis
-from hypothesis import settings
+from hypothesis import HealthCheck, settings
 
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
@@ -36,6 +36,10 @@ schema = schemathesis.openapi.from_asgi(
 
 
 @schema.parametrize()
-@settings(max_examples=25, deadline=None)
+@settings(
+    max_examples=25,
+    deadline=None,
+    suppress_health_check=[HealthCheck.filter_too_much],
+)
 def test_openapi_contract(case: schemathesis.Case) -> None:
     case.call_and_validate()

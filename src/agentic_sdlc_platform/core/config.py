@@ -17,8 +17,11 @@ class Settings(BaseSettings):
 
     linear_signing_secret: str | None = None
     github_webhook_secret: str | None = None
+    multica_http_enabled: bool = False
     multica_base_url: str | None = None
     multica_api_key: str | None = Field(default=None, repr=False)
+    multica_timeout_seconds: float = 10.0
+    multica_max_retries: int = 2
     database_url: str = "postgresql+asyncpg://agentic_sdlc:agentic_sdlc@localhost:5432/agentic_sdlc"
 
     vendor_http_enabled: bool = False

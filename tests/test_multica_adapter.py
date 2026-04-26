@@ -1,0 +1,93 @@
+import json
+
+import httpx
+import pytest
+
+from agentic_sdlc_platform.adapters.multica import MulticaTaskOrchestrator
+from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskOrchestratorError,
+    TaskRequest,
+)
+
+
+async def test_multica_adapter_blocks_when_http_disabled() -> None:
+    orchestrator = MulticaTaskOrchestrator(Settings(multica_http_enabled=False))
+
+    with pytest.raises(TaskOrchestratorError, match="multica HTTP is disabled"):
+        await orchestrator.create_task(
+            TaskRequest(
+                source="linear",
+                external_id="OS-1284",
+                title="Build webhook bridge",
+                repo="keychain-os-erp",
+            )
+        )
+
+
+async def test_multica_adapter_posts_internal_task_request() -> None:
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(
+            status_code=201,
+            json={"id": "multica-task-1", "status": "queued"},
+        )
+
+    orchestrator = MulticaTaskOrchestrator(
+        Settings(
+            multica_http_enabled=True,
+            multica_base_url="https://multica.local",
+            multica_api_key="test-key",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = await orchestrator.create_task(
+        TaskRequest(
+            source="linear",
+            external_id="OS-1284",
+            title="Build webhook bridge",
+            repo="keychain-os-erp",
+            inbound_event_id="event-1",
+        )
+    )
+
+    assert response.external_task_id == "multica-task-1"
+    assert response.status == "queued"
+    assert captured_request is not None
+    assert str(captured_request.url) == "https://multica.local/api/tasks"
+    assert captured_request.headers["authorization"] == "Bearer test-key"
+    assert captured_request.headers["content-type"] == "application/json"
+    assert json.loads(captured_request.content) == {
+        "source": "linear",
+        "external_id": "OS-1284",
+        "title": "Build webhook bridge",
+        "repo": "keychain-os-erp",
+        "inbound_event_id": "event-1",
+    }
+
+
+async def test_multica_adapter_raises_structured_error_for_api_failure() -> None:
+    orchestrator = MulticaTaskOrchestrator(
+        Settings(
+            multica_http_enabled=True,
+            multica_base_url="https://multica.local",
+            multica_api_key="test-key",
+        ),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(status_code=500, json={"error": "boom"})
+        ),
+    )
+
+    with pytest.raises(TaskOrchestratorError, match="multica create_task failed"):
+        await orchestrator.create_task(
+            TaskRequest(
+                source="github",
+                external_id="GunnerBot/agentic-sdlc-platform#42",
+                title="Add channel router",
+                repo="GunnerBot/agentic-sdlc-platform",
+            )
+        )
