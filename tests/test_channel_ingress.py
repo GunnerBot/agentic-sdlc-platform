@@ -39,6 +39,8 @@ def test_channel_ingress_routes_questions_to_hermes_direct() -> None:
         "route": "hermes_direct",
         "session_id": None,
         "message_id": None,
+        "task_id": None,
+        "command": None,
     }
 
 
@@ -82,6 +84,8 @@ def test_channel_ingress_invokes_hermes_for_direct_questions_when_configured() -
         "route": "hermes_direct",
         "session_id": "session-1",
         "message_id": "message-1",
+        "task_id": None,
+        "command": None,
     }
     assert hermes_session.requests == [
         HermesSessionRequest(

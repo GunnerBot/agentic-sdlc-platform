@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from agentic_sdlc_platform.glue.channel_router import ChannelMessage, ChannelRouter, RouteTarget
+from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest
 
 router = APIRouter(tags=["slack"])
@@ -85,6 +86,20 @@ async def slack_events(
         channel=channel,
         sender_id=sender_id,
     )
+    override = parse_human_override(text)
+    if override is not None:
+        result = await HumanOverrideHandler(
+            repository=request.app.state.repository,
+            task_orchestrator=request.app.state.task_orchestrator,
+        ).handle(command=override, actor=sender_id, channel=channel)
+        return {
+            "ok": True,
+            "route": "human_override",
+            "task_id": result.task_id,
+            "command": result.command,
+            "session_id": None,
+            "message_id": None,
+        }
 
     route = ChannelRouter().route(
         ChannelMessage(channel=channel, text=text, sender_id=sender_id)

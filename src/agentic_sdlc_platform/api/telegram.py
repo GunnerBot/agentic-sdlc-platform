@@ -4,7 +4,10 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from agentic_sdlc_platform.glue.channel_router import ChannelMessage, ChannelRouter, RouteTarget
+from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
+from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort, HermesSessionRequest
+from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
 
 router = APIRouter(tags=["telegram"])
 
@@ -34,6 +37,8 @@ async def telegram_webhook(
         provided_secret=telegram_secret,
         hermes_session=request.app.state.hermes_session,
         channel_authorizer=request.app.state.channel_authorizer,
+        repository=request.app.state.repository,
+        task_orchestrator=request.app.state.task_orchestrator,
     )
 
 
@@ -43,6 +48,8 @@ async def handle_telegram_update(
     provided_secret: str | None,
     hermes_session: HermesSessionPort | None,
     channel_authorizer,
+    repository: PersistenceRepository,
+    task_orchestrator: TaskOrchestratorPort | None,
 ) -> dict[str, object]:
     _verify_telegram_secret(configured_secret, provided_secret)
     message = _object(payload.get("message") or payload.get("edited_message"))
@@ -67,6 +74,21 @@ async def handle_telegram_update(
         channel=channel,
         sender_id=sender_id_text,
     )
+    override = parse_human_override(text)
+    if override is not None:
+        result = await HumanOverrideHandler(
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+        ).handle(command=override, actor=sender_id_text, channel=channel)
+        return {
+            "ok": True,
+            "route": "human_override",
+            "task_id": result.task_id,
+            "command": result.command,
+            "session_id": None,
+            "message_id": None,
+        }
+
     route = ChannelRouter().route(
         ChannelMessage(channel=channel, text=text, sender_id=sender_id_text)
     )

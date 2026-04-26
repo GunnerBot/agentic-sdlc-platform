@@ -25,3 +25,5 @@ class ChannelAcceptedResponse(BaseModel):
     route: str
     session_id: str | None = None
     message_id: str | None = None
+    task_id: str | None = None
+    command: str | None = None

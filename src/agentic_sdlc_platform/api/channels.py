@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, status
 
 from agentic_sdlc_platform.glue.channel_router import ChannelMessage, ChannelRouter, RouteTarget
+from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
 from agentic_sdlc_platform.models.channels import ChannelAcceptedResponse, ChannelMessageRequest
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest
 
@@ -22,6 +23,25 @@ async def accept_channel_message(
         channel=message.channel,
         sender_id=message.sender_id,
     )
+    override = parse_human_override(message.text)
+    if override is not None:
+        result = await HumanOverrideHandler(
+            repository=request.app.state.repository,
+            task_orchestrator=request.app.state.task_orchestrator,
+        ).handle(
+            command=override,
+            actor=message.sender_id,
+            channel=message.channel,
+        )
+        return ChannelAcceptedResponse(
+            accepted=True,
+            provider=message.provider,
+            channel=message.channel,
+            route="human_override",
+            task_id=result.task_id,
+            command=result.command,
+        )
+
     route = ChannelRouter().route(
         ChannelMessage(
             channel=message.channel,
