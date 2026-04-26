@@ -1,0 +1,99 @@
+import hmac
+from typing import Annotated
+
+from fastapi import APIRouter, Header, HTTPException, Request, status
+
+from agentic_sdlc_platform.glue.channel_router import ChannelMessage, ChannelRouter, RouteTarget
+from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort, HermesSessionRequest
+
+router = APIRouter(tags=["telegram"])
+
+
+@router.post(
+    "/webhook",
+    status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Malformed Telegram update"},
+        status.HTTP_401_UNAUTHORIZED: {"description": "Invalid Telegram secret token"},
+    },
+)
+async def telegram_webhook(
+    request: Request,
+    payload: dict[str, object],
+    telegram_secret: Annotated[
+        str | None,
+        Header(
+            alias="X-Telegram-Bot-Api-Secret-Token",
+            pattern=r"^[ -~]{1,512}$",
+        ),
+    ] = None,
+) -> dict[str, object]:
+    return await handle_telegram_update(
+        payload=payload,
+        configured_secret=request.app.state.settings.telegram_secret_token,
+        provided_secret=telegram_secret,
+        hermes_session=request.app.state.hermes_session,
+    )
+
+
+async def handle_telegram_update(
+    payload: dict[str, object],
+    configured_secret: str | None,
+    provided_secret: str | None,
+    hermes_session: HermesSessionPort | None,
+) -> dict[str, object]:
+    _verify_telegram_secret(configured_secret, provided_secret)
+    message = _object(payload.get("message") or payload.get("edited_message"))
+    if not message:
+        return {"ok": True, "route": None, "session_id": None, "message_id": None}
+
+    text = message.get("text")
+    chat = _object(message.get("chat"))
+    sender = _object(message.get("from"))
+    chat_id = chat.get("id")
+    sender_id = sender.get("id")
+    if not isinstance(text, str) or chat_id is None or sender_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing Telegram message fields",
+        )
+
+    channel = str(chat_id)
+    sender_id_text = str(sender_id)
+    route = ChannelRouter().route(
+        ChannelMessage(channel=channel, text=text, sender_id=sender_id_text)
+    )
+    session_id = None
+    message_id = None
+    if route == RouteTarget.HERMES_DIRECT and hermes_session is not None:
+        hermes_response = await hermes_session.ask(
+            HermesSessionRequest(
+                provider="telegram",
+                channel=channel,
+                sender_id=sender_id_text,
+                text=text,
+            )
+        )
+        session_id = hermes_response.session_id
+        message_id = hermes_response.message_id
+
+    return {
+        "ok": True,
+        "route": route.value,
+        "session_id": session_id,
+        "message_id": message_id,
+    }
+
+
+def _verify_telegram_secret(configured_secret: str | None, provided_secret: str | None) -> None:
+    if not configured_secret:
+        return
+    if not provided_secret or not hmac.compare_digest(configured_secret, provided_secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Telegram secret token",
+        )
+
+
+def _object(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
