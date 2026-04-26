@@ -17,6 +17,11 @@ async def accept_channel_message(
     request: Request,
     message: ChannelMessageRequest,
 ) -> ChannelAcceptedResponse:
+    mapping = request.app.state.channel_authorizer.authorize(
+        provider=message.provider.value,
+        channel=message.channel,
+        sender_id=message.sender_id,
+    )
     route = ChannelRouter().route(
         ChannelMessage(
             channel=message.channel,
@@ -33,7 +38,7 @@ async def accept_channel_message(
                 channel=message.channel,
                 sender_id=message.sender_id,
                 text=message.text,
-                repo=message.repo,
+                repo=message.repo or (mapping.repo if mapping else None),
             )
         )
         session_id = hermes_response.session_id

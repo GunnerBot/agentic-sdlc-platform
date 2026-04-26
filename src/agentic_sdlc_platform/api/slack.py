@@ -80,6 +80,11 @@ async def slack_events(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing Slack event fields",
         )
+    mapping = request.app.state.channel_authorizer.authorize(
+        provider="slack",
+        channel=channel,
+        sender_id=sender_id,
+    )
 
     route = ChannelRouter().route(
         ChannelMessage(channel=channel, text=text, sender_id=sender_id)
@@ -93,6 +98,7 @@ async def slack_events(
                 channel=channel,
                 sender_id=sender_id,
                 text=text,
+                repo=mapping.repo if mapping else None,
             )
         )
         session_id = hermes_response.session_id

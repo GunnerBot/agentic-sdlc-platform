@@ -33,6 +33,7 @@ async def telegram_webhook(
         configured_secret=request.app.state.settings.telegram_secret_token,
         provided_secret=telegram_secret,
         hermes_session=request.app.state.hermes_session,
+        channel_authorizer=request.app.state.channel_authorizer,
     )
 
 
@@ -41,6 +42,7 @@ async def handle_telegram_update(
     configured_secret: str | None,
     provided_secret: str | None,
     hermes_session: HermesSessionPort | None,
+    channel_authorizer,
 ) -> dict[str, object]:
     _verify_telegram_secret(configured_secret, provided_secret)
     message = _object(payload.get("message") or payload.get("edited_message"))
@@ -60,6 +62,11 @@ async def handle_telegram_update(
 
     channel = str(chat_id)
     sender_id_text = str(sender_id)
+    mapping = channel_authorizer.authorize(
+        provider="telegram",
+        channel=channel,
+        sender_id=sender_id_text,
+    )
     route = ChannelRouter().route(
         ChannelMessage(channel=channel, text=text, sender_id=sender_id_text)
     )
@@ -72,6 +79,7 @@ async def handle_telegram_update(
                 channel=channel,
                 sender_id=sender_id_text,
                 text=text,
+                repo=mapping.repo if mapping else None,
             )
         )
         session_id = hermes_response.session_id

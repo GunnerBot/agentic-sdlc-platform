@@ -3,6 +3,7 @@ from agentic_sdlc_platform.adapters.graphify import GraphifyGraphStore
 from agentic_sdlc_platform.adapters.hermes import HermesAgentAdapter
 from agentic_sdlc_platform.adapters.multica import MulticaTaskOrchestrator
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.channel_mapping import ChannelAuthorizer, load_channel_authorizer
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.persistence.session import build_session_factory
 from agentic_sdlc_platform.ports.graph_store import GraphStorePort
@@ -33,3 +34,7 @@ def build_hermes_session(settings: Settings) -> HermesSessionPort | None:
     if not settings.hermes_http_enabled:
         return None
     return HermesAgentAdapter(settings)
+
+
+def build_channel_authorizer(settings: Settings) -> ChannelAuthorizer:
+    return load_channel_authorizer(settings.channel_mapping_path)

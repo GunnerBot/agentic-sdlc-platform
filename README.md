@@ -26,6 +26,8 @@ uv run agentic-sdlc-platform
 ## Environment
 
 Copy `.env.example` to `.env` and fill only the integrations you are testing locally.
+Set `ASDLC_CHANNEL_MAPPING_PATH=config/channel-mapping.example.toml` to enforce channel
+allow-lists and repo mapping for Slack and Telegram.
 
 ## Delivery Plan
 
