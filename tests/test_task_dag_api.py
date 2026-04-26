@@ -73,3 +73,33 @@ async def test_create_task_dag_endpoint_persists_planner_output() -> None:
         dags = (await session.scalars(select(TaskDag))).all()
 
     assert len(dags) == 1
+
+
+async def test_complete_dag_node_endpoint_returns_newly_ready_nodes() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    model_provider = FakePlannerModel()
+    client = TestClient(
+        create_app(Settings(), repository=repository, model_provider=model_provider)
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+
+    response = client.post(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/complete")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "completed_node": "api",
+        "ready_nodes": [
+            {
+                "node_key": "web",
+                "title": "Consume API",
+                "repo": "erp-web",
+                "depends_on": ["api"],
+                "status": "ready",
+            }
+        ],
+    }

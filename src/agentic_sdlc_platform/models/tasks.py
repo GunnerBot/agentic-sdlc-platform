@@ -18,3 +18,8 @@ class TaskDagResponse(BaseModel):
     task_id: str
     status: str
     nodes: list[TaskDagNodeResponse]
+
+
+class CompleteDagNodeResponse(BaseModel):
+    completed_node: str
+    ready_nodes: list[TaskDagNodeResponse]

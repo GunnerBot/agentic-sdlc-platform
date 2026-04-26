@@ -53,6 +53,12 @@ class FakeRepository:
     async def create_task_dag(self, **kwargs):
         return FakeDag()
 
+    async def mark_dag_node_completed(self, **kwargs):
+        return FakeDagNode()
+
+    async def list_ready_dag_nodes(self, task_id):
+        return [FakeDagNode()]
+
 
 class FakeModelProvider:
     async def complete(self, request):

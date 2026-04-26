@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, status
 
 from agentic_sdlc_platform.glue.dag_decomposer import DagDecomposer
 from agentic_sdlc_platform.models.tasks import (
+    CompleteDagNodeResponse,
     CreateTaskDagRequest,
     TaskDagNodeResponse,
     TaskDagResponse,
@@ -32,6 +33,28 @@ async def create_task_dag(
     return _dag_response(dag)
 
 
+@router.post(
+    "/{task_id}/dag/{dag_id}/nodes/{node_key}/complete",
+    response_model=CompleteDagNodeResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def complete_dag_node(
+    task_id: str,
+    dag_id: str,
+    node_key: str,
+    request: Request,
+) -> CompleteDagNodeResponse:
+    await request.app.state.repository.mark_dag_node_completed(
+        dag_id=dag_id,
+        node_key=node_key,
+    )
+    ready_nodes = await request.app.state.repository.list_ready_dag_nodes(task_id)
+    return CompleteDagNodeResponse(
+        completed_node=node_key,
+        ready_nodes=[_node_response(node) for node in ready_nodes],
+    )
+
+
 def _dag_response(dag: TaskDag) -> TaskDagResponse:
     return TaskDagResponse(
         id=dag.id,
@@ -47,4 +70,14 @@ def _dag_response(dag: TaskDag) -> TaskDagResponse:
             )
             for node in dag.nodes
         ],
+    )
+
+
+def _node_response(node) -> TaskDagNodeResponse:
+    return TaskDagNodeResponse(
+        node_key=node.node_key,
+        title=node.title,
+        repo=node.repo,
+        depends_on=list(node.depends_on),
+        status="ready",
     )
