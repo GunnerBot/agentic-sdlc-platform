@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     linear_team_id: str | None = None
     github_webhook_secret: str | None = None
     slack_signing_secret: str | None = Field(default=None, repr=False)
+    slack_bot_token: str | None = Field(default=None, repr=False)
     slack_signature_tolerance_seconds: int = 300
+    slack_api_base_url: str = "https://slack.com/api"
+    slack_timeout_seconds: float = 10.0
     telegram_secret_token: str | None = Field(default=None, repr=False)
     channel_mapping_path: str | None = None
     channel_cost_cap_usd: float | None = None

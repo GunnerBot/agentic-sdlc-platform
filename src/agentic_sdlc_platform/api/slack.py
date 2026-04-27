@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
+from agentic_sdlc_platform.adapters.slack import SlackClient
 from agentic_sdlc_platform.glue.channel_repo_query import answer_repo_query
 from agentic_sdlc_platform.glue.channel_router import (
     ChannelMessage,
@@ -98,14 +99,23 @@ async def slack_events(
     )
     ticket_command = parse_create_ticket(text)
     if ticket_command is not None and request.app.state.issue_tracker is not None:
+        message_ts = _str_value(event.get("ts"))
+        thread_ts = _str_value(event.get("thread_ts"))
+        thread_context = None
+        if thread_ts:
+            thread_context = await SlackClient(request.app.state.settings).fetch_thread_context(
+                channel=channel,
+                thread_ts=thread_ts,
+            )
         created_issue = await request.app.state.issue_tracker.create_issue(
             build_issue_create_request(
                 ticket_command,
                 provider="slack",
                 channel=channel,
                 sender_id=sender_id,
-                message_ts=_str_value(event.get("ts")),
-                thread_ts=_str_value(event.get("thread_ts")),
+                message_ts=message_ts,
+                thread_ts=thread_ts,
+                thread_context=thread_context,
             )
         )
         return {

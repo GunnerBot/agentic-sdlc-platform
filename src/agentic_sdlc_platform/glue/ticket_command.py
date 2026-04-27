@@ -6,30 +6,37 @@ from agentic_sdlc_platform.ports.issue_tracker import IssueCreateRequest
 
 @dataclass(frozen=True)
 class CreateTicketCommand:
-    title: str
+    title: str | None
     repo: str | None = None
     template: str | None = None
     body: str | None = None
 
 
+@dataclass(frozen=True)
+class TicketThreadContext:
+    title: str
+    transcript: str
+    message_count: int
+
+
 def parse_create_ticket(text: str) -> CreateTicketCommand | None:
-    match = re.match(r"^/create-ticket\s+(?P<body>.+)$", text.strip(), flags=re.IGNORECASE)
+    match = re.match(
+        r"^/create-ticket(?:\s+(?P<body>.*))?$",
+        text.strip(),
+        flags=re.IGNORECASE,
+    )
     if not match:
         return None
-    raw_body = match.group("body").strip()
-    if not raw_body:
-        return None
+    raw_body = (match.group("body") or "").strip()
 
     repo = _extract_token(raw_body, "repo")
     template = _extract_token(raw_body, "type") or _extract_token(raw_body, "template")
     cleaned = _strip_tokens(raw_body)
     title, body = _split_title_and_body(cleaned)
-    if not title:
-        return None
     return CreateTicketCommand(
-        title=title,
+        title=title or None,
         repo=repo,
-        template=template,
+        template=template or ("bug" if not title else None),
         body=body,
     )
 
@@ -41,7 +48,12 @@ def build_issue_create_request(
     sender_id: str,
     message_ts: str | None = None,
     thread_ts: str | None = None,
+    thread_context: TicketThreadContext | None = None,
 ) -> IssueCreateRequest:
+    title = command.title or (thread_context.title if thread_context else None)
+    if not title:
+        raise ValueError("create-ticket requires a title or thread context")
+
     context_lines = [
         "Created from channel command.",
         f"Provider: {provider}",
@@ -56,8 +68,12 @@ def build_issue_create_request(
         context_lines.append(f"Repo: {command.repo}")
     if command.template:
         context_lines.append(f"Template: {command.template}")
+    if thread_context:
+        context_lines.append(f"Thread messages: {thread_context.message_count}")
     if command.body:
         context_lines.extend(["", command.body])
+    if thread_context:
+        context_lines.extend(["", "Thread context:", thread_context.transcript])
 
     metadata: dict[str, object] = {
         "provider": provider,
@@ -70,9 +86,11 @@ def build_issue_create_request(
         metadata["thread_ts"] = thread_ts
     if command.template:
         metadata["template"] = command.template
+    if thread_context:
+        metadata["thread_message_count"] = thread_context.message_count
 
     return IssueCreateRequest(
-        title=command.title,
+        title=title,
         description="\n".join(context_lines),
         repo=command.repo,
         metadata=metadata,
