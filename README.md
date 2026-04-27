@@ -99,6 +99,10 @@ runs `graphify <repo_path> --update --no-viz`. A compatible self-hosted HTTP wra
 with `ASDLC_GRAPHIFY_MODE=http` and `ASDLC_GRAPHIFY_BASE_URL`; it must expose `POST /api/index` and
 `POST /api/query` using the internal GraphStore request/response shape.
 
+Graphify output is generated local index data and must not be committed. The repository ignores
+`graphify-out/` and `.graphify/`; store graph paths in ignored local config or repository metadata,
+not as checked-in artifacts.
+
 ## Delivery Plan
 
 See `docs/IMPLEMENTATION_BACKLOG.md`.

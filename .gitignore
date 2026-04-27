@@ -11,3 +11,9 @@ dist/
 secrets/
 *.pem
 *.key
+
+# Generated local code-graph/index data. Keep this out of git.
+graphify-out/
+**/graphify-out/
+.graphify/
+**/.graphify/
