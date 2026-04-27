@@ -72,7 +72,7 @@ class GitHubAppSourceControl:
             ],
         )
 
-    async def _installation_token(self) -> str:
+    async def installation_token(self) -> str:
         installation_id = _required(self._settings.github_app_installation_id)
         jwt = _github_app_jwt(
             app_id=_required(self._settings.github_app_id),
@@ -101,6 +101,9 @@ class GitHubAppSourceControl:
         if not isinstance(token, str) or not token:
             raise SourceControlError("github app installation token response missing token")
         return token
+
+    async def _installation_token(self) -> str:
+        return await self.installation_token()
 
     def _private_key_pem(self) -> str:
         if self._settings.github_app_private_key:

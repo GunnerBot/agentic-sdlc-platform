@@ -19,6 +19,7 @@ def multica_settings(**overrides) -> Settings:
         "multica_base_url": "https://multica.local",
         "multica_api_key": "test-key",
         "multica_workspace_id": "workspace-1",
+        "multica_default_runtime_provider": "codex",
     }
     defaults.update(overrides)
     return Settings(**defaults)

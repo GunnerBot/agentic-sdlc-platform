@@ -45,6 +45,18 @@ private key in an ignored local file such as `secrets/github-app.pem`; do not co
 operations for automatic branch push and PR creation remain intentionally disabled until a separate
 write-scoped GitHub App policy is approved.
 
+For private repo checkouts, enable the git credential helper in ignored local config and install the
+targeted helper:
+
+```bash
+ASDLC_GITHUB_APP_GIT_CREDENTIAL_ENABLED=true
+ASDLC_GITHUB_APP_GIT_CREDENTIAL_ALLOWED_OWNERS=atlas-tech-inc
+make github-app-git-credential-configure
+```
+
+The helper mints short-lived GitHub App installation tokens at clone/fetch time; do not commit
+tokens or authenticated clone URLs.
+
 Docker Compose includes a local dev service that implements the Hermes and Multica HTTP contracts
 with non-production tokens. This is only for local smoke testing. To run the container against real
 host-local services, use the real overlay:

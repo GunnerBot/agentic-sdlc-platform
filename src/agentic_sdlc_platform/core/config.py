@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     github_app_private_key_path: str | None = Field(default=None, repr=False)
     github_app_api_base_url: str = "https://api.github.com"
     github_app_timeout_seconds: float = 10.0
+    github_app_git_credential_enabled: bool = False
+    github_app_git_credential_hosts: str = "github.com"
+    github_app_git_credential_allowed_owners: str = ""
     slack_signing_secret: str | None = Field(default=None, repr=False)
     slack_bot_token: str | None = Field(default=None, repr=False)
     slack_signature_tolerance_seconds: int = 300

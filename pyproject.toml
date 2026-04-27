@@ -30,6 +30,7 @@ dev = [
 
 [project.scripts]
 agentic-sdlc-platform = "agentic_sdlc_platform.__main__:main"
+agentic-sdlc-github-app-credential = "agentic_sdlc_platform.tools.github_app_credential_helper:main"
 
 [build-system]
 requires = ["uv_build>=0.9.22,<0.10.0"]
