@@ -220,6 +220,7 @@ class GraphifyGraphStore:
         shutil.copytree(
             source_path,
             target_path,
+            ignore_dangling_symlinks=True,
             ignore=shutil.ignore_patterns(
                 ".git",
                 ".venv",

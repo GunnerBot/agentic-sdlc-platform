@@ -121,6 +121,45 @@ async def test_graphify_cli_index_copies_repo_to_output_root(tmp_path) -> None:
     assert result.external_index_id == str(copied_graph_path)
 
 
+async def test_graphify_cli_index_ignores_dangling_symlinks(tmp_path) -> None:
+    source_repo_path = tmp_path / "host-repo"
+    source_repo_path.mkdir()
+    (source_repo_path / "app.py").write_text("print('hello')", encoding="utf-8")
+    (source_repo_path / "public").mkdir()
+    (source_repo_path / "public" / "_next-video").symlink_to(
+        source_repo_path / "missing-target"
+    )
+    output_root = tmp_path / "graphify-data"
+    copied_graph_path = output_root / "webapp-monorepo" / "graphify-out" / "graph.json"
+
+    async def runner(command: list[str], command_timeout: float) -> str:
+        copied_graph_path.parent.mkdir(parents=True)
+        copied_graph_path.write_text("{}", encoding="utf-8")
+        return "indexed"
+
+    store = GraphifyGraphStore(
+        Settings(
+            vendor_http_enabled=True,
+            graphify_command="graphify",
+            graphify_output_root=str(output_root),
+        ),
+        runner=runner,
+    )
+
+    result = await store.index(
+        GraphIndexRequest(
+            repo="webapp-monorepo",
+            default_branch="main",
+            metadata={"local_path": str(source_repo_path)},
+        )
+    )
+
+    copied_repo_path = output_root / "webapp-monorepo"
+    assert (copied_repo_path / "app.py").exists()
+    assert not (copied_repo_path / "public" / "_next-video").exists()
+    assert result.external_index_id == str(copied_graph_path)
+
+
 async def test_graphify_cli_requires_graph_path_or_local_repo_path() -> None:
     store = GraphifyGraphStore(Settings(vendor_http_enabled=True))
 
