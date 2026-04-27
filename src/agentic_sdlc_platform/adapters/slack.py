@@ -70,6 +70,31 @@ class SlackClient:
             message_count=len(lines),
         )
 
+    async def post_thread_reply(self, channel: str, thread_ts: str, text: str) -> str | None:
+        if not self._settings.slack_bot_token:
+            return None
+
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.slack_api_base_url,
+                timeout=self._settings.slack_timeout_seconds,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(
+                    "/chat.postMessage",
+                    json={"channel": channel, "thread_ts": thread_ts, "text": text},
+                    headers={"Authorization": f"Bearer {self._settings.slack_bot_token}"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError as exc:
+            raise SlackClientError("slack chat.postMessage failed") from exc
+
+        if not isinstance(payload, dict) or payload.get("ok") is not True:
+            raise SlackClientError("slack chat.postMessage returned invalid response")
+        ts = payload.get("ts")
+        return ts if isinstance(ts, str) else None
+
 
 def _clean_text(value: object) -> str | None:
     if not isinstance(value, str):

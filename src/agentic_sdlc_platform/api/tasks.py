@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
+from agentic_sdlc_platform.glue.conversation_sync import ConversationSyncService
 from agentic_sdlc_platform.glue.dag_decomposer import DagDecomposer
 from agentic_sdlc_platform.glue.dag_execution import (
     build_dag_node_execution_metadata,
@@ -25,7 +26,6 @@ from agentic_sdlc_platform.models.tasks import (
     UpdateDagNodeExecutionRequest,
 )
 from agentic_sdlc_platform.persistence.models import AgentSession, SessionEvent, Task, TaskDag
-from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerReply
 from agentic_sdlc_platform.ports.task_orchestrator import TaskReadRequest, TaskRequest
 
 router = APIRouter(tags=["tasks"])
@@ -85,43 +85,19 @@ async def sync_session_orchestrator_comments(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Session is not orchestrator-backed",
         )
-    list_comments = getattr(request.app.state.task_orchestrator, "list_comments", None)
-    if list_comments is None:
+    try:
+        await ConversationSyncService(
+            repository=request.app.state.repository,
+            task_orchestrator=request.app.state.task_orchestrator,
+            issue_tracker=request.app.state.issue_tracker,
+            slack_client=request.app.state.slack_client,
+            telegram_client=request.app.state.telegram_client,
+        ).sync_loaded_session(session)
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Task orchestrator does not support conversation sync",
-        )
-
-    seen_comment_ids = {
-        value
-        for event in session.events
-        if isinstance((value := event.metadata_json.get("multica_comment_id")), str)
-    }
-    comments = await list_comments(
-        session.orchestrator_task_id,
-        {
-            "multica_issue_id": session.orchestrator_issue_id,
-            "orchestrator_issue_id": session.orchestrator_issue_id,
-        },
-    )
-    for comment in comments:
-        if comment.id in seen_comment_ids:
-            continue
-        await request.app.state.repository.record_session_event(
-            session_id=session.id,
-            direction="outbound",
-            event_type="orchestrator_reply",
-            actor=comment.actor or "agent",
-            message=comment.body,
-            metadata={
-                "multica_comment_id": comment.id,
-                **(comment.metadata or {}),
-            },
-        )
-        if session.provider == "linear" and request.app.state.issue_tracker is not None:
-            await request.app.state.issue_tracker.reply(
-                IssueTrackerReply(issue_id=session.external_thread_id, body=comment.body)
-            )
+            detail=str(exc),
+        ) from exc
 
     refreshed = await request.app.state.repository.get_task(task_id)
     if refreshed is None:

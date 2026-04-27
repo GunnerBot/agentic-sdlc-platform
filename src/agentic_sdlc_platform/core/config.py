@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     slack_api_base_url: str = "https://slack.com/api"
     slack_timeout_seconds: float = 10.0
     telegram_secret_token: str | None = Field(default=None, repr=False)
+    telegram_bot_token: str | None = Field(default=None, repr=False)
+    telegram_api_base_url: str = "https://api.telegram.org"
+    telegram_timeout_seconds: float = 10.0
     channel_mapping_path: str | None = None
     channel_cost_cap_usd: float | None = None
     channel_default_request_cost_usd: float = 0.01
@@ -88,6 +91,10 @@ class Settings(BaseSettings):
     agent_executor_enabled: bool = False
     agent_executor_provider: str = "local"
     agent_executor_workspace_root: str = "/tmp/agentic-sdlc-platform/workspaces"
+
+    conversation_sync_enabled: bool = False
+    conversation_sync_interval_seconds: float = 15.0
+    conversation_sync_batch_size: int = 50
 
 
 @lru_cache

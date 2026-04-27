@@ -73,3 +73,30 @@ async def test_find_agent_session_by_thread_and_record_events() -> None:
     assert event.session_id == session.id
     assert event.message == "Please check inventory allocation first."
     assert event.metadata_json == {"comment_id": "comment-1"}
+
+
+async def test_list_orchestrator_backed_sessions_only_returns_active_backed_sessions() -> None:
+    repository = await build_repository()
+    task_id = await create_task(repository)
+    backed = await repository.create_agent_session(
+        task_id=task_id,
+        provider="linear",
+        external_thread_id="issue-id-1",
+        hermes_session_id=None,
+        repo="keychain-os-erp",
+        orchestrator_provider="multica",
+        orchestrator_issue_id="issue-1",
+        orchestrator_task_id="task-1",
+    )
+    await repository.create_agent_session(
+        task_id=task_id,
+        provider="slack",
+        external_thread_id="C123:1",
+        hermes_session_id="hermes-session-1",
+        repo="keychain-os-erp",
+    )
+
+    sessions = await repository.list_orchestrator_backed_agent_sessions()
+
+    assert [session.id for session in sessions] == [backed.id]
+    assert sessions[0].task is not None

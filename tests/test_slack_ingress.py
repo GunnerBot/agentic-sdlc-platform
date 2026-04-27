@@ -237,6 +237,37 @@ async def test_slack_client_fetches_thread_context() -> None:
     assert context.message_count == 2
 
 
+async def test_slack_client_posts_thread_reply() -> None:
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(status_code=200, json={"ok": True, "ts": "1710000001.000000"})
+
+    message_ts = await SlackClient(
+        Settings(
+            slack_bot_token="xoxb-token",
+            slack_api_base_url="https://slack.local/api",
+        ),
+        transport=httpx.MockTransport(handler),
+    ).post_thread_reply(
+        channel="C123",
+        thread_ts="1710000000.000000",
+        text="Agent found the answer.",
+    )
+
+    assert captured_request is not None
+    assert str(captured_request.url) == "https://slack.local/api/chat.postMessage"
+    assert captured_request.headers["authorization"] == "Bearer xoxb-token"
+    assert json.loads(captured_request.content) == {
+        "channel": "C123",
+        "thread_ts": "1710000000.000000",
+        "text": "Agent found the answer.",
+    }
+    assert message_ts == "1710000001.000000"
+
+
 def signed_slack_headers(body: bytes, secret: str) -> dict[str, str]:
     timestamp = str(int(time.time()))
     base = b"v0:" + timestamp.encode("utf-8") + b":" + body

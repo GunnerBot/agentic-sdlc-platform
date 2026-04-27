@@ -117,6 +117,18 @@ Indexing copies that read-only repo into `/graphify-data/keychain-os-erp/` and c
 `/graphify-data/keychain-os-erp/graphify-out/graph.json`. Nothing is written back to the host repo
 checkout, and nothing under `graphify-out/` is committed.
 
+Conversation sync can poll Multica-backed sessions and mirror new agent comments back to the
+originating channel. The real Docker overlay enables it by default:
+
+```bash
+ASDLC_CONVERSATION_SYNC_ENABLED=true
+ASDLC_CONVERSATION_SYNC_INTERVAL_SECONDS=15
+ASDLC_CONVERSATION_SYNC_BATCH_SIZE=50
+```
+
+Linear replies use the configured Linear adapter. Slack replies use `ASDLC_SLACK_BOT_TOKEN` and the
+stored Slack thread ID. Telegram replies use `ASDLC_TELEGRAM_BOT_TOKEN` and the stored chat ID.
+
 ## Delivery Plan
 
 See `docs/IMPLEMENTATION_BACKLOG.md`.

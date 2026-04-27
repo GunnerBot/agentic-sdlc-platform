@@ -673,6 +673,39 @@ class PersistenceRepository:
             )
             return result.scalars().first()
 
+    async def get_agent_session(self, session_id: str) -> AgentSession | None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AgentSession)
+                .where(AgentSession.id == session_id)
+                .options(
+                    selectinload(AgentSession.events),
+                    selectinload(AgentSession.task),
+                )
+            )
+            return result.scalars().first()
+
+    async def list_orchestrator_backed_agent_sessions(
+        self,
+        limit: int = 50,
+    ) -> list[AgentSession]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AgentSession)
+                .where(
+                    AgentSession.status == "active",
+                    AgentSession.orchestrator_task_id.is_not(None),
+                    AgentSession.orchestrator_issue_id.is_not(None),
+                )
+                .options(
+                    selectinload(AgentSession.events),
+                    selectinload(AgentSession.task),
+                )
+                .order_by(AgentSession.updated_at, AgentSession.created_at, AgentSession.id)
+                .limit(limit)
+            )
+            return list(result.scalars().all())
+
     async def record_session_event(
         self,
         session_id: str,
