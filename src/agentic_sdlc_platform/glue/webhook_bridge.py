@@ -329,6 +329,9 @@ class WebhookBridge:
         elif command.command == "agents":
             reply_body = self._linear_agents_reply(task)
             task_id = task.id
+        elif command.command == "nodes":
+            reply_body = self._linear_nodes_reply(task)
+            task_id = task.id
         else:
             reply_body = self._linear_status_reply(task)
             task_id = task.id
@@ -414,6 +417,29 @@ class WebhookBridge:
                 f"Task {task.external_id} agents:",
                 f"Orchestrator: {_orchestrator_summary(task)}",
                 *session_lines,
+            ]
+        )
+
+    def _linear_nodes_reply(self, task) -> str:
+        dags = getattr(task, "dags", [])
+        if not dags:
+            return f"Task {task.external_id} nodes:\n- none"
+        dag = dags[0]
+        node_lines = []
+        for node in dag.nodes:
+            depends_on = ",".join(node.depends_on) if node.depends_on else "none"
+            orchestrator = node.orchestrator_task_id or "none"
+            node_lines.append(
+                "- "
+                f"{node.node_key}: {node.status}; "
+                f"repo {node.repo or 'none'}; "
+                f"depends_on {depends_on}; "
+                f"orchestrator {orchestrator}"
+            )
+        return "\n".join(
+            [
+                f"Task {task.external_id} nodes:",
+                *node_lines,
             ]
         )
 

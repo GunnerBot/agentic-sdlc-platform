@@ -764,6 +764,82 @@ async def test_linear_status_comment_replies_with_dag_progress() -> None:
     )
 
 
+async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=FakeTaskOrchestrator(),
+            hermes_session=FakeHermesSession(),
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    assignment_response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+                "labels": {
+                    "nodes": [
+                        {"name": "repo:keychain-os-erp"},
+                        {"name": "type:feature"},
+                    ]
+                },
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-nodes-1"},
+    )
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-1",
+                "body": "/nodes OS-1284",
+                "user": {"id": "user-1"},
+                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-nodes-2"},
+    )
+
+    assert assignment_response.status_code == 202
+    assert response.status_code == 202
+    assert response.json()["task_id"] == assignment_response.json()["task_id"]
+    assert issue_tracker.replies[-1] == IssueTrackerReply(
+        issue_id="issue-id-1",
+        body=(
+            "Task OS-1284 nodes:\n"
+            "- design: queued; repo keychain-os-erp; depends_on none; "
+            "orchestrator multica-task-2\n"
+            "- contract: blocked; repo keychain-os-erp; depends_on design; "
+            "orchestrator none\n"
+            "- implement: blocked; repo keychain-os-erp; depends_on contract; "
+            "orchestrator none\n"
+            "- verify: blocked; repo keychain-os-erp; depends_on implement; "
+            "orchestrator none\n"
+            "- review: blocked; repo keychain-os-erp; depends_on verify; "
+            "orchestrator none"
+        ),
+    )
+
+
 async def test_linear_context_comment_replies_with_repo_and_recent_events() -> None:
     repository = await build_repository()
     await repository.upsert_repo(

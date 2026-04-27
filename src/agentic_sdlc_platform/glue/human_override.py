@@ -117,7 +117,7 @@ def parse_human_override(text: str) -> HumanOverrideCommand | None:
 
 def parse_task_info(text: str) -> TaskInfoCommand | None:
     match = re.match(
-        r"^/(?P<command>status|context|agents)\s+"
+        r"^/(?P<command>status|context|agents|nodes)\s+"
         r"(?P<external_id>[A-Z][A-Z0-9]+-\d+)\s*$",
         text.strip(),
         flags=re.IGNORECASE,
