@@ -13,3 +13,7 @@ __pycache__/
 .hypothesis/
 dist/
 *.egg-info/
+graphify-out/
+**/graphify-out/
+.graphify/
+**/.graphify/

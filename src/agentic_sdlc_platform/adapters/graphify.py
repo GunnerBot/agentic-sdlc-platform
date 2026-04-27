@@ -1,5 +1,6 @@
 import asyncio
 import shlex
+import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -42,20 +43,20 @@ class GraphifyGraphStore:
         if self._mode == "http":
             return await self._http_index(request)
 
-        repo_path = self._repo_path(request.repo, request.metadata)
-        if repo_path is None:
+        source_path = self._repo_path(request.metadata)
+        if source_path is None:
             raise GraphStoreError(
                 "graphify CLI indexing requires repo metadata local_path or repo_path"
             )
+        repo_path = self._index_path(request.repo, source_path)
 
         command = [
             *self._command_parts(),
+            "update",
             str(repo_path),
-            "--update",
-            "--no-viz",
         ]
         await self._runner(command, self._settings.graphify_timeout_seconds)
-        graph_path = repo_path / "graphify-out" / "graph.json"
+        graph_path = self._graph_path_for_indexed_repo(request.repo, repo_path)
         if not graph_path.exists():
             raise GraphStoreError(f"graphify did not produce graph at {graph_path}")
         return GraphIndexResult(
@@ -187,13 +188,11 @@ class GraphifyGraphStore:
             raise GraphStoreError("graphify command is not configured")
         return command
 
-    def _repo_path(self, repo: str, metadata: dict[str, str]) -> Path | None:
+    def _repo_path(self, metadata: dict[str, str]) -> Path | None:
         for key in ("local_path", "repo_path", "workspace_path"):
             value = metadata.get(key)
             if value:
                 return Path(value).expanduser()
-        if self._settings.graphify_output_root:
-            return Path(self._settings.graphify_output_root).expanduser() / repo
         return None
 
     def _graph_path(self, repo: str, metadata: dict[str, str]) -> Path | None:
@@ -201,10 +200,46 @@ class GraphifyGraphStore:
         if graph_path:
             return Path(graph_path).expanduser()
 
-        repo_path = self._repo_path(repo, metadata)
+        repo_path = self._repo_path(metadata)
         if repo_path is None:
+            if self._settings.graphify_output_root:
+                return self._graph_path_for_indexed_repo(
+                    repo,
+                    self._output_repo_path(repo),
+                )
             return None
+        return self._graph_path_for_indexed_repo(repo, repo_path)
+
+    def _index_path(self, repo: str, source_path: Path) -> Path:
+        if not self._settings.graphify_output_root:
+            return source_path
+
+        target_path = self._output_repo_path(repo)
+        if target_path.exists():
+            shutil.rmtree(target_path)
+        shutil.copytree(
+            source_path,
+            target_path,
+            ignore=shutil.ignore_patterns(
+                ".git",
+                ".venv",
+                "node_modules",
+                "dist",
+                "build",
+                "graphify-out",
+            ),
+        )
+        return target_path
+
+    def _graph_path_for_indexed_repo(self, repo: str, repo_path: Path) -> Path:
+        if self._settings.graphify_output_root:
+            return self._output_repo_path(repo) / "graphify-out" / "graph.json"
         return repo_path / "graphify-out" / "graph.json"
+
+    def _output_repo_path(self, repo: str) -> Path:
+        if not self._settings.graphify_output_root:
+            raise GraphStoreError("graphify output root is not configured")
+        return Path(self._settings.graphify_output_root).expanduser() / _safe_repo_name(repo)
 
 
 async def _run_command(command: list[str], command_timeout: float) -> str:
@@ -231,6 +266,10 @@ async def _run_command(command: list[str], command_timeout: float) -> str:
         error_text = stderr.decode("utf-8", errors="replace").strip()
         raise GraphStoreError(error_text or "graphify command failed")
     return stdout.decode("utf-8", errors="replace")
+
+
+def _safe_repo_name(repo: str) -> str:
+    return repo.replace("/", "__")
 
 
 def _references_from_output(output: str) -> list[str]:

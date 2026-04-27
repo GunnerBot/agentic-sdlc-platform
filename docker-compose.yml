@@ -40,6 +40,7 @@ services:
       - "8080:8080"
     volumes:
       - ./secrets:/app/secrets:ro
+      - graphify-data:/graphify-data
 
   dev-agent-services:
     build: .
@@ -52,3 +53,4 @@ services:
 
 volumes:
   postgres-data:
+  graphify-data:

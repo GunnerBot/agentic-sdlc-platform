@@ -95,13 +95,27 @@ ASDLC_GRAPHIFY_COMMAND=graphify
 ```
 
 CLI query mode runs `graphify query <question> --graph <graphify-out/graph.json>`. CLI index mode
-runs `graphify <repo_path> --update --no-viz`. A compatible self-hosted HTTP wrapper can be used
+runs `graphify update <repo_path>`. A compatible self-hosted HTTP wrapper can be used
 with `ASDLC_GRAPHIFY_MODE=http` and `ASDLC_GRAPHIFY_BASE_URL`; it must expose `POST /api/index` and
 `POST /api/query` using the internal GraphStore request/response shape.
 
 Graphify output is generated local index data and must not be committed. The repository ignores
 `graphify-out/` and `.graphify/`; store graph paths in ignored local config or repository metadata,
 not as checked-in artifacts.
+
+In the real Docker overlay, host repos are mounted read-only at `/repos` and generated Graphify data
+is written to the Docker-managed `/graphify-data` volume. Example repo metadata for the local
+`keychain-os-erp` checkout:
+
+```json
+{
+  "local_path": "/repos/keychain-os-erp"
+}
+```
+
+Indexing copies that read-only repo into `/graphify-data/keychain-os-erp/` and creates
+`/graphify-data/keychain-os-erp/graphify-out/graph.json`. Nothing is written back to the host repo
+checkout, and nothing under `graphify-out/` is committed.
 
 ## Delivery Plan
 
