@@ -185,6 +185,29 @@ class PersistenceRepository:
             await session.refresh(node)
             return node
 
+    async def mark_dag_node_orchestrated(
+        self,
+        dag_id: str,
+        node_key: str,
+        orchestrator_task_id: str,
+        orchestrator_status: str,
+    ) -> TaskDagNode:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskDagNode).where(
+                    TaskDagNode.dag_id == dag_id,
+                    TaskDagNode.node_key == node_key,
+                )
+            )
+            node = result.scalar_one()
+            node.status = orchestrator_status
+            node.orchestrator_task_id = orchestrator_task_id
+            node.orchestrator_status = orchestrator_status
+            node.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(node)
+            return node
+
     async def _find_inbound_event(
         self,
         session: AsyncSession,

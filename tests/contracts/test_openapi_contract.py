@@ -56,6 +56,9 @@ class FakeRepository:
     async def mark_dag_node_completed(self, **kwargs):
         return FakeDagNode()
 
+    async def mark_dag_node_orchestrated(self, **kwargs):
+        return FakeDagNode()
+
     async def list_ready_dag_nodes(self, task_id):
         return [FakeDagNode()]
 

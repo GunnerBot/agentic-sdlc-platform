@@ -7,6 +7,7 @@ from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.persistence.models import Base, TaskDag
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.model_provider import ModelRequest, ModelResponse
+from agentic_sdlc_platform.ports.task_orchestrator import TaskRequest, TaskResponse
 
 
 class FakePlannerModel:
@@ -24,6 +25,20 @@ class FakePlannerModel:
   {"id": "web", "title": "Consume API", "repo": "erp-web", "depends_on": ["api"]}
 ]
 """,
+        )
+
+
+class FakeTaskOrchestrator:
+    provider = "multica"
+
+    def __init__(self) -> None:
+        self.requests: list[TaskRequest] = []
+
+    async def create_task(self, request: TaskRequest) -> TaskResponse:
+        self.requests.append(request)
+        return TaskResponse(
+            external_task_id=f"multica-{request.external_id}",
+            status="queued",
         )
 
 
@@ -103,3 +118,40 @@ async def test_complete_dag_node_endpoint_returns_newly_ready_nodes() -> None:
             }
         ],
     }
+
+
+async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    model_provider = FakePlannerModel()
+    task_orchestrator = FakeTaskOrchestrator()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=model_provider,
+            task_orchestrator=task_orchestrator,
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+
+    response = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/complete",
+        params={"enqueue_ready": "true"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ready_nodes"][0]["status"] == "queued"
+    assert task_orchestrator.requests == [
+        TaskRequest(
+            source="dag",
+            external_id=f"{dag_id}:web",
+            title="Consume API",
+            repo="erp-web",
+            inbound_event_id=None,
+        )
+    ]

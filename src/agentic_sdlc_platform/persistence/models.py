@@ -121,6 +121,8 @@ class TaskDagNode(Base):
         default=dict,
     )
     status: Mapped[str] = mapped_column(nullable=False, default="ready")
+    orchestrator_task_id: Mapped[str | None] = mapped_column(nullable=True)
+    orchestrator_status: Mapped[str | None] = mapped_column(nullable=True)
     position: Mapped[int] = mapped_column(nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
