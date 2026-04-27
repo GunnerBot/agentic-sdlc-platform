@@ -27,7 +27,7 @@ def new_id() -> str:
 
 
 def utc_now() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class InboundEvent(Base):
