@@ -20,6 +20,7 @@ class FakeTask:
     orchestrator_task_id = None
     orchestrator_status = None
     sessions = []
+    dags = []
 
 
 class FakeRepo:
@@ -53,6 +54,9 @@ class FakeDagNode:
     repo = "keychain-os-erp"
     depends_on = ()
     status = "ready"
+    orchestrator_task_id = None
+    orchestrator_status = None
+    metadata_json = {}
 
 
 class FakeDag:
@@ -60,6 +64,9 @@ class FakeDag:
     task_id = "task-1"
     status = "planned"
     nodes = [FakeDagNode()]
+
+
+FakeTask.dags = [FakeDag()]
 
 
 class FakeRepository:
@@ -116,6 +123,28 @@ class FakeRepository:
 
     async def list_ready_dag_nodes(self, task_id):
         return [FakeDagNode()]
+
+    async def get_task_dag(self, dag_id):
+        return FakeDag()
+
+    async def list_ready_dag_nodes_for_dag(self, dag_id):
+        return [FakeDagNode()]
+
+    async def mark_dag_node_failed(self, **kwargs):
+        node = FakeDagNode()
+        node.status = "failed"
+        node.metadata_json = {"failure_error": "failed"}
+        return node
+
+    async def mark_dag_node_skipped(self, **kwargs):
+        node = FakeDagNode()
+        node.status = "skipped"
+        return node
+
+    async def retry_dag_node(self, **kwargs):
+        node = FakeDagNode()
+        node.metadata_json = {"retry_count": 1}
+        return node
 
 
 class FakeModelProvider:

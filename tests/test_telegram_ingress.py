@@ -12,6 +12,21 @@ class FakeRepo:
     default_branch = "main"
 
 
+class FakeSession:
+    status = "active"
+
+
+class FakeTask:
+    id = "task-1"
+    external_id = "OS-1284"
+    status = "queued"
+    repo = "keychain-os-erp"
+    orchestrator_task_id = "multica-task-1"
+    orchestrator_status = "queued"
+    sessions = [FakeSession()]
+    dags = []
+
+
 class FakeHermesSession:
     def __init__(self) -> None:
         self.requests: list[HermesSessionRequest] = []
@@ -37,6 +52,9 @@ class FakeGraphStore:
 class FakeRepository:
     async def get_repo_by_name(self, name: str):
         return FakeRepo() if name == "keychain-os-erp" else None
+
+    async def find_task_by_external_id(self, external_id: str):
+        return FakeTask() if external_id == "OS-1284" else None
 
 
 def test_telegram_ingress_rejects_invalid_secret_token_when_configured() -> None:
@@ -135,3 +153,23 @@ def test_telegram_message_routes_repo_question_to_graph_store() -> None:
             metadata={"default_branch": "main"},
         )
     ]
+
+
+def test_telegram_task_status_command_returns_task_info() -> None:
+    client = TestClient(create_app(Settings(), repository=FakeRepository()))
+
+    response = client.post(
+        "/channels/telegram/webhook",
+        json={
+            "message": {
+                "chat": {"id": -1001234567890},
+                "from": {"id": 7},
+                "text": "/status OS-1284",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "task_info"
+    assert response.json()["command"] == "status"
+    assert response.json()["task_id"] == "task-1"

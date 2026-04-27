@@ -11,7 +11,12 @@ from agentic_sdlc_platform.glue.channel_router import (
     RouteTarget,
     parse_repo_query,
 )
-from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
+from agentic_sdlc_platform.glue.human_override import (
+    HumanOverrideHandler,
+    parse_human_override,
+    parse_task_info,
+)
+from agentic_sdlc_platform.glue.task_info import TaskInfoHandler
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort, HermesSessionRequest
 from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
@@ -112,6 +117,20 @@ async def handle_telegram_update(
         channel=channel,
         sender_id=sender_id_text,
     )
+    info_command = parse_task_info(text)
+    if info_command is not None:
+        result = await TaskInfoHandler(repository).handle(info_command)
+        return {
+            "ok": True,
+            "route": "task_info",
+            "task_id": result.task_id,
+            "external_id": result.external_id,
+            "command": result.command,
+            "answer": result.answer,
+            "session_id": None,
+            "message_id": None,
+        }
+
     override = parse_human_override(text)
     if override is not None:
         result = await HumanOverrideHandler(

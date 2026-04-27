@@ -13,6 +13,21 @@ class FakeRepo:
     default_branch = "main"
 
 
+class FakeSession:
+    status = "active"
+
+
+class FakeTask:
+    id = "task-1"
+    external_id = "OS-1284"
+    status = "queued"
+    repo = "keychain-os-erp"
+    orchestrator_task_id = "multica-task-1"
+    orchestrator_status = "queued"
+    sessions = [FakeSession()]
+    dags = []
+
+
 class FakeHermesSession:
     def __init__(self) -> None:
         self.requests: list[HermesSessionRequest] = []
@@ -55,6 +70,9 @@ class FakeIssueTracker:
 class FakeRepository:
     async def get_repo_by_name(self, name: str):
         return FakeRepo() if name == "keychain-os-erp" else None
+
+    async def find_task_by_external_id(self, external_id: str):
+        return FakeTask() if external_id == "OS-1284" else None
 
 
 def test_channel_ingress_routes_questions_to_hermes_direct() -> None:
@@ -239,3 +257,27 @@ def test_channel_ingress_routes_repo_scoped_question_to_graph_store() -> None:
             metadata={"linear_team_key": "OS", "default_branch": "main"},
         )
     ]
+
+
+def test_channel_ingress_task_status_command_returns_task_info() -> None:
+    client = TestClient(create_app(Settings(), repository=FakeRepository()))
+
+    response = client.post(
+        "/channels/messages",
+        json={
+            "provider": "slack",
+            "channel": "C123",
+            "sender_id": "U123",
+            "text": "/status OS-1284",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["route"] == "task_info"
+    assert response.json()["command"] == "status"
+    assert response.json()["task_id"] == "task-1"
+    assert response.json()["answer"] == (
+        "Task OS-1284 status: queued. "
+        "Orchestrator: multica-task-1 (queued). "
+        "Repo: keychain-os-erp. Sessions: 1 active session. DAG: none."
+    )

@@ -6,6 +6,7 @@ from hashlib import sha256
 from fastapi import HTTPException, status
 
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.dag_execution import build_dag_node_execution_metadata
 from agentic_sdlc_platform.glue.dag_templates import build_dag_template
 from agentic_sdlc_platform.glue.human_override import (
     HumanOverrideCommand,
@@ -19,11 +20,13 @@ from agentic_sdlc_platform.glue.task_event_normalizer import (
     NormalizedTaskUpdate,
     TaskEventNormalizer,
 )
+from agentic_sdlc_platform.glue.task_info import TaskInfoHandler
 from agentic_sdlc_platform.models.webhooks import WebhookAcceptedResponse
 from agentic_sdlc_platform.persistence.repository import (
     InboundEventWriteResult,
     PersistenceRepository,
 )
+from agentic_sdlc_platform.ports.graph_store import GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import (
     HermesSessionPort,
     HermesStartSessionRequest,
@@ -54,12 +57,14 @@ class WebhookBridge:
         task_orchestrator: TaskOrchestratorPort | None = None,
         issue_tracker: IssueTrackerPort | None = None,
         hermes_session: HermesSessionPort | None = None,
+        graph_store: GraphStorePort | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._task_orchestrator = task_orchestrator
         self._issue_tracker = issue_tracker
         self._hermes_session = hermes_session
+        self._graph_store = graph_store
         self._normalizer = TaskEventNormalizer(
             linear_agent_user_id=settings.linear_agent_user_id
         )
@@ -320,22 +325,9 @@ class WebhookBridge:
             message=body,
             metadata={"comment_id": comment_id} if comment_id else {},
         )
-        task = await self._repository.find_task_by_external_id(command.external_id)
-        if task is None:
-            reply_body = f"Task {command.external_id} was not found."
-            task_id = None
-        elif command.command == "context":
-            reply_body = await self._linear_context_reply(task)
-            task_id = task.id
-        elif command.command == "agents":
-            reply_body = self._linear_agents_reply(task)
-            task_id = task.id
-        elif command.command == "nodes":
-            reply_body = self._linear_nodes_reply(task)
-            task_id = task.id
-        else:
-            reply_body = self._linear_status_reply(task)
-            task_id = task.id
+        result = await TaskInfoHandler(self._repository).handle(command)
+        reply_body = result.answer
+        task_id = result.task_id
 
         await self._repository.record_session_event(
             session_id=agent_session_id,
@@ -671,18 +663,20 @@ class WebhookBridge:
         if self._task_orchestrator is None:
             return queued_nodes
         for node in ready_nodes:
+            metadata = await build_dag_node_execution_metadata(
+                dag=dag,
+                task=task,
+                node=node,
+                repository=self._repository,
+                graph_store=self._graph_store,
+            )
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
                     source="dag",
                     external_id=f"{dag.id}:{node.node_key}",
                     title=node.title,
                     repo=node.repo,
-                    metadata={
-                        "parent_task_id": task.id,
-                        "parent_external_id": task.external_id,
-                        "dag_id": dag.id,
-                        "node_key": node.node_key,
-                    },
+                    metadata=metadata,
                 )
             )
             queued_node = await self._repository.mark_dag_node_orchestrated(
@@ -690,6 +684,7 @@ class WebhookBridge:
                 node_key=node.node_key,
                 orchestrator_task_id=external_task.external_task_id,
                 orchestrator_status=external_task.status,
+                metadata=metadata,
             )
             queued_nodes.append(queued_node)
             await self._repository.record_audit_event(
@@ -830,6 +825,14 @@ class WebhookBridge:
         if node is None:
             return None
 
+        if node.status == "completed" and task_update.status == "merged":
+            await self._repository.update_dag_node_metadata(
+                dag_id=task_update.dag_id,
+                node_key=task_update.dag_node_key,
+                metadata=_pr_node_metadata(task_update),
+            )
+            return dag.task_id
+
         orchestration_status = task_update.status
         node_status = task_update.status
         if task_update.status == "merged":
@@ -859,6 +862,14 @@ class WebhookBridge:
                 node_key=task_update.dag_node_key,
                 orchestrator_status=orchestration_status,
             )
+            await self._repository.update_dag_node_metadata(
+                dag_id=task_update.dag_id,
+                node_key=task_update.dag_node_key,
+                metadata=_pr_node_metadata(task_update),
+            )
+            dag = await self._repository.get_task_dag(task_update.dag_id)
+            if dag is None:
+                return None
             ready_nodes = await self._repository.list_ready_dag_nodes_for_dag(
                 task_update.dag_id
             )
@@ -874,6 +885,7 @@ class WebhookBridge:
                 node_key=task_update.dag_node_key,
                 status=node_status,
                 orchestrator_status=orchestration_status,
+                metadata=_pr_node_metadata(task_update),
             )
 
         await self._repository.record_audit_event(
@@ -970,6 +982,24 @@ def _dag_progress_summary(task) -> str:
         f"DAG: {dag.status}, {len(completed)}/{len(dag.nodes)} completed, "
         f"{len(ready_nodes)} ready, next: {next_node}."
     )
+
+
+def _pr_node_metadata(task_update: NormalizedTaskUpdate) -> dict[str, object]:
+    metadata = task_update.metadata or {}
+    pr_metadata: dict[str, object] = {
+        "pr_state": task_update.status,
+    }
+    pull_request = metadata.get("pull_request")
+    if isinstance(pull_request, int):
+        pr_metadata["pr_number"] = pull_request
+    url = metadata.get("url")
+    if isinstance(url, str):
+        pr_metadata["pr_url"] = url
+    if task_update.repo:
+        pr_metadata["pr_repo"] = task_update.repo
+    if task_update.status == "merged":
+        pr_metadata["pr_state"] = "merged"
+    return pr_metadata
 
 
 def _linear_assignment_reply(

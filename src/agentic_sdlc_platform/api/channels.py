@@ -7,7 +7,12 @@ from agentic_sdlc_platform.glue.channel_router import (
     RouteTarget,
     parse_repo_query,
 )
-from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
+from agentic_sdlc_platform.glue.human_override import (
+    HumanOverrideHandler,
+    parse_human_override,
+    parse_task_info,
+)
+from agentic_sdlc_platform.glue.task_info import TaskInfoHandler
 from agentic_sdlc_platform.glue.ticket_command import (
     build_issue_create_request,
     parse_create_ticket,
@@ -53,6 +58,20 @@ async def accept_channel_message(
             issue_id=created_issue.issue_id,
             external_id=created_issue.external_id,
             url=created_issue.url,
+        )
+
+    info_command = parse_task_info(message.text)
+    if info_command is not None:
+        result = await TaskInfoHandler(request.app.state.repository).handle(info_command)
+        return ChannelAcceptedResponse(
+            accepted=True,
+            provider=message.provider,
+            channel=message.channel,
+            route="task_info",
+            task_id=result.task_id,
+            command=result.command,
+            external_id=result.external_id,
+            answer=result.answer,
         )
 
     override = parse_human_override(message.text)

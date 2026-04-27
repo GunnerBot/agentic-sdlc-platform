@@ -21,6 +21,37 @@ class FakeRepo:
     default_branch = "main"
 
 
+class FakeSession:
+    status = "active"
+
+
+class FakeNode:
+    node_key = "design"
+    title = "Design"
+    repo = "keychain-os-erp"
+    depends_on = ()
+    status = "queued"
+    orchestrator_task_id = "multica-node-1"
+    orchestrator_status = "queued"
+    metadata_json = {"expected_pr_reference": "dag/dag-1/design"}
+
+
+class FakeDag:
+    status = "planned"
+    nodes = [FakeNode()]
+
+
+class FakeTask:
+    id = "task-1"
+    external_id = "OS-1284"
+    status = "queued"
+    repo = "keychain-os-erp"
+    orchestrator_task_id = "multica-task-1"
+    orchestrator_status = "queued"
+    sessions = [FakeSession()]
+    dags = [FakeDag()]
+
+
 class FakeHermesSession:
     def __init__(self) -> None:
         self.requests: list[HermesSessionRequest] = []
@@ -59,6 +90,9 @@ class FakeIssueTracker:
 class FakeRepository:
     async def get_repo_by_name(self, name: str):
         return FakeRepo() if name == "keychain-os-erp" else None
+
+    async def find_task_by_external_id(self, external_id: str):
+        return FakeTask() if external_id == "OS-1284" else None
 
 
 async def test_slack_client_fetches_thread_context() -> None:
@@ -386,3 +420,40 @@ def test_slack_bare_create_ticket_uses_thread_context(monkeypatch) -> None:
             },
         )
     ]
+
+
+def test_slack_app_mention_task_nodes_command_returns_task_info() -> None:
+    body = json.dumps(
+        {
+            "type": "event_callback",
+            "event": {
+                "type": "app_mention",
+                "channel": "C123",
+                "user": "U123",
+                "text": "<@BOT> /nodes OS-1284",
+            },
+        }
+    ).encode("utf-8")
+    client = TestClient(
+        create_app(
+            Settings(slack_signing_secret="secret"),
+            repository=FakeRepository(),
+        )
+    )
+
+    response = client.post(
+        "/channels/slack/events",
+        content=body,
+        headers=signed_slack_headers(body, "secret"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "task_info"
+    assert response.json()["command"] == "nodes"
+    assert response.json()["task_id"] == "task-1"
+    assert response.json()["answer"] == (
+        "Task OS-1284 nodes:\n"
+        "Next runnable: design\n"
+        "- design: queued; repo keychain-os-erp; depends_on none; "
+        "orchestrator multica-node-1; pr none; failure none"
+    )

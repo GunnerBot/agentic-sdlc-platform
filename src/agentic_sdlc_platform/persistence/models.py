@@ -165,6 +165,11 @@ class TaskDagNode(Base):
         nullable=False,
         default=dict,
     )
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        MutableDict.as_mutable(JsonDocument),
+        nullable=False,
+        default=dict,
+    )
     status: Mapped[str] = mapped_column(nullable=False, default="ready")
     orchestrator_task_id: Mapped[str | None] = mapped_column(nullable=True)
     orchestrator_status: Mapped[str | None] = mapped_column(nullable=True)
@@ -180,6 +185,10 @@ class TaskDagNode(Base):
         if not isinstance(values, list):
             return ()
         return tuple(value for value in values if isinstance(value, str))
+
+    @property
+    def node_metadata(self) -> dict[str, object]:
+        return dict(self.metadata_json)
 
 
 class AuditEvent(Base):

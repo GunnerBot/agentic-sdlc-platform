@@ -269,33 +269,35 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
         assert dag.nodes[0].status == "queued"
         assert dag.nodes[0].orchestrator_task_id == "multica-dag-node-1"
         assert dag.nodes[1].status == "blocked"
-    assert task_orchestrator.created == [
-        TaskRequest(
-            source="linear",
-            external_id="OS-1284",
-            title="Build webhook bridge",
-            repo="keychain-os-erp",
-            inbound_event_id=task_orchestrator.created[0].inbound_event_id,
-            metadata={
-                "repo_provider": "github",
-                "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
-                "repo_default_branch": "main",
-                "repo_metadata": {},
-            },
-        ),
-        TaskRequest(
-            source="dag",
-            external_id=f"{dag.id}:reproduce",
-            title="Reproduce OS-1284",
-            repo="keychain-os-erp",
-            metadata={
-                "parent_task_id": response.json()["task_id"],
-                "parent_external_id": "OS-1284",
-                "dag_id": dag.id,
-                "node_key": "reproduce",
-            },
-        ),
-    ]
+    assert task_orchestrator.created[0] == TaskRequest(
+        source="linear",
+        external_id="OS-1284",
+        title="Build webhook bridge",
+        repo="keychain-os-erp",
+        inbound_event_id=task_orchestrator.created[0].inbound_event_id,
+        metadata={
+            "repo_provider": "github",
+            "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            "repo_default_branch": "main",
+            "repo_metadata": {},
+        },
+    )
+    assert task_orchestrator.created[1].source == "dag"
+    assert task_orchestrator.created[1].external_id == f"{dag.id}:reproduce"
+    assert task_orchestrator.created[1].metadata == {
+        "parent_task_id": response.json()["task_id"],
+        "parent_external_id": "OS-1284",
+        "dag_id": dag.id,
+        "node_key": "reproduce",
+        "dependency_node_keys": [],
+        "dependencies_completed": [],
+        "context_session_id": None,
+        "hermes_session_id": None,
+        "expected_pr_reference": f"dag/{dag.id}/reproduce",
+        "expected_branch": f"agent/dag/{dag.id}/reproduce",
+        "expected_pr_body_marker": f"dag/{dag.id}/reproduce",
+        "repo_context": {"status": "unavailable"},
+    }
     assert dag_created_event.metadata_json["template"] == "bugfix"
     assert dag_created_event.metadata_json["node_count"] == 4
     assert dag_node_enqueued_event.metadata_json["node_key"] == "reproduce"
@@ -756,12 +758,12 @@ async def test_linear_status_comment_replies_with_dag_progress() -> None:
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
         body=(
-            "Task OS-1284 status: queued. "
-            "Orchestrator: multica-task-1 (queued). "
-            "Repo: keychain-os-erp. Sessions: 1 active session. "
-            "DAG: planned, 0/5 completed, 1 ready, next: design."
-        ),
-    )
+                "Task OS-1284 status: queued. "
+                "Orchestrator: multica-task-1 (queued). "
+                "Repo: keychain-os-erp. Sessions: 1 active session. "
+                "DAG: planned, 0/5 completed, 0 skipped, 0 failed, 1 ready, next: design."
+            ),
+        )
 
 
 async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
@@ -824,20 +826,21 @@ async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
     assert response.json()["task_id"] == assignment_response.json()["task_id"]
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
-        body=(
-            "Task OS-1284 nodes:\n"
-            "- design: queued; repo keychain-os-erp; depends_on none; "
-            "orchestrator multica-task-2\n"
-            "- contract: blocked; repo keychain-os-erp; depends_on design; "
-            "orchestrator none\n"
-            "- implement: blocked; repo keychain-os-erp; depends_on contract; "
-            "orchestrator none\n"
-            "- verify: blocked; repo keychain-os-erp; depends_on implement; "
-            "orchestrator none\n"
-            "- review: blocked; repo keychain-os-erp; depends_on verify; "
-            "orchestrator none"
-        ),
-    )
+            body=(
+                "Task OS-1284 nodes:\n"
+                "Next runnable: design\n"
+                "- design: queued; repo keychain-os-erp; depends_on none; "
+                "orchestrator multica-task-2; pr none; failure none\n"
+                "- contract: blocked; repo keychain-os-erp; depends_on design; "
+                "orchestrator none; pr none; failure none\n"
+                "- implement: blocked; repo keychain-os-erp; depends_on contract; "
+                "orchestrator none; pr none; failure none\n"
+                "- verify: blocked; repo keychain-os-erp; depends_on implement; "
+                "orchestrator none; pr none; failure none\n"
+                "- review: blocked; repo keychain-os-erp; depends_on verify; "
+                "orchestrator none; pr none; failure none"
+            ),
+        )
 
 
 async def test_linear_context_comment_replies_with_repo_and_recent_events() -> None:

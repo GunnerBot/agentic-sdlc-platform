@@ -15,7 +15,12 @@ from agentic_sdlc_platform.glue.channel_router import (
     RouteTarget,
     parse_repo_query,
 )
-from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
+from agentic_sdlc_platform.glue.human_override import (
+    HumanOverrideHandler,
+    parse_human_override,
+    parse_task_info,
+)
+from agentic_sdlc_platform.glue.task_info import TaskInfoHandler
 from agentic_sdlc_platform.glue.ticket_command import (
     build_issue_create_request,
     parse_create_ticket,
@@ -126,6 +131,20 @@ async def slack_events(
             "issue_id": created_issue.issue_id,
             "external_id": created_issue.external_id,
             "url": created_issue.url,
+            "session_id": None,
+            "message_id": None,
+        }
+
+    info_command = parse_task_info(text)
+    if info_command is not None:
+        result = await TaskInfoHandler(request.app.state.repository).handle(info_command)
+        return {
+            "ok": True,
+            "route": "task_info",
+            "task_id": result.task_id,
+            "external_id": result.external_id,
+            "command": result.command,
+            "answer": result.answer,
             "session_id": None,
             "message_id": None,
         }

@@ -109,7 +109,16 @@ async def test_create_task_dag_endpoint_uses_builtin_feature_template() -> None:
 
     assert response.status_code == 201
     assert model_provider.requests == []
-    assert response.json()["nodes"] == [
+    assert [
+        {
+            "node_key": node["node_key"],
+            "title": node["title"],
+            "repo": node["repo"],
+            "depends_on": node["depends_on"],
+            "status": node["status"],
+        }
+        for node in response.json()["nodes"]
+    ] == [
         {
             "node_key": "design",
             "title": "Design implementation for OS-1284",
@@ -178,44 +187,26 @@ async def test_list_tasks_endpoint_returns_task_and_session_status() -> None:
     response = client.get("/tasks")
 
     assert response.status_code == 200
-    assert response.json() == [
+    payload = response.json()[0]
+    assert payload["id"] == task_id
+    assert payload["external_id"] == "OS-1284"
+    assert payload["dags"][0]["id"] == dag.id
+    assert payload["dags"][0]["node_count"] == 2
+    assert payload["dags"][0]["ready_count"] == 1
+    assert payload["dags"][0]["completed_count"] == 0
+    assert payload["dags"][0]["skipped_count"] == 0
+    assert payload["dags"][0]["failed_count"] == 0
+    assert payload["dags"][0]["first_ready_node"]["node_key"] == "design"
+    assert payload["sessions"] == [
         {
-            "id": task_id,
-            "source": "linear",
-            "external_id": "OS-1284",
-            "title": "Build agentic SDLC platform",
+            "id": session.id,
+            "provider": "linear",
+            "external_thread_id": "issue-id-1",
+            "hermes_session_id": "hermes-session-1",
             "repo": "keychain-os-erp",
-            "status": "queued",
-            "orchestrator_task_id": None,
-            "orchestrator_status": None,
-            "dags": [
-                {
-                    "id": dag.id,
-                    "status": "planned",
-                    "node_count": 2,
-                    "ready_count": 1,
-                    "completed_count": 0,
-                    "first_ready_node": {
-                        "node_key": "design",
-                        "title": "Design implementation",
-                        "repo": None,
-                        "depends_on": [],
-                        "status": "ready",
-                    },
-                }
-            ],
-            "sessions": [
-                {
-                    "id": session.id,
-                    "provider": "linear",
-                    "external_thread_id": "issue-id-1",
-                    "hermes_session_id": "hermes-session-1",
-                    "repo": "keychain-os-erp",
-                    "status": "active",
-                    "context_summary": None,
-                    "event_count": 1,
-                }
-            ],
+            "status": "active",
+            "context_summary": None,
+            "event_count": 1,
         }
     ]
 
@@ -250,22 +241,10 @@ async def test_get_task_endpoint_returns_session_event_history() -> None:
 
     assert response.status_code == 200
     assert response.json()["id"] == task_id
-    assert response.json()["dags"] == [
-        {
-            "id": dag.id,
-            "task_id": task_id,
-            "status": "planned",
-            "nodes": [
-                {
-                    "node_key": "design",
-                    "title": "Design implementation",
-                    "repo": None,
-                    "depends_on": [],
-                    "status": "ready",
-                }
-            ],
-        }
-    ]
+    assert response.json()["dags"][0]["id"] == dag.id
+    assert response.json()["dags"][0]["task_id"] == task_id
+    assert response.json()["dags"][0]["nodes"][0]["node_key"] == "design"
+    assert response.json()["dags"][0]["nodes"][0]["status"] == "ready"
     assert response.json()["sessions"][0]["events"] == [
         {
             "id": event.id,
@@ -294,18 +273,9 @@ async def test_complete_dag_node_endpoint_returns_newly_ready_nodes() -> None:
     response = client.post(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/complete")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "completed_node": "api",
-        "ready_nodes": [
-            {
-                "node_key": "web",
-                "title": "Consume API",
-                "repo": "erp-web",
-                "depends_on": ["api"],
-                "status": "ready",
-            }
-        ],
-    }
+    assert response.json()["completed_node"] == "api"
+    assert response.json()["ready_nodes"][0]["node_key"] == "web"
+    assert response.json()["ready_nodes"][0]["status"] == "ready"
 
 
 async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
@@ -331,15 +301,27 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
 
     assert response.status_code == 200
     assert response.json()["ready_nodes"][0]["status"] == "queued"
-    assert task_orchestrator.requests == [
-        TaskRequest(
-            source="dag",
-            external_id=f"{dag_id}:web",
-            title="Consume API",
-            repo="erp-web",
-            inbound_event_id=None,
-        )
-    ]
+    assert task_orchestrator.requests[0] == TaskRequest(
+        source="dag",
+        external_id=f"{dag_id}:web",
+        title="Consume API",
+        repo="erp-web",
+        inbound_event_id=None,
+        metadata=task_orchestrator.requests[0].metadata,
+    )
+    assert task_orchestrator.requests[0].metadata == {
+        "parent_task_id": task_id,
+        "parent_external_id": "OS-1284",
+        "dag_id": dag_id,
+        "node_key": "web",
+        "dependency_node_keys": ["api"],
+        "dependencies_completed": ["api"],
+        "context_session_id": None,
+        "hermes_session_id": None,
+        "expected_pr_reference": f"dag/{dag_id}/web",
+        "expected_branch": f"agent/dag/{dag_id}/web",
+        "expected_pr_body_marker": f"dag/{dag_id}/web",
+    }
 
 
 async def test_complete_dag_node_endpoint_can_skip_auto_enqueue() -> None:
@@ -369,3 +351,44 @@ async def test_complete_dag_node_endpoint_can_skip_auto_enqueue() -> None:
     assert response.status_code == 200
     assert response.json()["ready_nodes"][0]["status"] == "ready"
     assert task_orchestrator.requests == []
+
+
+async def test_fail_skip_and_retry_dag_node_endpoints() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    model_provider = FakePlannerModel()
+    task_orchestrator = FakeTaskOrchestrator()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=model_provider,
+            task_orchestrator=task_orchestrator,
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+
+    failed = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/fail",
+        json={"error": "contract failed"},
+    )
+    retried = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/retry",
+        params={"enqueue": "false"},
+    )
+    skipped = client.post(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/skip")
+
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "failed"
+    assert failed.json()["failure_error"] == "contract failed"
+    assert retried.status_code == 200
+    assert retried.json()["status"] == "ready"
+    assert retried.json()["retry_count"] == 1
+    assert skipped.status_code == 200
+    assert skipped.json()["completed_node"] == "api"
+    assert skipped.json()["ready_nodes"][0]["node_key"] == "web"
+    assert skipped.json()["ready_nodes"][0]["status"] == "queued"

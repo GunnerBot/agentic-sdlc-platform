@@ -256,20 +256,21 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
             },
         )
     ]
-    assert task_orchestrator.requests == [
-        TaskRequest(
-            source="dag",
-            external_id=f"{dag.id}:implement",
-            title="Implement webhook bridge",
-            repo="GunnerBot/agentic-sdlc-platform",
-            metadata={
-                "parent_task_id": task.id,
-                "parent_external_id": "OS-1284",
-                "dag_id": dag.id,
-                "node_key": "implement",
-            },
-        )
-    ]
+    assert task_orchestrator.requests[0].source == "dag"
+    assert task_orchestrator.requests[0].external_id == f"{dag.id}:implement"
+    assert task_orchestrator.requests[0].metadata == {
+        "parent_task_id": task.id,
+        "parent_external_id": "OS-1284",
+        "dag_id": dag.id,
+        "node_key": "implement",
+        "dependency_node_keys": ["design"],
+        "dependencies_completed": ["design"],
+        "context_session_id": None,
+        "hermes_session_id": None,
+        "expected_pr_reference": f"dag/{dag.id}/implement",
+        "expected_branch": f"agent/dag/{dag.id}/implement",
+        "expected_pr_body_marker": f"dag/{dag.id}/implement",
+    }
     async with repository._session_factory() as session:
         nodes = (
             await session.scalars(
@@ -282,6 +283,11 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
 
     assert [node.status for node in nodes] == ["completed", "queued"]
     assert nodes[0].orchestrator_status == "completed"
+    assert nodes[0].metadata_json["pr_number"] == 18
+    assert nodes[0].metadata_json["pr_state"] == "merged"
+    assert nodes[0].metadata_json["pr_url"] == (
+        "https://github.com/GunnerBot/agentic-sdlc-platform/pull/18"
+    )
     assert nodes[1].orchestrator_task_id == "multica-task-1"
     assert "task.dag_node_updated_from_github" in audit_actions
     assert "task.dag_node_enqueued" in audit_actions

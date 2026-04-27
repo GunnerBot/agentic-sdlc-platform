@@ -19,6 +19,8 @@ from agentic_sdlc_platform.persistence.models import (
     utc_now,
 )
 
+DEPENDENCY_COMPLETE_STATUSES = {"completed", "skipped"}
+
 
 @dataclass(frozen=True)
 class InboundEventWriteResult:
@@ -309,7 +311,10 @@ class PersistenceRepository:
             result = await session.execute(
                 select(TaskDag)
                 .where(TaskDag.id == dag_id)
-                .options(selectinload(TaskDag.nodes), selectinload(TaskDag.task))
+                .options(
+                    selectinload(TaskDag.nodes),
+                    selectinload(TaskDag.task).selectinload(Task.sessions),
+                )
             )
             return result.scalars().first()
 
@@ -325,9 +330,7 @@ class PersistenceRepository:
             if dag is None:
                 return []
 
-            completed = {
-                node.node_key for node in dag.nodes if node.status == "completed"
-            }
+            completed = _completed_dependency_keys(dag.nodes)
             ready_nodes = []
             for node in dag.nodes:
                 if node.status not in {"ready", "blocked"}:
@@ -347,9 +350,7 @@ class PersistenceRepository:
             if dag is None:
                 return []
 
-            completed = {
-                node.node_key for node in dag.nodes if node.status == "completed"
-            }
+            completed = _completed_dependency_keys(dag.nodes)
             ready_nodes = []
             for node in dag.nodes:
                 if node.status not in {"ready", "blocked"}:
@@ -386,6 +387,7 @@ class PersistenceRepository:
         node_key: str,
         status: str,
         orchestrator_status: str | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> TaskDagNode:
         async with self._session_factory() as session:
             result = await session.execute(
@@ -398,6 +400,75 @@ class PersistenceRepository:
             node.status = status
             if orchestrator_status is not None:
                 node.orchestrator_status = orchestrator_status
+            if metadata is not None:
+                node.metadata_json.update(metadata)
+            node.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(node)
+            return node
+
+    async def update_dag_node_metadata(
+        self,
+        dag_id: str,
+        node_key: str,
+        metadata: dict[str, object],
+    ) -> TaskDagNode:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskDagNode).where(
+                    TaskDagNode.dag_id == dag_id,
+                    TaskDagNode.node_key == node_key,
+                )
+            )
+            node = result.scalar_one()
+            node.metadata_json.update(metadata)
+            node.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(node)
+            return node
+
+    async def mark_dag_node_failed(
+        self,
+        dag_id: str,
+        node_key: str,
+        error: str,
+    ) -> TaskDagNode:
+        return await self.update_dag_node_status(
+            dag_id=dag_id,
+            node_key=node_key,
+            status="failed",
+            orchestrator_status="failed",
+            metadata={"failure_error": error},
+        )
+
+    async def mark_dag_node_skipped(self, dag_id: str, node_key: str) -> TaskDagNode:
+        return await self.update_dag_node_status(
+            dag_id=dag_id,
+            node_key=node_key,
+            status="skipped",
+            orchestrator_status="skipped",
+        )
+
+    async def retry_dag_node(self, dag_id: str, node_key: str) -> TaskDagNode:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskDagNode).where(
+                    TaskDagNode.dag_id == dag_id,
+                    TaskDagNode.node_key == node_key,
+                )
+            )
+            node = result.scalar_one()
+            retry_count = node.metadata_json.get("retry_count", 0)
+            retry_count = retry_count if isinstance(retry_count, int) else 0
+            node.status = "ready"
+            node.orchestrator_status = None
+            node.orchestrator_task_id = None
+            node.metadata_json.update(
+                {
+                    "retry_count": retry_count + 1,
+                    "failure_error": None,
+                }
+            )
             node.updated_at = utc_now()
             await session.commit()
             await session.refresh(node)
@@ -409,6 +480,7 @@ class PersistenceRepository:
         node_key: str,
         orchestrator_task_id: str,
         orchestrator_status: str,
+        metadata: dict[str, object] | None = None,
     ) -> TaskDagNode:
         async with self._session_factory() as session:
             result = await session.execute(
@@ -421,6 +493,8 @@ class PersistenceRepository:
             node.status = orchestrator_status
             node.orchestrator_task_id = orchestrator_task_id
             node.orchestrator_status = orchestrator_status
+            if metadata is not None:
+                node.metadata_json.update(metadata)
             node.updated_at = utc_now()
             await session.commit()
             await session.refresh(node)
@@ -544,3 +618,11 @@ class PersistenceRepository:
             )
         )
         return result.scalar_one()
+
+
+def _completed_dependency_keys(nodes: list[TaskDagNode]) -> set[str]:
+    return {
+        node.node_key
+        for node in nodes
+        if node.status in DEPENDENCY_COMPLETE_STATUSES
+    }

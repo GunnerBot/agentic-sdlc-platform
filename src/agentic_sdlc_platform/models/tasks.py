@@ -15,6 +15,15 @@ class TaskDagNodeResponse(BaseModel):
     repo: str | None = None
     depends_on: list[str]
     status: str
+    orchestrator_task_id: str | None = None
+    orchestrator_status: str | None = None
+    pr_number: int | None = None
+    pr_url: str | None = None
+    pr_state: str | None = None
+    expected_pr_reference: str | None = None
+    expected_branch: str | None = None
+    failure_error: str | None = None
+    retry_count: int = 0
 
 
 class TaskDagResponse(BaseModel):
@@ -30,12 +39,18 @@ class TaskDagSummaryResponse(BaseModel):
     node_count: int
     ready_count: int
     completed_count: int
+    skipped_count: int = 0
+    failed_count: int = 0
     first_ready_node: TaskDagNodeResponse | None = None
 
 
 class CompleteDagNodeResponse(BaseModel):
     completed_node: str
     ready_nodes: list[TaskDagNodeResponse]
+
+
+class FailDagNodeRequest(BaseModel):
+    error: str = Field(min_length=1)
 
 
 class AgentSessionEventResponse(BaseModel):

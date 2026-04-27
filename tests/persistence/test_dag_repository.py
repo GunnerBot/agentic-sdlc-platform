@@ -81,6 +81,7 @@ async def test_update_dag_node_status_and_fetch_dag() -> None:
         node_key="api",
         status="pr_open",
         orchestrator_status="pr_open",
+        metadata={"pr_number": 17},
     )
     fetched = await repository.get_task_dag(dag.id)
 
@@ -88,3 +89,31 @@ async def test_update_dag_node_status_and_fetch_dag() -> None:
     assert fetched.task_id == task_id
     assert fetched.nodes[0].status == "pr_open"
     assert fetched.nodes[0].orchestrator_status == "pr_open"
+    assert fetched.nodes[0].metadata_json["pr_number"] == 17
+
+
+async def test_retry_and_skip_dag_node_update_ready_dependencies() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask(id="api", title="Add API contract"),
+            Subtask(id="web", title="Consume API", depends_on=("api",)),
+        ],
+    )
+
+    failed = await repository.mark_dag_node_failed(
+        dag_id=dag.id,
+        node_key="api",
+        error="tests failed",
+    )
+    retried = await repository.retry_dag_node(dag_id=dag.id, node_key="api")
+    await repository.mark_dag_node_skipped(dag_id=dag.id, node_key="api")
+    ready = await repository.list_ready_dag_nodes_for_dag(dag.id)
+
+    assert failed.status == "failed"
+    assert failed.metadata_json["failure_error"] == "tests failed"
+    assert retried.status == "ready"
+    assert retried.metadata_json["retry_count"] == 1
+    assert [node.node_key for node in ready] == ["web"]
