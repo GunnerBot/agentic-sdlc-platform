@@ -28,28 +28,39 @@ class GitHubAppSourceControl:
 
     async def list_installation_repositories(self) -> SourceInstallation:
         token = await self._installation_token()
+        repositories: list[object] = []
         try:
             async with httpx.AsyncClient(
                 base_url=self._settings.github_app_api_base_url,
                 timeout=self._settings.github_app_timeout_seconds,
                 transport=self._transport,
             ) as client:
-                response = await client.get(
-                    "/installation/repositories",
-                    headers={
-                        "Accept": "application/vnd.github+json",
-                        "Authorization": f"Bearer {token}",
-                        "X-GitHub-Api-Version": "2022-11-28",
-                    },
-                )
-                response.raise_for_status()
+                page = 1
+                per_page = 100
+                while True:
+                    response = await client.get(
+                        "/installation/repositories",
+                        headers={
+                            "Accept": "application/vnd.github+json",
+                            "Authorization": f"Bearer {token}",
+                            "X-GitHub-Api-Version": "2022-11-28",
+                        },
+                        params={"per_page": per_page, "page": page},
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    page_repositories = payload.get("repositories")
+                    if not isinstance(page_repositories, list):
+                        raise SourceControlError(
+                            "github app repository listing returned invalid response"
+                        )
+                    repositories.extend(page_repositories)
+                    if len(page_repositories) < per_page:
+                        break
+                    page += 1
         except httpx.HTTPError as exc:
             raise SourceControlError("github app repository listing failed") from exc
 
-        payload = response.json()
-        repositories = payload.get("repositories")
-        if not isinstance(repositories, list):
-            raise SourceControlError("github app repository listing returned invalid response")
         return SourceInstallation(
             provider=self.provider,
             installation_id=_required(self._settings.github_app_installation_id),

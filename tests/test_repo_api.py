@@ -338,7 +338,7 @@ async def test_github_app_import_endpoint_registers_repositories_without_write_e
 
 
 async def test_github_app_installation_endpoint_requires_configuration() -> None:
-    client = TestClient(create_app(Settings()))
+    client = TestClient(create_app(Settings(github_app_read_only_enabled=False)))
 
     response = client.get("/repos/github-app/installation")
 
