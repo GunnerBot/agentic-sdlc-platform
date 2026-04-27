@@ -327,10 +327,7 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
     )
     dag_id = created.json()["id"]
 
-    response = client.post(
-        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/complete",
-        params={"enqueue_ready": "true"},
-    )
+    response = client.post(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/complete")
 
     assert response.status_code == 200
     assert response.json()["ready_nodes"][0]["status"] == "queued"
@@ -343,3 +340,32 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
             inbound_event_id=None,
         )
     ]
+
+
+async def test_complete_dag_node_endpoint_can_skip_auto_enqueue() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    model_provider = FakePlannerModel()
+    task_orchestrator = FakeTaskOrchestrator()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=model_provider,
+            task_orchestrator=task_orchestrator,
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+
+    response = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/complete",
+        params={"enqueue_ready": "false"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ready_nodes"][0]["status"] == "ready"
+    assert task_orchestrator.requests == []

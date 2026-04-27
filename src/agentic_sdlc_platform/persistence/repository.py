@@ -321,7 +321,7 @@ class PersistenceRepository:
             }
             ready_nodes = []
             for node in dag.nodes:
-                if node.status == "completed":
+                if node.status not in {"ready", "blocked"}:
                     continue
                 if all(dependency in completed for dependency in node.depends_on):
                     ready_nodes.append(node)

@@ -88,7 +88,7 @@ async def complete_dag_node(
     dag_id: str,
     node_key: str,
     request: Request,
-    enqueue_ready: Annotated[str, Query(pattern="^(true|false)$")] = "false",
+    enqueue_ready: Annotated[str, Query(pattern="^(true|false)$")] = "true",
 ) -> CompleteDagNodeResponse:
     await request.app.state.repository.mark_dag_node_completed(
         dag_id=dag_id,
