@@ -1,7 +1,12 @@
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
-from agentic_sdlc_platform.models.repos import RepoResponse, UpsertRepoRequest
-from agentic_sdlc_platform.persistence.models import RepositoryRecord
+from agentic_sdlc_platform.models.repos import (
+    RepoIndexJobResponse,
+    RepoResponse,
+    UpsertRepoRequest,
+)
+from agentic_sdlc_platform.persistence.models import RepoIndexJob, RepositoryRecord
+from agentic_sdlc_platform.ports.graph_store import GraphIndexRequest, GraphStoreError
 
 router = APIRouter(tags=["repos"])
 
@@ -48,6 +53,54 @@ async def get_repo(repo_name: str, request: Request) -> RepoResponse:
     return _repo_response(repo)
 
 
+@router.post(
+    "/{repo_name}/index",
+    response_model=RepoIndexJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Repository not found"}},
+)
+async def index_repo(repo_name: str, request: Request) -> RepoIndexJobResponse:
+    repo = await request.app.state.repository.get_repo_by_name(repo_name)
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Repository not found",
+        )
+
+    job = await request.app.state.repository.create_repo_index_job(
+        repo_name=repo.name,
+        provider="graphify",
+        metadata={"default_branch": repo.default_branch},
+    )
+    try:
+        result = await request.app.state.graph_store.index(
+            GraphIndexRequest(
+                repo=repo.name,
+                clone_url=repo.clone_url,
+                default_branch=repo.default_branch,
+                metadata={key: str(value) for key, value in repo.metadata_json.items()},
+            )
+        )
+    except GraphStoreError as exc:
+        job = await request.app.state.repository.mark_repo_index_job_failed(
+            job_id=job.id,
+            error=str(exc),
+        )
+    else:
+        job = await request.app.state.repository.mark_repo_index_job_completed(
+            job_id=job.id,
+            external_index_id=result.external_index_id,
+            status=result.status,
+        )
+    return _index_job_response(job)
+
+
+@router.get("/{repo_name}/index-jobs", response_model=list[RepoIndexJobResponse])
+async def list_repo_index_jobs(repo_name: str, request: Request) -> list[RepoIndexJobResponse]:
+    jobs = await request.app.state.repository.list_repo_index_jobs(repo_name=repo_name)
+    return [_index_job_response(job) for job in jobs]
+
+
 def _repo_response(repo: RepositoryRecord) -> RepoResponse:
     return RepoResponse(
         id=repo.id,
@@ -57,4 +110,16 @@ def _repo_response(repo: RepositoryRecord) -> RepoResponse:
         default_branch=repo.default_branch,
         status=repo.status,
         metadata=repo.metadata_json,
+    )
+
+
+def _index_job_response(job: RepoIndexJob) -> RepoIndexJobResponse:
+    return RepoIndexJobResponse(
+        id=job.id,
+        repo_name=job.repo_name,
+        provider=job.provider,
+        external_index_id=job.external_index_id,
+        status=job.status,
+        error=job.error,
+        metadata=job.metadata_json,
     )

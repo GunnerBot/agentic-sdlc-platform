@@ -32,6 +32,16 @@ class FakeRepo:
     metadata_json = {}
 
 
+class FakeRepoIndexJob:
+    id = "repo-index-job-1"
+    repo_name = "keychain-os-erp"
+    provider = "graphify"
+    external_index_id = "idx:keychain-os-erp"
+    status = "indexed"
+    error = None
+    metadata_json = {}
+
+
 class FakeWriteResult:
     event = FakeEvent()
     created = True
@@ -80,6 +90,18 @@ class FakeRepository:
     async def get_repo_by_name(self, name):
         return FakeRepo()
 
+    async def create_repo_index_job(self, **kwargs):
+        return FakeRepoIndexJob()
+
+    async def mark_repo_index_job_completed(self, **kwargs):
+        return FakeRepoIndexJob()
+
+    async def mark_repo_index_job_failed(self, **kwargs):
+        return FakeRepoIndexJob()
+
+    async def list_repo_index_jobs(self, **kwargs):
+        return [FakeRepoIndexJob()]
+
     async def record_audit_event(self, **kwargs):
         return None
 
@@ -105,12 +127,22 @@ class FakeModelProvider:
         )
 
 
+class FakeGraphStore:
+    async def index(self, request):
+        class Result:
+            external_index_id = "idx:keychain-os-erp"
+            status = "indexed"
+
+        return Result()
+
+
 schema = schemathesis.openapi.from_asgi(
     "/openapi.json",
     create_app(
         Settings(),
         repository=FakeRepository(),
         model_provider=FakeModelProvider(),
+        graph_store=FakeGraphStore(),
     ),
 )
 

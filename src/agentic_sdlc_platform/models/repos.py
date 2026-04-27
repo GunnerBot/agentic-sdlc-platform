@@ -18,3 +18,13 @@ class RepoResponse(BaseModel):
     default_branch: str
     status: str
     metadata: dict[str, object]
+
+
+class RepoIndexJobResponse(BaseModel):
+    id: str
+    repo_name: str
+    provider: str
+    external_index_id: str | None = None
+    status: str
+    error: str | None = None
+    metadata: dict[str, object]

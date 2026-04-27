@@ -75,6 +75,28 @@ class RepositoryRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
 
 
+class RepoIndexJob(Base):
+    __tablename__ = "repo_index_jobs"
+    __table_args__ = (
+        Index("ix_repo_index_jobs_repo_status", "repo_name", "status"),
+        Index("ix_repo_index_jobs_external_index_id", "external_index_id"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    repo_name: Mapped[str] = mapped_column(nullable=False)
+    provider: Mapped[str] = mapped_column(nullable=False)
+    external_index_id: Mapped[str | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(nullable=False, default="queued")
+    error: Mapped[str | None] = mapped_column(nullable=True)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        MutableDict.as_mutable(JsonDocument),
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+
+
 class Task(Base):
     __tablename__ = "tasks"
     __table_args__ = (

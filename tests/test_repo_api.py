@@ -5,6 +5,20 @@ from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.persistence.models import Base
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
+from agentic_sdlc_platform.ports.graph_store import GraphIndexRequest, GraphIndexResult
+
+
+class FakeGraphStore:
+    def __init__(self) -> None:
+        self.index_requests: list[GraphIndexRequest] = []
+
+    async def index(self, request: GraphIndexRequest) -> GraphIndexResult:
+        self.index_requests.append(request)
+        return GraphIndexResult(
+            provider="graphify",
+            external_index_id=f"idx:{request.repo}",
+            status="indexed",
+        )
 
 
 async def build_repository() -> PersistenceRepository:
@@ -64,3 +78,38 @@ async def test_get_repo_endpoint_returns_404_for_unknown_repo() -> None:
     response = client.get("/repos/missing")
 
     assert response.status_code == 404
+
+
+async def test_index_repo_endpoint_creates_graphify_index_job() -> None:
+    repository = await build_repository()
+    graph_store = FakeGraphStore()
+    client = TestClient(
+        create_app(Settings(), repository=repository, graph_store=graph_store)
+    )
+    client.post(
+        "/repos",
+        json={
+            "name": "keychain-os-erp",
+            "provider": "github",
+            "clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            "default_branch": "main",
+            "metadata": {"linear_team_key": "OS"},
+        },
+    )
+
+    response = client.post("/repos/keychain-os-erp/index")
+    jobs_response = client.get("/repos/keychain-os-erp/index-jobs")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "indexed"
+    assert response.json()["external_index_id"] == "idx:keychain-os-erp"
+    assert jobs_response.status_code == 200
+    assert [job["id"] for job in jobs_response.json()] == [response.json()["id"]]
+    assert graph_store.index_requests == [
+        GraphIndexRequest(
+            repo="keychain-os-erp",
+            clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            default_branch="main",
+            metadata={"linear_team_key": "OS"},
+        )
+    ]

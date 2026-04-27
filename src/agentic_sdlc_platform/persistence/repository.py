@@ -10,6 +10,7 @@ from agentic_sdlc_platform.persistence.models import (
     AgentSession,
     AuditEvent,
     InboundEvent,
+    RepoIndexJob,
     RepositoryRecord,
     SessionEvent,
     Task,
@@ -187,6 +188,60 @@ class PersistenceRepository:
                 select(RepositoryRecord).where(RepositoryRecord.name == name)
             )
             return result.scalars().first()
+
+    async def create_repo_index_job(
+        self,
+        repo_name: str,
+        provider: str,
+        metadata: dict[str, object] | None = None,
+    ) -> RepoIndexJob:
+        async with self._session_factory() as session:
+            job = RepoIndexJob(
+                repo_name=repo_name,
+                provider=provider,
+                metadata_json=metadata or {},
+            )
+            session.add(job)
+            await session.commit()
+            await session.refresh(job)
+            return job
+
+    async def mark_repo_index_job_completed(
+        self,
+        job_id: str,
+        external_index_id: str,
+        status: str,
+    ) -> RepoIndexJob:
+        async with self._session_factory() as session:
+            job = await session.get(RepoIndexJob, job_id)
+            if job is None:
+                raise LookupError(f"repo index job {job_id} not found")
+            job.external_index_id = external_index_id
+            job.status = status
+            job.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(job)
+            return job
+
+    async def mark_repo_index_job_failed(self, job_id: str, error: str) -> RepoIndexJob:
+        async with self._session_factory() as session:
+            job = await session.get(RepoIndexJob, job_id)
+            if job is None:
+                raise LookupError(f"repo index job {job_id} not found")
+            job.status = "failed"
+            job.error = error
+            job.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(job)
+            return job
+
+    async def list_repo_index_jobs(self, repo_name: str | None = None) -> list[RepoIndexJob]:
+        async with self._session_factory() as session:
+            statement = select(RepoIndexJob).order_by(RepoIndexJob.created_at.desc())
+            if repo_name:
+                statement = statement.where(RepoIndexJob.repo_name == repo_name)
+            result = await session.execute(statement)
+            return list(result.scalars().all())
 
     async def list_tasks(
         self,
