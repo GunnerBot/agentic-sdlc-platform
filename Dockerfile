@@ -10,9 +10,11 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:0.5.31 /uv /uvx /bin/
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY alembic.ini ./
+COPY migrations ./migrations
 
 RUN uv sync --no-dev
 
 EXPOSE 8080
 
-CMD ["uv", "run", "agentic-sdlc-platform"]
+CMD ["sh", "-c", "uv run --no-dev alembic upgrade head && uv run --no-dev agentic-sdlc-platform"]
