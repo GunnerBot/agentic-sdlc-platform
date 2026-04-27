@@ -1,6 +1,7 @@
 from agentic_sdlc_platform.adapters.claude import ClaudeModelProvider
 from agentic_sdlc_platform.adapters.graphify import GraphifyGraphStore
 from agentic_sdlc_platform.adapters.hermes import HermesAgentAdapter
+from agentic_sdlc_platform.adapters.linear import LinearIssueAdapter
 from agentic_sdlc_platform.adapters.multica import MulticaTaskOrchestrator
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.glue.channel_budget import ChannelBudgetLedger
@@ -9,6 +10,7 @@ from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.persistence.session import build_session_factory
 from agentic_sdlc_platform.ports.graph_store import GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort
+from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerPort
 from agentic_sdlc_platform.ports.model_provider import ModelProviderPort
 from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
 
@@ -46,3 +48,9 @@ def build_channel_budget_ledger(settings: Settings) -> ChannelBudgetLedger:
         cap_usd=settings.channel_cost_cap_usd,
         default_request_cost_usd=settings.channel_default_request_cost_usd,
     )
+
+
+def build_issue_tracker(settings: Settings) -> IssueTrackerPort | None:
+    if not settings.linear_http_enabled:
+        return None
+    return LinearIssueAdapter(settings)

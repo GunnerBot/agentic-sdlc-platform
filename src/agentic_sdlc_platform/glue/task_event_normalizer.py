@@ -7,6 +7,7 @@ class NormalizedTaskEvent:
     source: str
     external_id: str
     title: str
+    issue_id: str | None = None
     repo: str | None = None
     url: str | None = None
     body: str | None = None
@@ -22,6 +23,9 @@ class NormalizedTaskUpdate:
 
 
 class TaskEventNormalizer:
+    def __init__(self, linear_agent_user_id: str | None = None) -> None:
+        self._linear_agent_user_id = linear_agent_user_id
+
     def normalize(
         self,
         source: str,
@@ -53,6 +57,9 @@ class TaskEventNormalizer:
             return None
 
         data = _dict_value(payload.get("data"))
+        if self._linear_agent_user_id and not self._matches_linear_assignee(data):
+            return None
+
         title = _str_value(data.get("title"))
         if not title:
             return None
@@ -65,6 +72,7 @@ class TaskEventNormalizer:
             source="linear",
             external_id=external_id,
             title=title,
+            issue_id=_str_value(data.get("id")),
             repo=_repo_from_labels(_linear_label_names(data)),
             url=_str_value(data.get("url")),
             body=_str_value(data.get("description")),
@@ -98,6 +106,10 @@ class TaskEventNormalizer:
             url=_str_value(issue.get("html_url")),
             body=_str_value(issue.get("body")),
         )
+
+    def _matches_linear_assignee(self, data: dict[str, object]) -> bool:
+        assignee = _dict_value(data.get("assignee"))
+        return _str_value(assignee.get("id")) == self._linear_agent_user_id
 
     def _normalize_github_pull_request_update(
         self,

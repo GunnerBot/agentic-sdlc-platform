@@ -12,12 +12,14 @@ from agentic_sdlc_platform.core.dependencies import (
     build_channel_budget_ledger,
     build_graph_store,
     build_hermes_session,
+    build_issue_tracker,
     build_model_provider,
     build_repository,
     build_task_orchestrator,
 )
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort
+from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerPort
 from agentic_sdlc_platform.ports.model_provider import ModelProviderPort
 from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
 
@@ -28,6 +30,7 @@ def create_app(
     task_orchestrator: TaskOrchestratorPort | None = None,
     hermes_session: HermesSessionPort | None = None,
     model_provider: ModelProviderPort | None = None,
+    issue_tracker: IssueTrackerPort | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     app = FastAPI(
@@ -45,6 +48,7 @@ def create_app(
     app.state.hermes_session = hermes_session or build_hermes_session(resolved_settings)
     app.state.channel_authorizer = build_channel_authorizer(resolved_settings)
     app.state.channel_budget_ledger = build_channel_budget_ledger(resolved_settings)
+    app.state.issue_tracker = issue_tracker or build_issue_tracker(resolved_settings)
     app.include_router(health_router)
     app.include_router(channel_router, prefix="/channels")
     app.include_router(slack_router, prefix="/channels/slack")

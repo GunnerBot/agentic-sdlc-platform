@@ -32,6 +32,41 @@ def test_normalizes_linear_issue_payload_to_task_event() -> None:
     assert task_event.url == "https://linear.app/keychain/issue/OS-1284"
 
 
+def test_linear_assignment_filter_requires_configured_agent_assignee() -> None:
+    normalizer = TaskEventNormalizer(linear_agent_user_id="agent-user-1")
+
+    unmatched = normalizer.normalize(
+        source="linear",
+        event_type="Issue",
+        payload={
+            "type": "Issue",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "someone-else"},
+            },
+        },
+    )
+    matched = normalizer.normalize(
+        source="linear",
+        event_type="Issue",
+        payload={
+            "type": "Issue",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+    )
+
+    assert unmatched is None
+    assert matched is not None
+    assert matched.issue_id == "issue-id-1"
+
+
 def test_normalizes_github_agent_labeled_issue_to_task_event() -> None:
     task_event = TaskEventNormalizer().normalize(
         source="github",

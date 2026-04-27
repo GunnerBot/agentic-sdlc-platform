@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     docs_enabled: bool = True
 
     linear_signing_secret: str | None = None
+    linear_http_enabled: bool = False
+    linear_base_url: str = "https://api.linear.app/graphql"
+    linear_api_key: str | None = Field(default=None, repr=False)
+    linear_timeout_seconds: float = 10.0
+    linear_agent_user_id: str | None = None
     github_webhook_secret: str | None = None
     slack_signing_secret: str | None = Field(default=None, repr=False)
     slack_signature_tolerance_seconds: int = 300

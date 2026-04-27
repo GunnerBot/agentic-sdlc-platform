@@ -12,6 +12,7 @@ from agentic_sdlc_platform.persistence.repository import (
     InboundEventWriteResult,
     PersistenceRepository,
 )
+from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerPort, IssueTrackerUpdate
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskOrchestratorPort,
     TaskRequest,
@@ -31,11 +32,15 @@ class WebhookBridge:
         settings: Settings,
         repository: PersistenceRepository,
         task_orchestrator: TaskOrchestratorPort | None = None,
+        issue_tracker: IssueTrackerPort | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._task_orchestrator = task_orchestrator
-        self._normalizer = TaskEventNormalizer()
+        self._issue_tracker = issue_tracker
+        self._normalizer = TaskEventNormalizer(
+            linear_agent_user_id=settings.linear_agent_user_id
+        )
 
     async def accept_linear(
         self,
@@ -186,6 +191,30 @@ class WebhookBridge:
                     "provider": self._task_orchestrator.provider,
                     "external_task_id": external_task.external_task_id,
                     "status": external_task.status,
+                },
+            )
+        if (
+            source == "linear"
+            and task_event.issue_id
+            and self._issue_tracker is not None
+        ):
+            await self._issue_tracker.mark_task_queued(
+                IssueTrackerUpdate(
+                    issue_id=task_event.issue_id,
+                    external_id=task_event.external_id,
+                    internal_task_id=task.id,
+                    orchestrator_task_id=task.orchestrator_task_id,
+                )
+            )
+            await self._repository.record_audit_event(
+                action="issue_tracker.task_queued",
+                actor="system",
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "provider": "linear",
+                    "issue_id": task_event.issue_id,
+                    "external_id": task_event.external_id,
                 },
             )
         return task.id
