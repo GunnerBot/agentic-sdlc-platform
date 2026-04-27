@@ -9,9 +9,9 @@ from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.glue.human_override import (
     HumanOverrideCommand,
     HumanOverrideHandler,
-    TaskStatusCommand,
+    TaskInfoCommand,
     parse_human_override,
-    parse_task_status,
+    parse_task_info,
 )
 from agentic_sdlc_platform.glue.task_event_normalizer import (
     NormalizedTaskEvent,
@@ -197,6 +197,17 @@ class WebhookBridge:
             )
             return agent_session.task_id
 
+        info_command = parse_task_info(body)
+        if info_command is not None:
+            return await self._handle_linear_info_command(
+                agent_session_id=agent_session.id,
+                issue_id=issue_id,
+                comment_id=comment_id,
+                body=body,
+                actor=actor,
+                command=info_command,
+            )
+
         command = parse_human_override(body)
         if command is not None:
             return await self._handle_linear_comment_command(
@@ -206,17 +217,6 @@ class WebhookBridge:
                 body=body,
                 actor=actor,
                 command=command,
-            )
-
-        status_command = parse_task_status(body)
-        if status_command is not None:
-            return await self._handle_linear_status_command(
-                agent_session_id=agent_session.id,
-                issue_id=issue_id,
-                comment_id=comment_id,
-                body=body,
-                actor=actor,
-                command=status_command,
             )
 
         await self._repository.record_session_event(
@@ -301,19 +301,19 @@ class WebhookBridge:
             )
         return result.task_id
 
-    async def _handle_linear_status_command(
+    async def _handle_linear_info_command(
         self,
         agent_session_id: str,
         issue_id: str,
         comment_id: str | None,
         body: str,
         actor: str,
-        command: TaskStatusCommand,
+        command: TaskInfoCommand,
     ) -> str | None:
         await self._repository.record_session_event(
             session_id=agent_session_id,
             direction="inbound",
-            event_type="status_command",
+            event_type=f"{command.command}_command",
             actor=actor,
             message=body,
             metadata={"comment_id": comment_id} if comment_id else {},
@@ -322,41 +322,98 @@ class WebhookBridge:
         if task is None:
             reply_body = f"Task {command.external_id} was not found."
             task_id = None
+        elif command.command == "context":
+            reply_body = await self._linear_context_reply(task)
+            task_id = task.id
+        elif command.command == "agents":
+            reply_body = self._linear_agents_reply(task)
+            task_id = task.id
         else:
-            active_sessions = sum(1 for session in task.sessions if session.status == "active")
-            session_word = "session" if active_sessions == 1 else "sessions"
-            orchestrator = "none"
-            if task.orchestrator_task_id:
-                status = task.orchestrator_status or "unknown"
-                orchestrator = f"{task.orchestrator_task_id} ({status})"
-            reply_body = (
-                f"Task {task.external_id} status: {task.status}. "
-                f"Orchestrator: {orchestrator}. "
-                f"Repo: {task.repo or 'none'}. "
-                f"Sessions: {active_sessions} active {session_word}."
-            )
+            reply_body = self._linear_status_reply(task)
             task_id = task.id
 
         await self._repository.record_session_event(
             session_id=agent_session_id,
             direction="outbound",
-            event_type="status_reply",
+            event_type=f"{command.command}_reply",
             actor="system",
             message=reply_body,
-            metadata={"external_id": command.external_id},
+            metadata={"command": command.command, "external_id": command.external_id},
         )
         if self._issue_tracker is not None:
             await self._issue_tracker.reply(
                 IssueTrackerReply(issue_id=issue_id, body=reply_body)
             )
         await self._repository.record_audit_event(
-            action="agent_session.status_requested",
+            action=f"agent_session.{command.command}_requested",
             actor=actor,
             target_type="agent_session",
             target_id=agent_session_id,
             metadata={"provider": "linear", "issue_id": issue_id, "task_id": task_id},
         )
         return task_id
+
+    def _linear_status_reply(self, task) -> str:
+        active_sessions = sum(1 for session in task.sessions if session.status == "active")
+        session_word = "session" if active_sessions == 1 else "sessions"
+        return (
+            f"Task {task.external_id} status: {task.status}. "
+            f"Orchestrator: {_orchestrator_summary(task)}. "
+            f"Repo: {task.repo or 'none'}. "
+            f"Sessions: {active_sessions} active {session_word}."
+        )
+
+    async def _linear_context_reply(self, task) -> str:
+        repo_summary = "none"
+        if task.repo:
+            repo = await self._repository.get_repo_by_name(task.repo)
+            if repo is None:
+                repo_summary = f"{task.repo} (unregistered)"
+            else:
+                repo_summary = f"{repo.name} ({repo.provider}, {repo.default_branch})"
+
+        events = [
+            event
+            for session in task.sessions
+            for event in sorted(session.events, key=lambda item: (item.created_at, item.id))
+            if not event.event_type.endswith("_command")
+        ]
+        recent_events = events[-3:]
+        event_lines = [
+            f"- {event.actor} {event.event_type}: {_single_line(event.message)}"
+            for event in recent_events
+        ]
+        if not event_lines:
+            event_lines = ["- none"]
+        return "\n".join(
+            [
+                f"Task {task.external_id} context:",
+                f"Repo: {repo_summary}",
+                "Recent events:",
+                *event_lines,
+            ]
+        )
+
+    def _linear_agents_reply(self, task) -> str:
+        session_lines = []
+        for session in task.sessions:
+            session_lines.append(
+                "- "
+                f"{session.provider} session {session.id}: "
+                f"status {session.status}, "
+                f"repo {session.repo or 'none'}, "
+                f"hermes {session.hermes_session_id or 'none'}, "
+                f"events {len(session.events)}"
+            )
+        if not session_lines:
+            session_lines = ["- none"]
+        return "\n".join(
+            [
+                f"Task {task.external_id} agents:",
+                f"Orchestrator: {_orchestrator_summary(task)}",
+                *session_lines,
+            ]
+        )
 
     async def _normalize_task(
         self,
@@ -643,3 +700,16 @@ def _dict_value(value: object) -> dict[str, object]:
 
 def _str_value(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _single_line(value: str | None) -> str:
+    if not value:
+        return ""
+    return " ".join(value.split())
+
+
+def _orchestrator_summary(task) -> str:
+    if not task.orchestrator_task_id:
+        return "none"
+    status = task.orchestrator_status or "unknown"
+    return f"{task.orchestrator_task_id} ({status})"

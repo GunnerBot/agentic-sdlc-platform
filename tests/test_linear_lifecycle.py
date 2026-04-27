@@ -548,3 +548,138 @@ async def test_linear_status_comment_replies_with_current_task_state() -> None:
             "Repo: none. Sessions: 1 active session."
         ),
     )
+
+
+async def test_linear_context_comment_replies_with_repo_and_recent_events() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={"owner": "platform"},
+    )
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=FakeTaskOrchestrator(),
+            hermes_session=FakeHermesSession(),
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    assignment_response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-context-1"},
+    )
+    client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-1",
+                "body": "Please check inventory allocation first.",
+                "user": {"id": "user-1"},
+                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-context-2"},
+    )
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-2",
+                "body": "/context OS-1284",
+                "user": {"id": "user-1"},
+                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-context-3"},
+    )
+
+    assert assignment_response.status_code == 202
+    assert response.status_code == 202
+    assert response.json()["task_id"] == assignment_response.json()["task_id"]
+    assert issue_tracker.replies[-1] == IssueTrackerReply(
+        issue_id="issue-id-1",
+        body=(
+            "Task OS-1284 context:\n"
+            "Repo: keychain-os-erp (github, main)\n"
+            "Recent events:\n"
+            "- system session_started: Build webhook bridge\n"
+            "- linear:user-1 comment: Please check inventory allocation first.\n"
+            "- agent reply: I will check inventory allocation first."
+        ),
+    )
+
+
+async def test_linear_agents_comment_replies_with_session_and_orchestrator_state() -> None:
+    repository = await build_repository()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=FakeTaskOrchestrator(),
+            hermes_session=FakeHermesSession(),
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    assignment_response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-agents-1"},
+    )
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-1",
+                "body": "/agents OS-1284",
+                "user": {"id": "user-1"},
+                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-agents-2"},
+    )
+
+    assert assignment_response.status_code == 202
+    assert response.status_code == 202
+    assert response.json()["task_id"] == assignment_response.json()["task_id"]
+    reply = issue_tracker.replies[-1]
+    assert reply.issue_id == "issue-id-1"
+    assert reply.body.startswith(
+        "Task OS-1284 agents:\n"
+        "Orchestrator: multica-task-1 (queued)\n"
+        "- linear session "
+    )
+    assert ": status active, repo none, hermes hermes-session-1, events 2" in reply.body

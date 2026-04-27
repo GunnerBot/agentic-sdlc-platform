@@ -30,7 +30,8 @@ class HumanOverrideResult:
 
 
 @dataclass(frozen=True)
-class TaskStatusCommand:
+class TaskInfoCommand:
+    command: str
     external_id: str
 
 
@@ -114,12 +115,16 @@ def parse_human_override(text: str) -> HumanOverrideCommand | None:
     )
 
 
-def parse_task_status(text: str) -> TaskStatusCommand | None:
+def parse_task_info(text: str) -> TaskInfoCommand | None:
     match = re.match(
-        r"^/status\s+(?P<external_id>[A-Z][A-Z0-9]+-\d+)\s*$",
+        r"^/(?P<command>status|context|agents)\s+"
+        r"(?P<external_id>[A-Z][A-Z0-9]+-\d+)\s*$",
         text.strip(),
         flags=re.IGNORECASE,
     )
     if not match:
         return None
-    return TaskStatusCommand(external_id=match.group("external_id"))
+    return TaskInfoCommand(
+        command=match.group("command").lower(),
+        external_id=match.group("external_id"),
+    )
