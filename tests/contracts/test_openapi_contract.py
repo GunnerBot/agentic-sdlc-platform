@@ -135,6 +135,14 @@ class FakeGraphStore:
 
         return Result()
 
+    async def query(self, request):
+        class Result:
+            provider = "graphify"
+            answer = "answer"
+            references = []
+
+        return Result()
+
 
 schema = schemathesis.openapi.from_asgi(
     "/openapi.json",

@@ -28,3 +28,13 @@ class RepoIndexJobResponse(BaseModel):
     status: str
     error: str | None = None
     metadata: dict[str, object]
+
+
+class RepoQuestionRequest(BaseModel):
+    question: str = Field(min_length=1)
+
+
+class RepoQuestionResponse(BaseModel):
+    provider: str
+    answer: str
+    references: list[str]

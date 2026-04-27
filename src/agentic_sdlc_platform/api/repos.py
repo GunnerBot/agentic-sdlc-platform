@@ -2,11 +2,13 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from agentic_sdlc_platform.models.repos import (
     RepoIndexJobResponse,
+    RepoQuestionRequest,
+    RepoQuestionResponse,
     RepoResponse,
     UpsertRepoRequest,
 )
 from agentic_sdlc_platform.persistence.models import RepoIndexJob, RepositoryRecord
-from agentic_sdlc_platform.ports.graph_store import GraphIndexRequest, GraphStoreError
+from agentic_sdlc_platform.ports.graph_store import GraphIndexRequest, GraphQuery, GraphStoreError
 
 router = APIRouter(tags=["repos"])
 
@@ -51,6 +53,48 @@ async def get_repo(repo_name: str, request: Request) -> RepoResponse:
             detail="Repository not found",
         )
     return _repo_response(repo)
+
+
+@router.post(
+    "/{repo_name}/ask",
+    response_model=RepoQuestionResponse,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Repository not found"},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "Graph store unavailable"},
+    },
+)
+async def ask_repo(
+    repo_name: str,
+    body: RepoQuestionRequest,
+    request: Request,
+) -> RepoQuestionResponse:
+    repo = await request.app.state.repository.get_repo_by_name(repo_name)
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Repository not found",
+        )
+    try:
+        result = await request.app.state.graph_store.query(
+            GraphQuery(
+                repo=repo.name,
+                question=body.question,
+                metadata={
+                    **{key: str(value) for key, value in repo.metadata_json.items()},
+                    "default_branch": repo.default_branch,
+                },
+            )
+        )
+    except GraphStoreError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    return RepoQuestionResponse(
+        provider=result.provider,
+        answer=result.answer,
+        references=result.references,
+    )
 
 
 @router.post(

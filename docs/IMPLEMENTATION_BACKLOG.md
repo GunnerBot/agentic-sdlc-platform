@@ -60,6 +60,7 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 - Expose task and agent session status APIs for triggered work and channel conversations
 - Add repository registry APIs for multi-repo ownership, defaults, and provider metadata
 - Add repo indexing job APIs backed by the Graphify graph store seam
+- Add repo Q&A API backed by Graphify queries for codebase questions
 
 ## Phase 4: DAG Decomposer
 
