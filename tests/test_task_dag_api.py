@@ -90,6 +90,63 @@ async def test_create_task_dag_endpoint_persists_planner_output() -> None:
     assert len(dags) == 1
 
 
+async def test_create_task_dag_endpoint_uses_builtin_feature_template() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    model_provider = FakePlannerModel()
+    client = TestClient(
+        create_app(Settings(), repository=repository, model_provider=model_provider)
+    )
+
+    response = client.post(
+        f"/tasks/{task_id}/dag",
+        json={
+            "spec_markdown": "# Feature\nBuild cross-repo workflow.",
+            "template": "feature",
+        },
+    )
+
+    assert response.status_code == 201
+    assert model_provider.requests == []
+    assert response.json()["nodes"] == [
+        {
+            "node_key": "design",
+            "title": "Design implementation for OS-1284",
+            "repo": "keychain-os-erp",
+            "depends_on": [],
+            "status": "ready",
+        },
+        {
+            "node_key": "contract",
+            "title": "Define contracts for OS-1284",
+            "repo": "keychain-os-erp",
+            "depends_on": ["design"],
+            "status": "blocked",
+        },
+        {
+            "node_key": "implement",
+            "title": "Implement OS-1284",
+            "repo": "keychain-os-erp",
+            "depends_on": ["contract"],
+            "status": "blocked",
+        },
+        {
+            "node_key": "verify",
+            "title": "Verify OS-1284",
+            "repo": "keychain-os-erp",
+            "depends_on": ["implement"],
+            "status": "blocked",
+        },
+        {
+            "node_key": "review",
+            "title": "Review and prepare PR for OS-1284",
+            "repo": "keychain-os-erp",
+            "depends_on": ["verify"],
+            "status": "blocked",
+        },
+    ]
+
+
 async def test_list_tasks_endpoint_returns_task_and_session_status() -> None:
     repository = await build_repository()
     task_id = await create_parent_task(repository)

@@ -3,6 +3,10 @@ from pydantic import BaseModel, Field
 
 class CreateTaskDagRequest(BaseModel):
     spec_markdown: str = Field(min_length=1)
+    template: str | None = Field(
+        default=None,
+        pattern="^(bugfix|feature|refactor|security)$",
+    )
 
 
 class TaskDagNodeResponse(BaseModel):

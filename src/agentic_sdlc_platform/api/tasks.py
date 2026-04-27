@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from agentic_sdlc_platform.glue.dag_decomposer import DagDecomposer
+from agentic_sdlc_platform.glue.dag_templates import build_dag_template
 from agentic_sdlc_platform.models.tasks import (
     AgentSessionDetailResponse,
     AgentSessionEventResponse,
@@ -57,9 +58,18 @@ async def create_task_dag(
     request: Request,
     body: CreateTaskDagRequest,
 ) -> TaskDagResponse:
-    subtasks = await DagDecomposer(model_provider=request.app.state.model_provider).decompose(
-        body.spec_markdown
-    )
+    task = await request.app.state.repository.get_task(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    if body.template:
+        subtasks = build_dag_template(body.template, task)
+    else:
+        subtasks = await DagDecomposer(model_provider=request.app.state.model_provider).decompose(
+            body.spec_markdown
+        )
     dag = await request.app.state.repository.create_task_dag(
         task_id=task_id,
         subtasks=subtasks,
