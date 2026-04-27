@@ -14,6 +14,15 @@ class IssueTrackerUpdate:
     orchestrator_task_id: str | None = None
 
 
+@dataclass(frozen=True)
+class IssueTrackerReply:
+    issue_id: str
+    body: str
+
+
 class IssueTrackerPort(Protocol):
     async def mark_task_queued(self, update: IssueTrackerUpdate) -> None:
+        raise NotImplementedError
+
+    async def reply(self, reply: IssueTrackerReply) -> None:
         raise NotImplementedError

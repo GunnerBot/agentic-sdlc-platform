@@ -5,7 +5,11 @@ import pytest
 
 from agentic_sdlc_platform.adapters.linear import LinearIssueAdapter
 from agentic_sdlc_platform.core.config import Settings
-from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerError, IssueTrackerUpdate
+from agentic_sdlc_platform.ports.issue_tracker import (
+    IssueTrackerError,
+    IssueTrackerReply,
+    IssueTrackerUpdate,
+)
 
 
 async def test_linear_adapter_blocks_when_http_disabled() -> None:
@@ -61,6 +65,41 @@ async def test_linear_adapter_posts_agent_queued_comment() -> None:
             "Agent task queued for OS-1284. "
             "Internal task: task-1. Multica task: multica-task-1."
         ),
+    }
+
+
+async def test_linear_adapter_posts_agent_reply_comment() -> None:
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(
+            status_code=200,
+            json={"data": {"commentCreate": {"success": True}}},
+        )
+
+    adapter = LinearIssueAdapter(
+        Settings(
+            linear_http_enabled=True,
+            linear_base_url="https://linear.local/graphql",
+            linear_api_key="test-key",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    await adapter.reply(
+        IssueTrackerReply(
+            issue_id="issue-id-1",
+            body="I will check inventory allocation first.",
+        )
+    )
+
+    assert captured_request is not None
+    payload = json.loads(captured_request.content)
+    assert payload["variables"] == {
+        "issueId": "issue-id-1",
+        "body": "I will check inventory allocation first.",
     }
 
 

@@ -6,13 +6,24 @@ from hashlib import sha256
 from fastapi import HTTPException, status
 
 from agentic_sdlc_platform.core.config import Settings
-from agentic_sdlc_platform.glue.task_event_normalizer import TaskEventNormalizer
+from agentic_sdlc_platform.glue.task_event_normalizer import (
+    NormalizedTaskEvent,
+    TaskEventNormalizer,
+)
 from agentic_sdlc_platform.models.webhooks import WebhookAcceptedResponse
 from agentic_sdlc_platform.persistence.repository import (
     InboundEventWriteResult,
     PersistenceRepository,
 )
-from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerPort, IssueTrackerUpdate
+from agentic_sdlc_platform.ports.hermes_session import (
+    HermesSessionPort,
+    HermesStartSessionRequest,
+)
+from agentic_sdlc_platform.ports.issue_tracker import (
+    IssueTrackerPort,
+    IssueTrackerReply,
+    IssueTrackerUpdate,
+)
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskOrchestratorPort,
     TaskRequest,
@@ -33,11 +44,13 @@ class WebhookBridge:
         repository: PersistenceRepository,
         task_orchestrator: TaskOrchestratorPort | None = None,
         issue_tracker: IssueTrackerPort | None = None,
+        hermes_session: HermesSessionPort | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._task_orchestrator = task_orchestrator
         self._issue_tracker = issue_tracker
+        self._hermes_session = hermes_session
         self._normalizer = TaskEventNormalizer(
             linear_agent_user_id=settings.linear_agent_user_id
         )
@@ -126,10 +139,80 @@ class WebhookBridge:
                 "event_type": event_type,
             },
         )
+        if source == "linear" and event_type == "Comment":
+            task_id = await self._resume_linear_session_from_comment(result, parsed_payload)
+            return RecordedDelivery(inbound_event=result, task_id=task_id)
         task_id = await self._normalize_task(result, source, event_type, parsed_payload)
         if task_id is None:
             task_id = await self._update_task_from_delivery(source, event_type, parsed_payload)
         return RecordedDelivery(inbound_event=result, task_id=task_id)
+
+    async def _resume_linear_session_from_comment(
+        self,
+        result: InboundEventWriteResult,
+        payload: dict[str, object],
+    ) -> str | None:
+        if (
+            not result.created
+            or self._hermes_session is None
+            or self._issue_tracker is None
+        ):
+            return None
+
+        data = _dict_value(payload.get("data"))
+        issue = _dict_value(data.get("issue"))
+        issue_id = _str_value(issue.get("id"))
+        comment_id = _str_value(data.get("id"))
+        body = _str_value(data.get("body"))
+        if not issue_id or not body:
+            return None
+
+        agent_session = await self._repository.find_agent_session(
+            provider="linear",
+            external_thread_id=issue_id,
+        )
+        if agent_session is None or not agent_session.hermes_session_id:
+            return None
+
+        actor = f"linear:{_str_value(_dict_value(data.get('user')).get('id')) or 'unknown'}"
+        await self._repository.record_session_event(
+            session_id=agent_session.id,
+            direction="inbound",
+            event_type="comment",
+            actor=actor,
+            message=body,
+            metadata={"comment_id": comment_id} if comment_id else {},
+        )
+        response = await self._hermes_session.resume_session(
+            session_id=agent_session.hermes_session_id,
+            text=body,
+            actor=actor,
+        )
+        if response.answer:
+            await self._repository.record_session_event(
+                session_id=agent_session.id,
+                direction="outbound",
+                event_type="reply",
+                actor="agent",
+                message=response.answer,
+                metadata={"message_id": response.message_id},
+            )
+            await self._issue_tracker.reply(
+                IssueTrackerReply(issue_id=issue_id, body=response.answer)
+            )
+        await self._repository.record_audit_event(
+            action="agent_session.resumed",
+            actor=actor,
+            target_type="agent_session",
+            target_id=agent_session.id,
+            metadata={
+                "provider": "linear",
+                "issue_id": issue_id,
+                "comment_id": comment_id,
+                "hermes_session_id": agent_session.hermes_session_id,
+            },
+        )
+        return agent_session.task_id
 
     async def _normalize_task(
         self,
@@ -217,7 +300,58 @@ class WebhookBridge:
                     "external_id": task_event.external_id,
                 },
             )
+        if (
+            source == "linear"
+            and task_event.issue_id
+            and self._hermes_session is not None
+        ):
+            await self._start_linear_agent_session(task_id=task.id, task_event=task_event)
         return task.id
+
+    async def _start_linear_agent_session(
+        self,
+        task_id: str,
+        task_event: NormalizedTaskEvent,
+    ) -> None:
+        text = task_event.title
+        if task_event.body:
+            text = f"{task_event.title}\n\n{task_event.body}"
+
+        response = await self._hermes_session.start_session(
+            HermesStartSessionRequest(
+                task_id=task_id,
+                provider="linear",
+                external_thread_id=task_event.issue_id,
+                text=text,
+                repo=task_event.repo,
+            )
+        )
+        agent_session = await self._repository.create_agent_session(
+            task_id=task_id,
+            provider="linear",
+            external_thread_id=task_event.issue_id,
+            hermes_session_id=response.session_id,
+            repo=task_event.repo,
+        )
+        await self._repository.record_session_event(
+            session_id=agent_session.id,
+            direction="outbound",
+            event_type="session_started",
+            actor="system",
+            message=text,
+            metadata={"message_id": response.message_id},
+        )
+        await self._repository.record_audit_event(
+            action="agent_session.started",
+            actor="system",
+            target_type="agent_session",
+            target_id=agent_session.id,
+            metadata={
+                "provider": "linear",
+                "issue_id": task_event.issue_id,
+                "hermes_session_id": response.session_id,
+            },
+        )
 
     async def _update_task_from_delivery(
         self,
@@ -308,3 +442,11 @@ class WebhookBridge:
         parsed = self._parse_payload(payload)
         event_type = parsed.get("type")
         return event_type if isinstance(event_type, str) else default
+
+
+def _dict_value(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _str_value(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None

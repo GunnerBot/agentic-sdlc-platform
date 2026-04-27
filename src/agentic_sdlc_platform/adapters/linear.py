@@ -1,7 +1,11 @@
 import httpx
 
 from agentic_sdlc_platform.core.config import Settings
-from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerError, IssueTrackerUpdate
+from agentic_sdlc_platform.ports.issue_tracker import (
+    IssueTrackerError,
+    IssueTrackerReply,
+    IssueTrackerUpdate,
+)
 
 
 class LinearIssueAdapter:
@@ -30,6 +34,12 @@ class LinearIssueAdapter:
         if update.orchestrator_task_id:
             body += f" Multica task: {update.orchestrator_task_id}."
 
+        await self._create_comment(issue_id=update.issue_id, body=body)
+
+    async def reply(self, reply: IssueTrackerReply) -> None:
+        await self._create_comment(issue_id=reply.issue_id, body=reply.body)
+
+    async def _create_comment(self, issue_id: str, body: str) -> None:
         payload = {
             "query": """
 mutation AgentTaskQueued($issueId: String!, $body: String!) {
@@ -39,7 +49,7 @@ mutation AgentTaskQueued($issueId: String!, $body: String!) {
 }
 """,
             "variables": {
-                "issueId": update.issue_id,
+                "issueId": issue_id,
                 "body": body,
             },
         }

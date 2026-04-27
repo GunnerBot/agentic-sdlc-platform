@@ -7,8 +7,10 @@ from sqlalchemy.orm import selectinload
 
 from agentic_sdlc_platform.glue.dag_decomposer import Subtask
 from agentic_sdlc_platform.persistence.models import (
+    AgentSession,
     AuditEvent,
     InboundEvent,
+    SessionEvent,
     Task,
     TaskDag,
     TaskDagNode,
@@ -208,6 +210,83 @@ class PersistenceRepository:
             await session.refresh(node)
             return node
 
+    async def create_agent_session(
+        self,
+        task_id: str,
+        provider: str,
+        external_thread_id: str,
+        hermes_session_id: str | None,
+        repo: str | None,
+    ) -> AgentSession:
+        async with self._session_factory() as session:
+            agent_session = AgentSession(
+                task_id=task_id,
+                provider=provider,
+                external_thread_id=external_thread_id,
+                hermes_session_id=hermes_session_id,
+                repo=repo,
+            )
+            session.add(agent_session)
+            try:
+                await session.commit()
+                await session.refresh(agent_session)
+                return agent_session
+            except IntegrityError:
+                await session.rollback()
+                existing = await self._find_agent_session(session, provider, external_thread_id)
+                existing.hermes_session_id = hermes_session_id or existing.hermes_session_id
+                existing.repo = repo or existing.repo
+                existing.updated_at = utc_now()
+                await session.commit()
+                await session.refresh(existing)
+                return existing
+
+    async def find_agent_session(
+        self,
+        provider: str,
+        external_thread_id: str,
+    ) -> AgentSession | None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AgentSession).where(
+                    AgentSession.provider == provider,
+                    AgentSession.external_thread_id == external_thread_id,
+                )
+            )
+            return result.scalars().first()
+
+    async def record_session_event(
+        self,
+        session_id: str,
+        direction: str,
+        event_type: str,
+        actor: str,
+        message: str | None,
+        metadata: dict[str, object] | None = None,
+    ) -> SessionEvent:
+        async with self._session_factory() as session:
+            event = SessionEvent(
+                session_id=session_id,
+                direction=direction,
+                event_type=event_type,
+                actor=actor,
+                message=message,
+                metadata_json=metadata or {},
+            )
+            session.add(event)
+            await session.commit()
+            await session.refresh(event)
+            return event
+
+    async def list_session_events(self, session_id: str) -> list[SessionEvent]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(SessionEvent)
+                .where(SessionEvent.session_id == session_id)
+                .order_by(SessionEvent.created_at, SessionEvent.id)
+            )
+            return list(result.scalars().all())
+
     async def _find_inbound_event(
         self,
         session: AsyncSession,
@@ -233,5 +312,19 @@ class PersistenceRepository:
             select(TaskDag)
             .where(TaskDag.id == dag_id)
             .options(selectinload(TaskDag.nodes))
+        )
+        return result.scalar_one()
+
+    async def _find_agent_session(
+        self,
+        session: AsyncSession,
+        provider: str,
+        external_thread_id: str,
+    ) -> AgentSession:
+        result = await session.execute(
+            select(AgentSession).where(
+                AgentSession.provider == provider,
+                AgentSession.external_thread_id == external_thread_id,
+            )
         )
         return result.scalar_one()

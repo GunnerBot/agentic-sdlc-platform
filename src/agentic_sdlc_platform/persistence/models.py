@@ -77,6 +77,7 @@ class Task(Base):
 
     inbound_event: Mapped[InboundEvent] = relationship(back_populates="tasks")
     dags: Mapped[list["TaskDag"]] = relationship(back_populates="task")
+    sessions: Mapped[list["AgentSession"]] = relationship(back_populates="task")
 
 
 class TaskDag(Base):
@@ -152,3 +153,63 @@ class AuditEvent(Base):
         default=dict,
     )
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+
+
+class AgentSession(Base):
+    __tablename__ = "agent_sessions"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "external_thread_id",
+            name="uq_agent_sessions_provider_thread",
+        ),
+        Index("ix_agent_sessions_task_id", "task_id"),
+        Index("ix_agent_sessions_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(nullable=False)
+    external_thread_id: Mapped[str] = mapped_column(nullable=False)
+    hermes_session_id: Mapped[str | None] = mapped_column(nullable=True)
+    repo: Mapped[str | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(nullable=False, default="active")
+    context_summary: Mapped[str | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+
+    task: Mapped[Task] = relationship(back_populates="sessions")
+    events: Mapped[list["SessionEvent"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="SessionEvent.created_at",
+    )
+
+
+class SessionEvent(Base):
+    __tablename__ = "session_events"
+    __table_args__ = (
+        Index("ix_session_events_session_id", "session_id"),
+        Index("ix_session_events_type", "event_type"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    direction: Mapped[str] = mapped_column(nullable=False)
+    event_type: Mapped[str] = mapped_column(nullable=False)
+    actor: Mapped[str] = mapped_column(nullable=False)
+    message: Mapped[str | None] = mapped_column(nullable=True)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        MutableDict.as_mutable(JsonDocument),
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+
+    session: Mapped[AgentSession] = relationship(back_populates="events")
