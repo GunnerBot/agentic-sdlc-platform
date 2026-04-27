@@ -8,12 +8,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY --from=ghcr.io/astral-sh/uv:0.5.31 /uv /uvx /bin/
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY alembic.ini ./
 COPY migrations ./migrations
 
-RUN uv sync --no-dev
+RUN uv sync --no-dev --frozen
 
 EXPOSE 8080
 
