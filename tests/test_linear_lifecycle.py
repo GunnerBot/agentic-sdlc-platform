@@ -493,3 +493,58 @@ async def test_linear_comment_command_updates_task_status_and_replies() -> None:
     task = await repository.find_task_by_external_id("OS-1284")
     assert task is not None
     assert task.status == "paused"
+
+
+async def test_linear_status_comment_replies_with_current_task_state() -> None:
+    repository = await build_repository()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=FakeTaskOrchestrator(),
+            hermes_session=FakeHermesSession(),
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    assignment_response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-status-1"},
+    )
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-1",
+                "body": "/status OS-1284",
+                "user": {"id": "user-1"},
+                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-status-2"},
+    )
+
+    assert assignment_response.status_code == 202
+    assert response.status_code == 202
+    assert response.json()["task_id"] == assignment_response.json()["task_id"]
+    assert issue_tracker.replies[-1] == IssueTrackerReply(
+        issue_id="issue-id-1",
+        body=(
+            "Task OS-1284 status: queued. "
+            "Orchestrator: multica-task-1 (queued). "
+            "Repo: none. Sessions: 1 active session."
+        ),
+    )

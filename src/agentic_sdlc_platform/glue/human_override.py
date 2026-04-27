@@ -29,6 +29,11 @@ class HumanOverrideResult:
     status: str
 
 
+@dataclass(frozen=True)
+class TaskStatusCommand:
+    external_id: str
+
+
 class HumanOverrideHandler:
     def __init__(
         self,
@@ -107,3 +112,14 @@ def parse_human_override(text: str) -> HumanOverrideCommand | None:
         external_id=match.group("external_id"),
         reason=reason.strip() if reason else None,
     )
+
+
+def parse_task_status(text: str) -> TaskStatusCommand | None:
+    match = re.match(
+        r"^/status\s+(?P<external_id>[A-Z][A-Z0-9]+-\d+)\s*$",
+        text.strip(),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return TaskStatusCommand(external_id=match.group("external_id"))

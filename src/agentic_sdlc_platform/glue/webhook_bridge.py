@@ -9,7 +9,9 @@ from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.glue.human_override import (
     HumanOverrideCommand,
     HumanOverrideHandler,
+    TaskStatusCommand,
     parse_human_override,
+    parse_task_status,
 )
 from agentic_sdlc_platform.glue.task_event_normalizer import (
     NormalizedTaskEvent,
@@ -206,6 +208,17 @@ class WebhookBridge:
                 command=command,
             )
 
+        status_command = parse_task_status(body)
+        if status_command is not None:
+            return await self._handle_linear_status_command(
+                agent_session_id=agent_session.id,
+                issue_id=issue_id,
+                comment_id=comment_id,
+                body=body,
+                actor=actor,
+                command=status_command,
+            )
+
         await self._repository.record_session_event(
             session_id=agent_session.id,
             direction="inbound",
@@ -287,6 +300,63 @@ class WebhookBridge:
                 IssueTrackerReply(issue_id=issue_id, body=reply_body)
             )
         return result.task_id
+
+    async def _handle_linear_status_command(
+        self,
+        agent_session_id: str,
+        issue_id: str,
+        comment_id: str | None,
+        body: str,
+        actor: str,
+        command: TaskStatusCommand,
+    ) -> str | None:
+        await self._repository.record_session_event(
+            session_id=agent_session_id,
+            direction="inbound",
+            event_type="status_command",
+            actor=actor,
+            message=body,
+            metadata={"comment_id": comment_id} if comment_id else {},
+        )
+        task = await self._repository.find_task_by_external_id(command.external_id)
+        if task is None:
+            reply_body = f"Task {command.external_id} was not found."
+            task_id = None
+        else:
+            active_sessions = sum(1 for session in task.sessions if session.status == "active")
+            session_word = "session" if active_sessions == 1 else "sessions"
+            orchestrator = "none"
+            if task.orchestrator_task_id:
+                status = task.orchestrator_status or "unknown"
+                orchestrator = f"{task.orchestrator_task_id} ({status})"
+            reply_body = (
+                f"Task {task.external_id} status: {task.status}. "
+                f"Orchestrator: {orchestrator}. "
+                f"Repo: {task.repo or 'none'}. "
+                f"Sessions: {active_sessions} active {session_word}."
+            )
+            task_id = task.id
+
+        await self._repository.record_session_event(
+            session_id=agent_session_id,
+            direction="outbound",
+            event_type="status_reply",
+            actor="system",
+            message=reply_body,
+            metadata={"external_id": command.external_id},
+        )
+        if self._issue_tracker is not None:
+            await self._issue_tracker.reply(
+                IssueTrackerReply(issue_id=issue_id, body=reply_body)
+            )
+        await self._repository.record_audit_event(
+            action="agent_session.status_requested",
+            actor=actor,
+            target_type="agent_session",
+            target_id=agent_session_id,
+            metadata={"provider": "linear", "issue_id": issue_id, "task_id": task_id},
+        )
+        return task_id
 
     async def _normalize_task(
         self,

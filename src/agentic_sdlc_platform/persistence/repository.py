@@ -119,7 +119,11 @@ class PersistenceRepository:
 
     async def find_task_by_external_id(self, external_id: str) -> Task | None:
         async with self._session_factory() as session:
-            result = await session.execute(select(Task).where(Task.external_id == external_id))
+            result = await session.execute(
+                select(Task)
+                .where(Task.external_id == external_id)
+                .options(selectinload(Task.sessions).selectinload(AgentSession.events))
+            )
             return result.scalars().first()
 
     async def update_task_status(self, task_id: str, status: str) -> Task:
