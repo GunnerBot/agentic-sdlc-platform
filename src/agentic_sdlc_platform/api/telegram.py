@@ -2,6 +2,7 @@ import hmac
 from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
 from agentic_sdlc_platform.glue.channel_router import ChannelMessage, ChannelRouter, RouteTarget
 from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
@@ -10,6 +11,33 @@ from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort, Hermes
 from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
 
 router = APIRouter(tags=["telegram"])
+
+
+class TelegramChatPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: StrictInt | StrictStr
+
+
+class TelegramUserPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: StrictInt | StrictStr
+
+
+class TelegramMessagePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chat: TelegramChatPayload
+    from_: TelegramUserPayload = Field(alias="from")
+    text: StrictStr
+
+
+class TelegramUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: TelegramMessagePayload | None = None
+    edited_message: TelegramMessagePayload | None = None
 
 
 @router.post(
@@ -22,7 +50,7 @@ router = APIRouter(tags=["telegram"])
 )
 async def telegram_webhook(
     request: Request,
-    payload: dict[str, object],
+    payload: TelegramUpdatePayload,
     telegram_secret: Annotated[
         str | None,
         Header(
@@ -32,7 +60,7 @@ async def telegram_webhook(
     ] = None,
 ) -> dict[str, object]:
     return await handle_telegram_update(
-        payload=payload,
+        payload=payload.model_dump(by_alias=True, exclude_none=True),
         configured_secret=request.app.state.settings.telegram_secret_token,
         provided_secret=telegram_secret,
         hermes_session=request.app.state.hermes_session,

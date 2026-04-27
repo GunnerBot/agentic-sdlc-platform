@@ -10,6 +10,7 @@ from agentic_sdlc_platform.persistence.models import (
     AgentSession,
     AuditEvent,
     InboundEvent,
+    RepositoryRecord,
     SessionEvent,
     Task,
     TaskDag,
@@ -130,6 +131,62 @@ class PersistenceRepository:
             await session.commit()
             await session.refresh(task)
             return task
+
+    async def upsert_repo(
+        self,
+        name: str,
+        provider: str,
+        clone_url: str | None,
+        default_branch: str,
+        metadata: dict[str, object] | None,
+        status: str = "active",
+    ) -> RepositoryRecord:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(RepositoryRecord).where(RepositoryRecord.name == name)
+            )
+            repo = result.scalars().first()
+            if repo is None:
+                repo = RepositoryRecord(
+                    name=name,
+                    provider=provider,
+                    clone_url=clone_url,
+                    default_branch=default_branch,
+                    metadata_json=metadata or {},
+                    status=status,
+                )
+                session.add(repo)
+            else:
+                repo.provider = provider
+                repo.clone_url = clone_url
+                repo.default_branch = default_branch
+                repo.metadata_json = metadata or {}
+                repo.status = status
+                repo.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(repo)
+            return repo
+
+    async def list_repos(
+        self,
+        provider: str | None = None,
+        status: str | None = None,
+    ) -> list[RepositoryRecord]:
+        async with self._session_factory() as session:
+            statement = select(RepositoryRecord).order_by(RepositoryRecord.name)
+            if provider:
+                statement = statement.where(RepositoryRecord.provider == provider)
+            if status:
+                statement = statement.where(RepositoryRecord.status == status)
+            result = await session.execute(statement)
+            return list(result.scalars().all())
+
+    async def get_repo_by_name(self, name: str) -> RepositoryRecord | None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(RepositoryRecord).where(RepositoryRecord.name == name)
+            )
+            return result.scalars().first()
 
     async def list_tasks(
         self,

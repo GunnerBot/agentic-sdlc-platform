@@ -53,6 +53,28 @@ class InboundEvent(Base):
     tasks: Mapped[list["Task"]] = relationship(back_populates="inbound_event")
 
 
+class RepositoryRecord(Base):
+    __tablename__ = "repositories"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_repositories_name"),
+        Index("ix_repositories_provider_status", "provider", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(nullable=False)
+    provider: Mapped[str] = mapped_column(nullable=False)
+    clone_url: Mapped[str | None] = mapped_column(nullable=True)
+    default_branch: Mapped[str] = mapped_column(nullable=False, default="main")
+    status: Mapped[str] = mapped_column(nullable=False, default="active")
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        MutableDict.as_mutable(JsonDocument),
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+
+
 class Task(Base):
     __tablename__ = "tasks"
     __table_args__ = (

@@ -58,6 +58,7 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 - Add human override commands: `/pause`, `/resume`, `/takeover`, `/context`, `/reject`
 - Enforce per-channel cost caps
 - Expose task and agent session status APIs for triggered work and channel conversations
+- Add repository registry APIs for multi-repo ownership, defaults, and provider metadata
 
 ## Phase 4: DAG Decomposer
 

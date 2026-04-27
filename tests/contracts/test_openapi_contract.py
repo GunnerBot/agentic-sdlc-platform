@@ -22,6 +22,16 @@ class FakeTask:
     sessions = []
 
 
+class FakeRepo:
+    id = "repo-1"
+    name = "keychain-os-erp"
+    provider = "github"
+    clone_url = None
+    default_branch = "main"
+    status = "active"
+    metadata_json = {}
+
+
 class FakeWriteResult:
     event = FakeEvent()
     created = True
@@ -60,6 +70,15 @@ class FakeRepository:
 
     async def get_task(self, task_id):
         return FakeTask()
+
+    async def upsert_repo(self, **kwargs):
+        return FakeRepo()
+
+    async def list_repos(self, **kwargs):
+        return [FakeRepo()]
+
+    async def get_repo_by_name(self, name):
+        return FakeRepo()
 
     async def record_audit_event(self, **kwargs):
         return None
