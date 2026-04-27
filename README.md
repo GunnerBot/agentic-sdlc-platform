@@ -35,6 +35,10 @@ private key in an ignored local file such as `secrets/github-app.pem`; do not co
 operations for automatic branch push and PR creation remain intentionally disabled until a separate
 write-scoped GitHub App policy is approved.
 
+Docker Compose includes a local dev service that implements the Hermes and Multica HTTP contracts
+with non-production tokens. This is only for local smoke testing; replace
+`ASDLC_HERMES_*` and `ASDLC_MULTICA_*` with real hosted service credentials before production use.
+
 ## Delivery Plan
 
 See `docs/IMPLEMENTATION_BACKLOG.md`.
