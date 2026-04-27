@@ -361,7 +361,8 @@ class WebhookBridge:
             f"Task {task.external_id} status: {task.status}. "
             f"Orchestrator: {_orchestrator_summary(task)}. "
             f"Repo: {task.repo or 'none'}. "
-            f"Sessions: {active_sessions} active {session_word}."
+            f"Sessions: {active_sessions} active {session_word}. "
+            f"{_dag_progress_summary(task)}"
         )
 
     async def _linear_context_reply(self, task) -> str:
@@ -730,3 +731,22 @@ def _orchestrator_summary(task) -> str:
         return "none"
     status = task.orchestrator_status or "unknown"
     return f"{task.orchestrator_task_id} ({status})"
+
+
+def _dag_progress_summary(task) -> str:
+    dags = getattr(task, "dags", [])
+    if not dags:
+        return "DAG: none."
+    dag = dags[0]
+    completed = {node.node_key for node in dag.nodes if node.status == "completed"}
+    ready_nodes = [
+        node
+        for node in dag.nodes
+        if node.status != "completed"
+        and all(dependency in completed for dependency in node.depends_on)
+    ]
+    next_node = ready_nodes[0].node_key if ready_nodes else "none"
+    return (
+        f"DAG: {dag.status}, {len(completed)}/{len(dag.nodes)} completed, "
+        f"{len(ready_nodes)} ready, next: {next_node}."
+    )

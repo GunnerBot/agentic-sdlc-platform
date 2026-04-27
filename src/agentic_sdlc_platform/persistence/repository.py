@@ -122,7 +122,10 @@ class PersistenceRepository:
             result = await session.execute(
                 select(Task)
                 .where(Task.external_id == external_id)
-                .options(selectinload(Task.sessions).selectinload(AgentSession.events))
+                .options(
+                    selectinload(Task.dags).selectinload(TaskDag.nodes),
+                    selectinload(Task.sessions).selectinload(AgentSession.events),
+                )
             )
             return result.scalars().first()
 
