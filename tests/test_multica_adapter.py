@@ -68,6 +68,7 @@ async def test_multica_adapter_posts_internal_task_request() -> None:
         "title": "Build webhook bridge",
         "repo": "keychain-os-erp",
         "inbound_event_id": "event-1",
+        "metadata": {},
     }
 
 

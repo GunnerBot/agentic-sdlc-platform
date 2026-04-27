@@ -17,9 +17,11 @@ class FakeTaskOrchestrator:
     provider = "multica"
 
     def __init__(self) -> None:
+        self.created: list[TaskRequest] = []
         self.updated: list[tuple[str, str]] = []
 
     async def create_task(self, request: TaskRequest) -> TaskResponse:
+        self.created.append(request)
         return TaskResponse(external_task_id="multica-task-1", status="queued")
 
     async def update_task(self, request) -> TaskResponse:
@@ -71,6 +73,13 @@ async def build_repository() -> PersistenceRepository:
 
 async def test_linear_assigned_issue_comments_when_agent_task_is_queued() -> None:
     repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
@@ -109,8 +118,115 @@ async def test_linear_assigned_issue_comments_when_agent_task_is_queued() -> Non
     ]
 
 
+async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="develop",
+        metadata={"linear_team_key": "OS"},
+    )
+    task_orchestrator = FakeTaskOrchestrator()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            issue_tracker=FakeIssueTracker(),
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-registered-repo-1"},
+    )
+
+    assert response.status_code == 202
+    assert task_orchestrator.created == [
+        TaskRequest(
+            source="linear",
+            external_id="OS-1284",
+            title="Build webhook bridge",
+            repo="keychain-os-erp",
+            inbound_event_id=task_orchestrator.created[0].inbound_event_id,
+            metadata={
+                "repo_provider": "github",
+                "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+                "repo_default_branch": "develop",
+                "repo_metadata": {"linear_team_key": "OS"},
+            },
+        )
+    ]
+
+
+async def test_linear_assigned_issue_blocks_when_repo_label_is_unknown() -> None:
+    repository = await build_repository()
+    task_orchestrator = FakeTaskOrchestrator()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+                "labels": {"nodes": [{"name": "repo:missing-repo"}]},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-unknown-repo-1"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["task_id"] is not None
+    assert task_orchestrator.created == []
+    assert issue_tracker.updates == []
+    assert issue_tracker.replies == [
+        IssueTrackerReply(
+            issue_id="issue-id-1",
+            body=(
+                "Repository missing-repo is not registered. "
+                "Register it before I can work on OS-1284."
+            ),
+        )
+    ]
+    task = await repository.find_task_by_external_id("OS-1284")
+    assert task is not None
+    assert task.status == "blocked"
+
+
 async def test_linear_assigned_issue_starts_and_persists_hermes_session() -> None:
     repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
     hermes_session = FakeHermesSession()
     client = TestClient(
         create_app(
@@ -191,6 +307,13 @@ async def test_linear_issue_assigned_to_other_user_is_not_actionable() -> None:
 
 async def test_linear_comment_resumes_session_and_replies_in_thread() -> None:
     repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
     hermes_session = FakeHermesSession()
     issue_tracker = FakeIssueTracker()
     client = TestClient(

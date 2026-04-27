@@ -38,6 +38,13 @@ async def build_repository() -> PersistenceRepository:
 
 async def test_actionable_linear_webhook_creates_multica_task_when_configured() -> None:
     repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
     task_orchestrator = FakeTaskOrchestrator()
     client = TestClient(
         create_app(
@@ -77,6 +84,12 @@ async def test_actionable_linear_webhook_creates_multica_task_when_configured() 
             title="Build webhook bridge",
             repo="keychain-os-erp",
             inbound_event_id=task.inbound_event_id,
+            metadata={
+                "repo_provider": "github",
+                "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+                "repo_default_branch": "main",
+                "repo_metadata": {},
+            },
         )
     ]
     assert task.orchestrator_task_id == "multica-task-1"

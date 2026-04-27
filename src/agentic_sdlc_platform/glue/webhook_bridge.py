@@ -324,6 +324,54 @@ class WebhookBridge:
                 "repo": task_event.repo,
             },
         )
+        task_metadata: dict[str, object] | None = None
+        if source == "linear" and task_event.repo:
+            repo = await self._repository.get_repo_by_name(task_event.repo)
+            if repo is None:
+                task = await self._repository.update_task_status(
+                    task_id=task.id,
+                    status="blocked",
+                )
+                await self._repository.record_audit_event(
+                    action="task.blocked_unknown_repo",
+                    actor="system",
+                    target_type="task",
+                    target_id=task.id,
+                    metadata={
+                        "provider": "linear",
+                        "external_id": task_event.external_id,
+                        "repo": task_event.repo,
+                    },
+                )
+                if task_event.issue_id and self._issue_tracker is not None:
+                    await self._issue_tracker.reply(
+                        IssueTrackerReply(
+                            issue_id=task_event.issue_id,
+                            body=(
+                                f"Repository {task_event.repo} is not registered. "
+                                f"Register it before I can work on {task_event.external_id}."
+                            ),
+                        )
+                    )
+                return task.id
+
+            task_metadata = {
+                "repo_provider": repo.provider,
+                "repo_clone_url": repo.clone_url,
+                "repo_default_branch": repo.default_branch,
+                "repo_metadata": dict(repo.metadata_json),
+            }
+            await self._repository.record_audit_event(
+                action="repo.resolved",
+                actor="system",
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "repo": repo.name,
+                    "provider": repo.provider,
+                    "default_branch": repo.default_branch,
+                },
+            )
         if self._task_orchestrator is not None:
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
@@ -332,6 +380,7 @@ class WebhookBridge:
                     title=task_event.title,
                     repo=task_event.repo,
                     inbound_event_id=result.event.id,
+                    metadata=task_metadata,
                 )
             )
             task = await self._repository.mark_task_orchestrated(

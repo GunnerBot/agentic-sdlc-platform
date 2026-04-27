@@ -32,6 +32,7 @@ class MulticaTaskOrchestrator:
             "title": request.title,
             "repo": request.repo,
             "inbound_event_id": request.inbound_event_id,
+            "metadata": request.metadata or {},
         }
         response = await self._request_with_retries(
             failure_message="multica create_task failed",

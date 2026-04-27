@@ -13,6 +13,7 @@ class TaskRequest:
     title: str
     repo: str | None = None
     inbound_event_id: str | None = None
+    metadata: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
