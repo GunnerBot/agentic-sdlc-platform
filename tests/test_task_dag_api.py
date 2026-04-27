@@ -12,7 +12,11 @@ from agentic_sdlc_platform.ports.agent_executor import (
     AgentExecutionResponse,
 )
 from agentic_sdlc_platform.ports.model_provider import ModelRequest, ModelResponse
-from agentic_sdlc_platform.ports.task_orchestrator import TaskRequest, TaskResponse
+from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskReadRequest,
+    TaskRequest,
+    TaskResponse,
+)
 
 
 class FakePlannerModel:
@@ -38,12 +42,24 @@ class FakeTaskOrchestrator:
 
     def __init__(self) -> None:
         self.requests: list[TaskRequest] = []
+        self.read_requests: list[TaskReadRequest] = []
 
     async def create_task(self, request: TaskRequest) -> TaskResponse:
         self.requests.append(request)
         return TaskResponse(
             external_task_id=f"multica-{request.external_id}",
             status="queued",
+        )
+
+    async def read_task(self, request: TaskReadRequest) -> TaskResponse:
+        self.read_requests.append(request)
+        return TaskResponse(
+            external_task_id=request.external_task_id,
+            status="running",
+            metadata={
+                "multica_task_status": "running",
+                "multica_runtime_provider": "codex",
+            },
         )
 
 
@@ -416,6 +432,47 @@ async def test_fail_skip_and_retry_dag_node_endpoints() -> None:
     assert skipped.json()["completed_node"] == "api"
     assert skipped.json()["ready_nodes"][0]["node_key"] == "web"
     assert skipped.json()["ready_nodes"][0]["status"] == "queued"
+
+
+async def test_sync_dag_node_orchestrator_state_polls_task_run() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    task_orchestrator = FakeTaskOrchestrator()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+            task_orchestrator=task_orchestrator,
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag_id,
+        node_key="api",
+        orchestrator_task_id="multica-task-1",
+        orchestrator_status="queued",
+        metadata={"multica_issue_id": "issue-1"},
+    )
+
+    response = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/sync-orchestrator"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+    assert response.json()["orchestrator_status"] == "running"
+    assert response.json()["multica_runtime_provider"] == "codex"
+    assert task_orchestrator.read_requests == [
+        TaskReadRequest(
+            external_task_id="multica-task-1",
+            metadata={"multica_issue_id": "issue-1"},
+        )
+    ]
 
 
 async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> None:

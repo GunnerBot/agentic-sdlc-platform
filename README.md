@@ -39,6 +39,21 @@ Docker Compose includes a local dev service that implements the Hermes and Multi
 with non-production tokens. This is only for local smoke testing; replace
 `ASDLC_HERMES_*` and `ASDLC_MULTICA_*` with real hosted service credentials before production use.
 
+For real self-hosted Multica, configure the platform with the Multica backend URL, PAT, workspace
+ID, and preferred runtime provider:
+
+```bash
+ASDLC_MULTICA_HTTP_ENABLED=true
+ASDLC_MULTICA_BASE_URL=http://127.0.0.1:18080
+ASDLC_MULTICA_API_KEY=<multica_pat>
+ASDLC_MULTICA_WORKSPACE_ID=<workspace_uuid>
+ASDLC_MULTICA_DEFAULT_RUNTIME_PROVIDER=codex
+```
+
+The adapter creates/reuses a deterministic Multica agent named
+`<ASDLC_MULTICA_AGENT_NAME_PREFIX>-<provider>`, creates an assigned Multica issue for each DAG node,
+then stores the real Multica issue, task, agent, runtime, and provider IDs on the DAG node metadata.
+
 ## Delivery Plan
 
 See `docs/IMPLEMENTATION_BACKLOG.md`.

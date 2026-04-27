@@ -685,12 +685,16 @@ class WebhookBridge:
                     metadata=metadata,
                 )
             )
+            persisted_metadata = {
+                **metadata,
+                **(external_task.metadata or {}),
+            }
             queued_node = await self._repository.mark_dag_node_orchestrated(
                 dag_id=dag.id,
                 node_key=node.node_key,
                 orchestrator_task_id=external_task.external_task_id,
                 orchestrator_status=external_task.status,
-                metadata=metadata,
+                metadata=persisted_metadata,
             )
             queued_nodes.append(queued_node)
             await create_or_start_execution(
@@ -699,7 +703,7 @@ class WebhookBridge:
                 dag=dag,
                 task=task,
                 node=node,
-                metadata=metadata,
+                metadata=persisted_metadata,
             )
             await self._repository.record_audit_event(
                 action="task.dag_node_enqueued",
@@ -865,6 +869,7 @@ class WebhookBridge:
                         "external_id": task_update.external_id,
                         "dag_id": task_update.dag_id,
                         "node_key": task_update.dag_node_key,
+                        **(dict(node.metadata_json) if node.metadata_json else {}),
                         **(task_update.metadata or {}),
                     },
                 )

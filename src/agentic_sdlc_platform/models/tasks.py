@@ -22,6 +22,11 @@ class TaskDagNodeResponse(BaseModel):
     pr_state: str | None = None
     expected_pr_reference: str | None = None
     expected_branch: str | None = None
+    multica_issue_id: str | None = None
+    multica_task_id: str | None = None
+    multica_agent_id: str | None = None
+    multica_runtime_id: str | None = None
+    multica_runtime_provider: str | None = None
     failure_error: str | None = None
     retry_count: int = 0
     executions: list["DagNodeExecutionResponse"] = Field(default_factory=list)

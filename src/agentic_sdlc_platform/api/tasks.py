@@ -25,7 +25,7 @@ from agentic_sdlc_platform.models.tasks import (
     UpdateDagNodeExecutionRequest,
 )
 from agentic_sdlc_platform.persistence.models import AgentSession, SessionEvent, Task, TaskDag
-from agentic_sdlc_platform.ports.task_orchestrator import TaskRequest
+from agentic_sdlc_platform.ports.task_orchestrator import TaskReadRequest, TaskRequest
 
 router = APIRouter(tags=["tasks"])
 
@@ -205,6 +205,47 @@ async def retry_dag_node(
 
 
 @router.post(
+    "/{task_id}/dag/{dag_id}/nodes/{node_key}/sync-orchestrator",
+    response_model=TaskDagNodeResponse,
+    status_code=status.HTTP_200_OK,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "DAG not found"}},
+)
+async def sync_dag_node_orchestrator_state(
+    task_id: str,
+    dag_id: str,
+    node_key: str,
+    request: Request,
+) -> TaskDagNodeResponse:
+    dag = await _require_task_dag(request, task_id, dag_id)
+    node = _node_from_dag(dag, node_key)
+    if not node.orchestrator_task_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="DAG node has no orchestrator task",
+        )
+    read_task = getattr(request.app.state.task_orchestrator, "read_task", None)
+    if read_task is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task orchestrator does not support status sync",
+        )
+    external_task = await read_task(
+        TaskReadRequest(
+            external_task_id=node.orchestrator_task_id,
+            metadata=dict(node.metadata_json),
+        )
+    )
+    synced_node = await request.app.state.repository.update_dag_node_status(
+        dag_id=dag_id,
+        node_key=node_key,
+        status=_node_status_from_orchestrator(external_task.status),
+        orchestrator_status=external_task.status,
+        metadata=external_task.metadata,
+    )
+    return _node_response(synced_node)
+
+
+@router.post(
     "/{task_id}/dag/{dag_id}/nodes/{node_key}/executions",
     response_model=DagNodeExecutionResponse,
     status_code=status.HTTP_201_CREATED,
@@ -315,13 +356,17 @@ async def _enqueue_ready_nodes(
                 metadata=metadata,
             )
         )
+        persisted_metadata = {
+            **metadata,
+            **(external_task.metadata or {}),
+        }
         queued_nodes.append(
             await request.app.state.repository.mark_dag_node_orchestrated(
                 dag_id=dag.id,
                 node_key=node.node_key,
                 orchestrator_task_id=external_task.external_task_id,
                 orchestrator_status=external_task.status,
-                metadata=metadata,
+                metadata=persisted_metadata,
             )
         )
         await create_or_start_execution(
@@ -330,7 +375,7 @@ async def _enqueue_ready_nodes(
             dag=dag,
             task=task,
             node=node,
-            metadata=metadata,
+            metadata=persisted_metadata,
         )
     return queued_nodes
 
@@ -388,6 +433,11 @@ def _node_response(node) -> TaskDagNodeResponse:
         pr_state=_str_or_none(metadata.get("pr_state")),
         expected_pr_reference=_str_or_none(metadata.get("expected_pr_reference")),
         expected_branch=_str_or_none(metadata.get("expected_branch")),
+        multica_issue_id=_str_or_none(metadata.get("multica_issue_id")),
+        multica_task_id=_str_or_none(metadata.get("multica_task_id")),
+        multica_agent_id=_str_or_none(metadata.get("multica_agent_id")),
+        multica_runtime_id=_str_or_none(metadata.get("multica_runtime_id")),
+        multica_runtime_provider=_str_or_none(metadata.get("multica_runtime_provider")),
         failure_error=_str_or_none(metadata.get("failure_error")),
         retry_count=_int_or_none(metadata.get("retry_count")) or 0,
         executions=[
@@ -480,6 +530,20 @@ def _str_or_none(value: object) -> str | None:
 
 def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _node_status_from_orchestrator(status: str) -> str:
+    return {
+        "pending": "queued",
+        "queued": "queued",
+        "dispatched": "running",
+        "running": "running",
+        "needs_input": "needs_input",
+        "completed": "completed",
+        "failed": "failed",
+        "cancelled": "cancelled",
+        "canceled": "cancelled",
+    }.get(status, status)
 
 
 def _execution_response(execution) -> DagNodeExecutionResponse:

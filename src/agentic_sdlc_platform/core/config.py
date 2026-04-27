@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     multica_http_enabled: bool = False
     multica_base_url: str | None = None
     multica_api_key: str | None = Field(default=None, repr=False)
+    multica_workspace_id: str | None = None
+    multica_default_runtime_provider: str = "codex"
+    multica_agent_name_prefix: str = "agentic-sdlc"
     multica_timeout_seconds: float = 10.0
     multica_max_retries: int = 2
     multica_retry_backoff_seconds: float = 0.25
