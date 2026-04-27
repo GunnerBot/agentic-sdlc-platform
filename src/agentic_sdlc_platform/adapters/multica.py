@@ -6,6 +6,9 @@ import httpx
 
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskCommentRequest,
+    TaskCommentResponse,
+    TaskConversationMessage,
     TaskOrchestratorError,
     TaskReadRequest,
     TaskRequest,
@@ -137,6 +140,81 @@ class MulticaTaskOrchestrator:
             metadata={key: value for key, value in response_metadata.items() if value is not None},
         )
 
+    async def add_comment(self, request: TaskCommentRequest) -> TaskCommentResponse:
+        metadata = request.metadata or {}
+        issue_id = _str(metadata.get("multica_issue_id")) or _str(
+            metadata.get("orchestrator_issue_id")
+        )
+        if issue_id is None:
+            task = await self._read_task_from_agents(request.external_task_id)
+            issue_id = _str(task.get("issue_id"))
+        if issue_id is None:
+            raise TaskOrchestratorError("multica issue ID is not available for comment")
+
+        response = await self._request_with_retries(
+            failure_message="multica add_comment failed",
+            method="POST",
+            path=f"/api/issues/{issue_id}/comments",
+            payload={
+                "type": "comment",
+                "content": request.body,
+            },
+        )
+        payload = _json_dict(response.json(), "multica comment")
+        return TaskCommentResponse(
+            external_task_id=request.external_task_id,
+            comment_id=_str(payload.get("id")),
+            status="commented",
+            metadata={
+                key: value
+                for key, value in {
+                    "multica_issue_id": issue_id,
+                    "multica_comment_id": _str(payload.get("id")),
+                    "multica_comment_actor": request.actor,
+                }.items()
+                if value is not None
+            },
+        )
+
+    async def list_comments(
+        self,
+        external_task_id: str,
+        metadata: dict[str, object] | None = None,
+    ) -> list[TaskConversationMessage]:
+        metadata = metadata or {}
+        issue_id = _str(metadata.get("multica_issue_id")) or _str(
+            metadata.get("orchestrator_issue_id")
+        )
+        if issue_id is None:
+            task = await self._read_task_from_agents(external_task_id)
+            issue_id = _str(task.get("issue_id"))
+        if issue_id is None:
+            raise TaskOrchestratorError("multica issue ID is not available for comments")
+
+        response = await self._request_with_retries(
+            failure_message="multica list_comments failed",
+            method="GET",
+            path=f"/api/issues/{issue_id}/comments",
+            payload=None,
+        )
+        comments = _json_list(response.json(), "multica comments")
+        messages = []
+        for comment in comments:
+            comment_id = _str(comment.get("id"))
+            body = _str(comment.get("content")) or _str(comment.get("body"))
+            if comment_id is None or body is None:
+                continue
+            messages.append(
+                TaskConversationMessage(
+                    id=comment_id,
+                    body=body,
+                    actor=_str(comment.get("author_id")) or _str(comment.get("actor")),
+                    created_at=_str(comment.get("created_at")),
+                    metadata={"multica_issue_id": issue_id},
+                )
+            )
+        return messages
+
     async def _ensure_agent(self, runtime_provider: str) -> dict[str, object]:
         agent_name = f"{self._settings.multica_agent_name_prefix}-{runtime_provider}"
         agents_response = await self._request_with_retries(
@@ -171,7 +249,10 @@ class MulticaTaskOrchestrator:
                 "description": "Agentic SDLC Platform runtime adapter agent.",
                 "instructions": (
                     "Execute the assigned DAG node exactly as described. "
-                    "Use the expected branch and PR reference from the issue description."
+                    "Use the expected branch and PR reference from the issue description. "
+                    "When running shell commands, prefix them with `rtk`. "
+                    "For repository questions, prefer supplied indexed graph context before "
+                    "broad codebase scans, then verify conclusions against checked-out source."
                 ),
                 "runtime_id": _required_str(runtime, "id", "multica runtime"),
                 "visibility": "workspace",
@@ -289,6 +370,15 @@ class MulticaTaskOrchestrator:
             "context_session_id": metadata.get("context_session_id"),
             "expected_pr_reference": metadata.get("expected_pr_reference"),
             "expected_branch": metadata.get("expected_branch"),
+            "runtime_policy": {
+                "shell_command_prefix": "rtk",
+                "use_rtk_for_terminal_commands": True,
+            },
+            "repo_context_policy": {
+                "preferred_context_source": "graphify",
+                "verify_graph_context_against_source": True,
+                "avoid_repeated_broad_scans_when_indexed_context_is_available": True,
+            },
             "metadata": metadata,
         }
         return (
@@ -296,6 +386,9 @@ class MulticaTaskOrchestrator:
             f"Title: {request.title}\n"
             f"Repo: {request.repo or 'not specified'}\n"
             f"Runtime provider: {runtime_provider}\n\n"
+            "Runtime policy:\n"
+            "- Prefix shell commands with `rtk`.\n"
+            "- Use indexed repo context first when available; verify with source reads.\n\n"
             "Execution payload:\n"
             "```json\n"
             f"{json.dumps(execution_payload, indent=2, sort_keys=True)}\n"

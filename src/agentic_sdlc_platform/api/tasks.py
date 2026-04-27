@@ -25,6 +25,7 @@ from agentic_sdlc_platform.models.tasks import (
     UpdateDagNodeExecutionRequest,
 )
 from agentic_sdlc_platform.persistence.models import AgentSession, SessionEvent, Task, TaskDag
+from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerReply
 from agentic_sdlc_platform.ports.task_orchestrator import TaskReadRequest, TaskRequest
 
 router = APIRouter(tags=["tasks"])
@@ -54,6 +55,87 @@ async def get_task(task_id: str, request: Request) -> TaskDetailResponse:
             detail="Task not found",
         )
     return _task_detail_response(task)
+
+
+@router.post(
+    "/{task_id}/sessions/{session_id}/sync-orchestrator",
+    response_model=AgentSessionDetailResponse,
+    status_code=status.HTTP_200_OK,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Session not found"}},
+)
+async def sync_session_orchestrator_comments(
+    task_id: str,
+    session_id: str,
+    request: Request,
+) -> AgentSessionDetailResponse:
+    task = await request.app.state.repository.get_task(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    session = next((item for item in task.sessions if item.id == session_id), None)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        )
+    if not session.orchestrator_task_id or not session.orchestrator_issue_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session is not orchestrator-backed",
+        )
+    list_comments = getattr(request.app.state.task_orchestrator, "list_comments", None)
+    if list_comments is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task orchestrator does not support conversation sync",
+        )
+
+    seen_comment_ids = {
+        value
+        for event in session.events
+        if isinstance((value := event.metadata_json.get("multica_comment_id")), str)
+    }
+    comments = await list_comments(
+        session.orchestrator_task_id,
+        {
+            "multica_issue_id": session.orchestrator_issue_id,
+            "orchestrator_issue_id": session.orchestrator_issue_id,
+        },
+    )
+    for comment in comments:
+        if comment.id in seen_comment_ids:
+            continue
+        await request.app.state.repository.record_session_event(
+            session_id=session.id,
+            direction="outbound",
+            event_type="orchestrator_reply",
+            actor=comment.actor or "agent",
+            message=comment.body,
+            metadata={
+                "multica_comment_id": comment.id,
+                **(comment.metadata or {}),
+            },
+        )
+        if session.provider == "linear" and request.app.state.issue_tracker is not None:
+            await request.app.state.issue_tracker.reply(
+                IssueTrackerReply(issue_id=session.external_thread_id, body=comment.body)
+            )
+
+    refreshed = await request.app.state.repository.get_task(task_id)
+    if refreshed is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    refreshed_session = next((item for item in refreshed.sessions if item.id == session_id), None)
+    if refreshed_session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        )
+    return _session_detail_response(refreshed_session)
 
 
 @router.post(
@@ -507,6 +589,9 @@ def _session_status_response(session: AgentSession) -> AgentSessionStatusRespons
         provider=session.provider,
         external_thread_id=session.external_thread_id,
         hermes_session_id=session.hermes_session_id,
+        orchestrator_provider=session.orchestrator_provider,
+        orchestrator_issue_id=session.orchestrator_issue_id,
+        orchestrator_task_id=session.orchestrator_task_id,
         repo=session.repo,
         status=session.status,
         context_summary=session.context_summary,

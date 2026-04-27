@@ -30,7 +30,7 @@ from agentic_sdlc_platform.persistence.repository import (
     PersistenceRepository,
 )
 from agentic_sdlc_platform.ports.agent_executor import AgentExecutorPort
-from agentic_sdlc_platform.ports.graph_store import GraphStorePort
+from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphStoreError, GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import (
     HermesSessionPort,
     HermesStartSessionRequest,
@@ -41,6 +41,7 @@ from agentic_sdlc_platform.ports.issue_tracker import (
     IssueTrackerUpdate,
 )
 from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskCommentRequest,
     TaskOrchestratorPort,
     TaskRequest,
     TaskUpdateRequest,
@@ -174,7 +175,6 @@ class WebhookBridge:
     ) -> str | None:
         if (
             not result.created
-            or self._hermes_session is None
             or self._issue_tracker is None
         ):
             return None
@@ -192,7 +192,7 @@ class WebhookBridge:
             provider="linear",
             external_thread_id=issue_id,
         )
-        if agent_session is None or not agent_session.hermes_session_id:
+        if agent_session is None:
             return None
 
         actor = f"linear:{user_id or 'unknown'}"
@@ -240,6 +240,54 @@ class WebhookBridge:
             message=body,
             metadata={"comment_id": comment_id} if comment_id else {},
         )
+        if (
+            agent_session.orchestrator_task_id
+            and agent_session.orchestrator_issue_id
+            and self._task_orchestrator is not None
+            and hasattr(self._task_orchestrator, "add_comment")
+        ):
+            response = await self._task_orchestrator.add_comment(
+                TaskCommentRequest(
+                    external_task_id=agent_session.orchestrator_task_id,
+                    body=body,
+                    actor=actor,
+                    metadata={
+                        "multica_issue_id": agent_session.orchestrator_issue_id,
+                        "provider": "linear",
+                        "external_thread_id": issue_id,
+                        "comment_id": comment_id,
+                    },
+                )
+            )
+            await self._repository.record_session_event(
+                session_id=agent_session.id,
+                direction="outbound",
+                event_type="orchestrator_comment",
+                actor="system",
+                message=body,
+                metadata={
+                    "orchestrator_provider": agent_session.orchestrator_provider,
+                    "orchestrator_task_id": agent_session.orchestrator_task_id,
+                    **(response.metadata or {}),
+                },
+            )
+            await self._repository.record_audit_event(
+                action="agent_session.orchestrator_comment_added",
+                actor=actor,
+                target_type="agent_session",
+                target_id=agent_session.id,
+                metadata={
+                    "provider": "linear",
+                    "issue_id": issue_id,
+                    "comment_id": comment_id,
+                    "orchestrator_task_id": agent_session.orchestrator_task_id,
+                },
+            )
+            return agent_session.task_id
+
+        if self._hermes_session is None or not agent_session.hermes_session_id:
+            return agent_session.task_id
+
         response = await self._hermes_session.resume_session(
             session_id=agent_session.hermes_session_id,
             text=body,
@@ -519,6 +567,9 @@ class WebhookBridge:
                 "repo_default_branch": repo.default_branch,
                 "repo_metadata": dict(repo.metadata_json),
             }
+            repo_context = await self._repo_context_for_task(repo.name, task_event)
+            if repo_context is not None:
+                task_metadata["repo_context"] = repo_context
             await self._repository.record_audit_event(
                 action="repo.resolved",
                 actor="system",
@@ -547,6 +598,19 @@ class WebhookBridge:
                 orchestrator_task_id=external_task.external_task_id,
                 orchestrator_status=external_task.status,
             )
+            if source == "linear" and task_event.issue_id:
+                await self._repository.create_agent_session(
+                    task_id=task.id,
+                    provider="linear",
+                    external_thread_id=task_event.issue_id,
+                    hermes_session_id=None,
+                    repo=task_event.repo,
+                    orchestrator_provider=self._task_orchestrator.provider,
+                    orchestrator_issue_id=_str_value(
+                        (external_task.metadata or {}).get("multica_issue_id")
+                    ),
+                    orchestrator_task_id=external_task.external_task_id,
+                )
             await self._repository.record_audit_event(
                 action="task.orchestrated",
                 actor="system",
@@ -637,6 +701,39 @@ class WebhookBridge:
                 },
             )
         return task.id
+
+    async def _repo_context_for_task(
+        self,
+        repo: str,
+        task_event: NormalizedTaskEvent,
+    ) -> dict[str, object] | None:
+        if (
+            self._graph_store is None
+            or not self._settings.vendor_http_enabled
+            or not self._settings.graphify_base_url
+        ):
+            return None
+        question = task_event.title
+        if task_event.body:
+            question = f"{task_event.title}\n\n{task_event.body}"
+        try:
+            result = await self._graph_store.query(
+                GraphQuery(
+                    repo=repo,
+                    question=question,
+                    metadata={
+                        "source": task_event.source,
+                        "external_id": task_event.external_id,
+                    },
+                )
+            )
+        except GraphStoreError:
+            return None
+        return {
+            "provider": result.provider,
+            "answer": result.answer,
+            "references": result.references,
+        }
 
     async def _enqueue_first_ready_dag_node(
         self,

@@ -6,6 +6,7 @@ import pytest
 from agentic_sdlc_platform.adapters.multica import MulticaTaskOrchestrator
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskCommentRequest,
     TaskOrchestratorError,
     TaskReadRequest,
     TaskRequest,
@@ -228,6 +229,44 @@ async def test_multica_adapter_reads_task_from_issue_task_runs() -> None:
         "multica_agent_id": "agent-codex",
         "multica_runtime_id": "runtime-codex",
         "multica_attempt": 2,
+    }
+
+
+async def test_multica_adapter_adds_followup_comment_to_issue() -> None:
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(status_code=201, json={"id": "comment-1"})
+
+    orchestrator = MulticaTaskOrchestrator(
+        multica_settings(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = await orchestrator.add_comment(
+        TaskCommentRequest(
+            external_task_id="multica-task-1",
+            body="Can you explain the exact class?",
+            actor="linear:user-1",
+            metadata={"multica_issue_id": "issue-1"},
+        )
+    )
+
+    assert response.external_task_id == "multica-task-1"
+    assert response.comment_id == "comment-1"
+    assert response.status == "commented"
+    assert response.metadata == {
+        "multica_issue_id": "issue-1",
+        "multica_comment_id": "comment-1",
+        "multica_comment_actor": "linear:user-1",
+    }
+    assert captured_request is not None
+    assert str(captured_request.url) == "https://multica.local/api/issues/issue-1/comments"
+    assert json.loads(captured_request.content) == {
+        "type": "comment",
+        "content": "Can you explain the exact class?",
     }
 
 

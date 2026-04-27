@@ -106,6 +106,9 @@ class AgentSessionStatusResponse(BaseModel):
     provider: str
     external_thread_id: str
     hermes_session_id: str | None = None
+    orchestrator_provider: str | None = None
+    orchestrator_issue_id: str | None = None
+    orchestrator_task_id: str | None = None
     repo: str | None = None
     status: str
     context_summary: str | None = None

@@ -36,6 +36,31 @@ class TaskReadRequest:
     metadata: dict[str, object] | None = None
 
 
+@dataclass(frozen=True)
+class TaskCommentRequest:
+    external_task_id: str
+    body: str
+    actor: str
+    metadata: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class TaskCommentResponse:
+    external_task_id: str
+    comment_id: str | None = None
+    status: str | None = None
+    metadata: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class TaskConversationMessage:
+    id: str
+    body: str
+    actor: str | None = None
+    created_at: str | None = None
+    metadata: dict[str, object] | None = None
+
+
 class TaskOrchestratorPort(Protocol):
     provider: str
 
@@ -46,4 +71,14 @@ class TaskOrchestratorPort(Protocol):
         raise NotImplementedError
 
     async def read_task(self, request: TaskReadRequest) -> TaskResponse:
+        raise NotImplementedError
+
+    async def add_comment(self, request: TaskCommentRequest) -> TaskCommentResponse:
+        raise NotImplementedError
+
+    async def list_comments(
+        self,
+        external_task_id: str,
+        metadata: dict[str, object] | None = None,
+    ) -> list[TaskConversationMessage]:
         raise NotImplementedError

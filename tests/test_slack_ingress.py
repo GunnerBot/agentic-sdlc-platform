@@ -2,6 +2,7 @@ import hmac
 import json
 import time
 from hashlib import sha256
+from types import SimpleNamespace
 
 import httpx
 from fastapi.testclient import TestClient
@@ -11,8 +12,16 @@ from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.glue.ticket_command import TicketThreadContext
 from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphQueryResult
-from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest, HermesSessionResponse
+from agentic_sdlc_platform.ports.hermes_session import (
+    HermesSessionRequest,
+    HermesSessionResponse,
+    HermesStartSessionRequest,
+)
 from agentic_sdlc_platform.ports.issue_tracker import IssueCreateRequest, IssueCreateResponse
+from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskCommentRequest,
+    TaskCommentResponse,
+)
 
 
 class FakeRepo:
@@ -55,10 +64,29 @@ class FakeTask:
 class FakeHermesSession:
     def __init__(self) -> None:
         self.requests: list[HermesSessionRequest] = []
+        self.started: list[HermesStartSessionRequest] = []
+        self.resumed: list[tuple[str, str, str]] = []
 
     async def ask(self, request: HermesSessionRequest) -> HermesSessionResponse:
         self.requests.append(request)
         return HermesSessionResponse(session_id="session-1", message_id="message-1")
+
+    async def start_session(self, request: HermesStartSessionRequest) -> HermesSessionResponse:
+        self.started.append(request)
+        return HermesSessionResponse(session_id="session-1", message_id="message-1")
+
+    async def resume_session(
+        self,
+        session_id: str,
+        text: str,
+        actor: str,
+    ) -> HermesSessionResponse:
+        self.resumed.append((session_id, text, actor))
+        return HermesSessionResponse(
+            session_id=session_id,
+            message_id="message-2",
+            answer="Follow-up answer.",
+        )
 
 
 class FakeGraphStore:
@@ -87,12 +115,80 @@ class FakeIssueTracker:
         )
 
 
+class FakeTaskOrchestrator:
+    provider = "multica"
+
+    def __init__(self) -> None:
+        self.comments: list[TaskCommentRequest] = []
+
+    async def add_comment(self, request: TaskCommentRequest) -> TaskCommentResponse:
+        self.comments.append(request)
+        return TaskCommentResponse(
+            external_task_id=request.external_task_id,
+            comment_id="multica-comment-1",
+            status="commented",
+            metadata={"multica_comment_id": "multica-comment-1"},
+        )
+
+
 class FakeRepository:
+    def __init__(self) -> None:
+        self.agent_sessions: dict[tuple[str, str], SimpleNamespace] = {}
+        self.session_events: list[tuple[str, str, str, str, str | None]] = []
+
     async def get_repo_by_name(self, name: str):
         return FakeRepo() if name == "keychain-os-erp" else None
 
     async def find_task_by_external_id(self, external_id: str):
         return FakeTask() if external_id == "OS-1284" else None
+
+    async def record_inbound_event(self, source, delivery_id, event_type, payload):
+        return SimpleNamespace(
+            event=SimpleNamespace(id=f"event-{delivery_id}"),
+            created=True,
+        )
+
+    async def create_task_from_event(self, event_id, source, external_id, title, repo):
+        return SimpleNamespace(id=f"task-{external_id}", external_id=external_id)
+
+    async def create_agent_session(
+        self,
+        task_id,
+        provider,
+        external_thread_id,
+        hermes_session_id,
+        repo,
+        **kwargs,
+    ):
+        session = SimpleNamespace(
+            id=f"session-{external_thread_id}",
+            task_id=task_id,
+            provider=provider,
+            external_thread_id=external_thread_id,
+            hermes_session_id=hermes_session_id,
+            orchestrator_provider=kwargs.get("orchestrator_provider"),
+            orchestrator_issue_id=kwargs.get("orchestrator_issue_id"),
+            orchestrator_task_id=kwargs.get("orchestrator_task_id"),
+            repo=repo,
+            events=[],
+        )
+        self.agent_sessions[(provider, external_thread_id)] = session
+        return session
+
+    async def find_agent_session(self, provider, external_thread_id):
+        return self.agent_sessions.get((provider, external_thread_id))
+
+    async def record_session_event(
+        self,
+        session_id,
+        direction,
+        event_type,
+        actor,
+        message,
+        metadata=None,
+    ):
+        self.session_events.append((session_id, direction, event_type, actor, message))
+        return SimpleNamespace(id=f"event-{len(self.session_events)}")
 
 
 async def test_slack_client_fetches_thread_context() -> None:
@@ -201,10 +297,12 @@ def test_slack_app_mention_routes_to_hermes() -> None:
         }
     ).encode("utf-8")
     hermes_session = FakeHermesSession()
+    repository = FakeRepository()
     client = TestClient(
         create_app(
             Settings(slack_signing_secret="secret"),
             hermes_session=hermes_session,
+            repository=repository,
         )
     )
 
@@ -221,13 +319,154 @@ def test_slack_app_mention_routes_to_hermes() -> None:
         "session_id": "session-1",
         "message_id": "message-1",
     }
-    assert hermes_session.requests == [
-        HermesSessionRequest(
+    assert hermes_session.started == [
+        HermesStartSessionRequest(
+            task_id="task-C123:root",
             provider="slack",
-            channel="C123",
-            sender_id="U123",
+            external_thread_id="C123:root",
             text="How does FEFO allocation work?",
             repo=None,
+        )
+    ]
+    assert repository.session_events == [
+        (
+            "session-C123:root",
+            "outbound",
+            "session_started",
+            "system",
+            "How does FEFO allocation work?",
+        )
+    ]
+
+
+def test_slack_thread_followup_resumes_stored_session() -> None:
+    repository = FakeRepository()
+    existing = SimpleNamespace(
+        id="session-C123:1710000000.000000",
+        task_id="task-1",
+        provider="slack",
+        external_thread_id="C123:1710000000.000000",
+        hermes_session_id="hermes-session-1",
+        repo="keychain-os-erp",
+    )
+    repository.agent_sessions[("slack", "C123:1710000000.000000")] = existing
+    hermes_session = FakeHermesSession()
+    body = json.dumps(
+        {
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "channel": "C123",
+                "user": "U123",
+                "thread_ts": "1710000000.000000",
+                "text": "Which class has the default mismatch?",
+            },
+        }
+    ).encode("utf-8")
+    client = TestClient(
+        create_app(
+            Settings(slack_signing_secret="secret"),
+            repository=repository,
+            hermes_session=hermes_session,
+        )
+    )
+
+    response = client.post(
+        "/channels/slack/events",
+        content=body,
+        headers=signed_slack_headers(body, "secret"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "route": "hermes_direct",
+        "session_id": "hermes-session-1",
+        "message_id": "message-2",
+    }
+    assert hermes_session.resumed == [
+        (
+            "hermes-session-1",
+            "Which class has the default mismatch?",
+            "slack:U123",
+        )
+    ]
+    assert repository.session_events == [
+        (
+            "session-C123:1710000000.000000",
+            "inbound",
+            "comment",
+            "slack:U123",
+            "Which class has the default mismatch?",
+        ),
+        (
+            "session-C123:1710000000.000000",
+            "outbound",
+            "reply",
+            "agent",
+            "Follow-up answer.",
+        ),
+    ]
+
+
+def test_slack_thread_followup_on_multica_session_adds_multica_comment() -> None:
+    repository = FakeRepository()
+    existing = SimpleNamespace(
+        id="session-C123:1710000000.000000",
+        task_id="task-1",
+        provider="slack",
+        external_thread_id="C123:1710000000.000000",
+        hermes_session_id=None,
+        orchestrator_provider="multica",
+        orchestrator_issue_id="multica-issue-1",
+        orchestrator_task_id="multica-task-1",
+        repo="keychain-os-erp",
+    )
+    repository.agent_sessions[("slack", "C123:1710000000.000000")] = existing
+    task_orchestrator = FakeTaskOrchestrator()
+    body = json.dumps(
+        {
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "channel": "C123",
+                "user": "U123",
+                "thread_ts": "1710000000.000000",
+                "text": "What exact class has the dryRun mismatch?",
+            },
+        }
+    ).encode("utf-8")
+    client = TestClient(
+        create_app(
+            Settings(slack_signing_secret="secret"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+        )
+    )
+
+    response = client.post(
+        "/channels/slack/events",
+        content=body,
+        headers=signed_slack_headers(body, "secret"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "route": "hermes_direct",
+        "session_id": None,
+        "message_id": "multica-comment-1",
+    }
+    assert task_orchestrator.comments == [
+        TaskCommentRequest(
+            external_task_id="multica-task-1",
+            body="What exact class has the dryRun mismatch?",
+            actor="slack:U123",
+            metadata={
+                "multica_issue_id": "multica-issue-1",
+                "provider": "slack",
+                "external_thread_id": "C123:1710000000.000000",
+            },
         )
     ]
 

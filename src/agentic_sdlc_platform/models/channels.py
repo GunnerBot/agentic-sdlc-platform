@@ -16,6 +16,7 @@ class ChannelMessageRequest(BaseModel):
     sender_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
     repo: str | None = Field(default=None, min_length=1)
+    thread_id: str | None = Field(default=None, min_length=1)
 
 
 class ChannelAcceptedResponse(BaseModel):

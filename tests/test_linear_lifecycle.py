@@ -7,21 +7,33 @@ from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.persistence.models import AuditEvent, Base, TaskDag
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
+from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphQueryResult
 from agentic_sdlc_platform.ports.hermes_session import (
     HermesSessionResponse,
     HermesStartSessionRequest,
 )
 from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerReply, IssueTrackerUpdate
-from agentic_sdlc_platform.ports.task_orchestrator import TaskRequest, TaskResponse
+from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskCommentRequest,
+    TaskCommentResponse,
+    TaskRequest,
+    TaskResponse,
+)
 
 
 class FakeTaskOrchestrator:
     provider = "multica"
 
-    def __init__(self, task_ids: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        task_ids: list[str] | None = None,
+        include_multica_metadata: bool = False,
+    ) -> None:
         self.created: list[TaskRequest] = []
         self.updated: list[tuple[str, str]] = []
+        self.comments: list[TaskCommentRequest] = []
         self._task_ids = task_ids or ["multica-task-1"]
+        self._include_multica_metadata = include_multica_metadata
 
     async def create_task(self, request: TaskRequest) -> TaskResponse:
         self.created.append(request)
@@ -31,11 +43,26 @@ class FakeTaskOrchestrator:
             if index < len(self._task_ids)
             else f"multica-task-{index + 1}"
         )
-        return TaskResponse(external_task_id=external_task_id, status="queued")
+        metadata = None
+        if self._include_multica_metadata:
+            metadata = {
+                "multica_issue_id": f"issue-{external_task_id}",
+                "multica_task_id": external_task_id,
+            }
+        return TaskResponse(external_task_id=external_task_id, status="queued", metadata=metadata)
 
     async def update_task(self, request) -> TaskResponse:
         self.updated.append((request.external_task_id, request.status))
         return TaskResponse(external_task_id=request.external_task_id, status=request.status)
+
+    async def add_comment(self, request: TaskCommentRequest) -> TaskCommentResponse:
+        self.comments.append(request)
+        return TaskCommentResponse(
+            external_task_id=request.external_task_id,
+            comment_id="multica-comment-1",
+            status="commented",
+            metadata={"multica_comment_id": "multica-comment-1"},
+        )
 
 
 class FakeIssueTracker:
@@ -48,6 +75,24 @@ class FakeIssueTracker:
 
     async def reply(self, reply: IssueTrackerReply) -> None:
         self.replies.append(reply)
+
+
+class FakeGraphStore:
+    provider = "graphify"
+
+    def __init__(self) -> None:
+        self.queries: list[GraphQuery] = []
+
+    async def index(self, request):
+        raise NotImplementedError
+
+    async def query(self, request: GraphQuery) -> GraphQueryResult:
+        self.queries.append(request)
+        return GraphQueryResult(
+            provider=self.provider,
+            answer="Foo DAFET dry-run validation is resolved from indexed repo context.",
+            references=["apps/foo/dafet/form.ts:42"],
+        )
 
 
 class FakeHermesSession:
@@ -203,6 +248,72 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
             ),
         )
     ]
+
+
+async def test_linear_assigned_issue_includes_graphify_repo_context_when_available() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="develop",
+        metadata={"linear_team_key": "OS"},
+    )
+    graph_store = FakeGraphStore()
+    task_orchestrator = FakeTaskOrchestrator()
+    client = TestClient(
+        create_app(
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                vendor_http_enabled=True,
+                graphify_base_url="http://graphify.local",
+            ),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            graph_store=graph_store,
+            issue_tracker=FakeIssueTracker(),
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Explain foo DAFET validation dry run behaviour",
+                "description": "How does it work on form submission?",
+                "assignee": {"id": "agent-user-1"},
+                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-graphify-context-1"},
+    )
+
+    assert response.status_code == 202
+    assert graph_store.queries == [
+        GraphQuery(
+            repo="keychain-os-erp",
+            question=(
+                "Explain foo DAFET validation dry run behaviour\n\n"
+                "How does it work on form submission?"
+            ),
+            metadata={"source": "linear", "external_id": "OS-1284"},
+        )
+    ]
+    assert task_orchestrator.created[0].metadata == {
+        "repo_provider": "github",
+        "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        "repo_default_branch": "develop",
+        "repo_metadata": {"linear_team_key": "OS"},
+        "repo_context": {
+            "provider": "graphify",
+            "answer": "Foo DAFET dry-run validation is resolved from indexed repo context.",
+            "references": ["apps/foo/dafet/form.ts:42"],
+        },
+    }
 
 
 async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> None:
@@ -531,6 +642,102 @@ async def test_linear_comment_resumes_session_and_replies_in_thread() -> None:
         ("outbound", "session_started", "system", "Build webhook bridge"),
         ("inbound", "comment", "linear:user-1", "Please check inventory allocation first."),
         ("outbound", "reply", "agent", "I will check inventory allocation first."),
+    ]
+
+
+async def test_linear_comment_on_multica_backed_session_is_added_to_multica_issue() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    task_orchestrator = FakeTaskOrchestrator(include_multica_metadata=True)
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            hermes_session=None,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    assignment_response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-multica-session-1"},
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-1",
+                "body": "What exact class has the dryRun default mismatch?",
+                "user": {"id": "user-1"},
+                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-multica-session-2"},
+    )
+
+    assert assignment_response.status_code == 202
+    assert response.status_code == 202
+    assert response.json()["task_id"] == assignment_response.json()["task_id"]
+    assert task_orchestrator.comments == [
+        TaskCommentRequest(
+            external_task_id="multica-task-1",
+            body="What exact class has the dryRun default mismatch?",
+            actor="linear:user-1",
+            metadata={
+                "multica_issue_id": "issue-multica-task-1",
+                "provider": "linear",
+                "external_thread_id": "issue-id-1",
+                "comment_id": "comment-1",
+            },
+        )
+    ]
+    persisted = await repository.find_agent_session(
+        provider="linear",
+        external_thread_id="issue-id-1",
+    )
+    assert persisted is not None
+    assert persisted.orchestrator_provider == "multica"
+    assert persisted.orchestrator_issue_id == "issue-multica-task-1"
+    assert persisted.orchestrator_task_id == "multica-task-1"
+    events = await repository.list_session_events(persisted.id)
+    recorded_events = [
+        (event.direction, event.event_type, event.actor, event.message) for event in events
+    ]
+    assert recorded_events == [
+        (
+            "inbound",
+            "comment",
+            "linear:user-1",
+            "What exact class has the dryRun default mismatch?",
+        ),
+        (
+            "outbound",
+            "orchestrator_comment",
+            "system",
+            "What exact class has the dryRun default mismatch?",
+        ),
     ]
 
 

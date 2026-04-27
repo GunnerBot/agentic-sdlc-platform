@@ -27,7 +27,10 @@ from agentic_sdlc_platform.glue.ticket_command import (
     build_issue_create_request,
     parse_create_ticket,
 )
-from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest
+from agentic_sdlc_platform.ports.hermes_session import (
+    HermesStartSessionRequest,
+)
+from agentic_sdlc_platform.ports.task_orchestrator import TaskCommentRequest
 
 router = APIRouter(tags=["slack"])
 
@@ -207,19 +210,123 @@ async def slack_events(
             "session_id": None,
             "message_id": None,
         }
-    if route == RouteTarget.HERMES_DIRECT and request.app.state.hermes_session is not None:
+    if route == RouteTarget.HERMES_DIRECT:
+        thread_id = _slack_thread_id(channel=channel, event=event)
+        existing_session = await request.app.state.repository.find_agent_session(
+            provider="slack",
+            external_thread_id=thread_id,
+        )
         request.app.state.channel_budget_ledger.reserve(provider="slack", channel=channel)
-        hermes_response = await request.app.state.hermes_session.ask(
-            HermesSessionRequest(
-                provider="slack",
-                channel=channel,
-                sender_id=sender_id,
+        hermes_response = None
+        if (
+            existing_session
+            and getattr(existing_session, "orchestrator_task_id", None)
+            and getattr(existing_session, "orchestrator_issue_id", None)
+            and request.app.state.task_orchestrator is not None
+            and hasattr(request.app.state.task_orchestrator, "add_comment")
+        ):
+            await request.app.state.repository.record_session_event(
+                session_id=existing_session.id,
+                direction="inbound",
+                event_type="comment",
+                actor=f"slack:{sender_id}",
+                message=text,
+                metadata={"channel": channel, "thread_id": thread_id},
+            )
+            comment_response = await request.app.state.task_orchestrator.add_comment(
+                TaskCommentRequest(
+                    external_task_id=existing_session.orchestrator_task_id,
+                    body=text,
+                    actor=f"slack:{sender_id}",
+                    metadata={
+                        "multica_issue_id": existing_session.orchestrator_issue_id,
+                        "provider": "slack",
+                        "external_thread_id": thread_id,
+                    },
+                )
+            )
+            await request.app.state.repository.record_session_event(
+                session_id=existing_session.id,
+                direction="outbound",
+                event_type="orchestrator_comment",
+                actor="system",
+                message=text,
+                metadata={
+                    "orchestrator_provider": existing_session.orchestrator_provider,
+                    "orchestrator_task_id": existing_session.orchestrator_task_id,
+                    **(comment_response.metadata or {}),
+                },
+            )
+            session_id = existing_session.hermes_session_id
+            message_id = comment_response.comment_id
+        elif (
+            existing_session
+            and existing_session.hermes_session_id
+            and request.app.state.hermes_session is not None
+        ):
+            await request.app.state.repository.record_session_event(
+                session_id=existing_session.id,
+                direction="inbound",
+                event_type="comment",
+                actor=f"slack:{sender_id}",
+                message=text,
+                metadata={"channel": channel, "thread_id": thread_id},
+            )
+            hermes_response = await request.app.state.hermes_session.resume_session(
+                session_id=existing_session.hermes_session_id,
                 text=text,
+                actor=f"slack:{sender_id}",
+            )
+        elif request.app.state.hermes_session is not None:
+            recorded = await request.app.state.repository.record_inbound_event(
+                source="slack",
+                delivery_id=thread_id,
+                event_type="message",
+                payload={"channel": channel, "thread_id": thread_id, "text": text},
+            )
+            task = await request.app.state.repository.create_task_from_event(
+                event_id=recorded.event.id,
+                source="slack",
+                external_id=thread_id,
+                title=text[:200],
                 repo=mapping.repo if mapping else None,
             )
-        )
-        session_id = hermes_response.session_id
-        message_id = hermes_response.message_id
+            hermes_response = await request.app.state.hermes_session.start_session(
+                HermesStartSessionRequest(
+                    task_id=task.id,
+                    provider="slack",
+                    external_thread_id=thread_id,
+                    text=text,
+                    repo=mapping.repo if mapping else None,
+                )
+            )
+            existing_session = await request.app.state.repository.create_agent_session(
+                task_id=task.id,
+                provider="slack",
+                external_thread_id=thread_id,
+                hermes_session_id=hermes_response.session_id,
+                repo=mapping.repo if mapping else None,
+            )
+            await request.app.state.repository.record_session_event(
+                session_id=existing_session.id,
+                direction="outbound",
+                event_type="session_started",
+                actor="system",
+                message=text,
+                metadata={"message_id": hermes_response.message_id},
+            )
+        if hermes_response and hermes_response.answer and existing_session is not None:
+            await request.app.state.repository.record_session_event(
+                session_id=existing_session.id,
+                direction="outbound",
+                event_type="reply",
+                actor="agent",
+                message=hermes_response.answer,
+                metadata={"message_id": hermes_response.message_id},
+            )
+        if hermes_response:
+            session_id = hermes_response.session_id
+            message_id = hermes_response.message_id
 
     return {
         "ok": True,
@@ -290,3 +397,8 @@ def _clean_slack_text(value: object) -> str | None:
 
 def _str_value(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _slack_thread_id(channel: str, event: dict[str, object]) -> str:
+    thread_ts = _str_value(event.get("thread_ts")) or _str_value(event.get("ts"))
+    return f"{channel}:{thread_ts or 'root'}"

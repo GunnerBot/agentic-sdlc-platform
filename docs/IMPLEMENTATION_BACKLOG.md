@@ -63,6 +63,9 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 - Add repo Q&A API backed by Graphify queries for codebase questions
 - Add bulk repo indexing API for all active registered repositories
 - Route repo-scoped Slack, Telegram, and generic channel questions to Graphify
+- Persist channel/Linear conversation sessions and route followups back to the same Hermes or Multica task
+- Sync Multica issue comments back into persisted task sessions and originating Linear threads
+- Enforce deterministic repo context policy: prefer Graphify or code-review graph retrieval before broad source scans, then verify against narrow source reads
 
 ## Phase 4: DAG Decomposer
 
@@ -73,6 +76,8 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 - Add GitHub App read-only installation integration for repo discovery/import
 - Keep GitHub write enablement explicitly pending until a narrowly scoped GitHub App write policy is approved:
   branch create, commit push, PR create/comment, and checks read on allowlisted repositories only
+- Enforce runtime execution policy in Multica/Hermes payloads: all terminal commands must be prefixed with `rtk`
+- Include repo context payloads from Graphify or a compatible code-review graph in every repo-backed node execution
 
 ## Phase 5: Model And Cost Router
 

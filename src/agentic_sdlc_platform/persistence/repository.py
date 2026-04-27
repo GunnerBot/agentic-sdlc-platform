@@ -620,6 +620,9 @@ class PersistenceRepository:
         external_thread_id: str,
         hermes_session_id: str | None,
         repo: str | None,
+        orchestrator_provider: str | None = None,
+        orchestrator_issue_id: str | None = None,
+        orchestrator_task_id: str | None = None,
     ) -> AgentSession:
         async with self._session_factory() as session:
             agent_session = AgentSession(
@@ -627,6 +630,9 @@ class PersistenceRepository:
                 provider=provider,
                 external_thread_id=external_thread_id,
                 hermes_session_id=hermes_session_id,
+                orchestrator_provider=orchestrator_provider,
+                orchestrator_issue_id=orchestrator_issue_id,
+                orchestrator_task_id=orchestrator_task_id,
                 repo=repo,
             )
             session.add(agent_session)
@@ -638,6 +644,15 @@ class PersistenceRepository:
                 await session.rollback()
                 existing = await self._find_agent_session(session, provider, external_thread_id)
                 existing.hermes_session_id = hermes_session_id or existing.hermes_session_id
+                existing.orchestrator_provider = (
+                    orchestrator_provider or existing.orchestrator_provider
+                )
+                existing.orchestrator_issue_id = (
+                    orchestrator_issue_id or existing.orchestrator_issue_id
+                )
+                existing.orchestrator_task_id = (
+                    orchestrator_task_id or existing.orchestrator_task_id
+                )
                 existing.repo = repo or existing.repo
                 existing.updated_at = utc_now()
                 await session.commit()
@@ -654,7 +669,7 @@ class PersistenceRepository:
                 select(AgentSession).where(
                     AgentSession.provider == provider,
                     AgentSession.external_thread_id == external_thread_id,
-                )
+                ).options(selectinload(AgentSession.events))
             )
             return result.scalars().first()
 

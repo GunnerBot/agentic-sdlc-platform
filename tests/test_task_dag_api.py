@@ -11,8 +11,10 @@ from agentic_sdlc_platform.ports.agent_executor import (
     AgentExecutionRequest,
     AgentExecutionResponse,
 )
+from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerReply
 from agentic_sdlc_platform.ports.model_provider import ModelRequest, ModelResponse
 from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskConversationMessage,
     TaskReadRequest,
     TaskRequest,
     TaskResponse,
@@ -43,6 +45,14 @@ class FakeTaskOrchestrator:
     def __init__(self) -> None:
         self.requests: list[TaskRequest] = []
         self.read_requests: list[TaskReadRequest] = []
+        self.comments = [
+            TaskConversationMessage(
+                id="multica-comment-1",
+                body="Agent found the answer.",
+                actor="agent",
+                metadata={"multica_issue_id": "issue-1"},
+            )
+        ]
 
     async def create_task(self, request: TaskRequest) -> TaskResponse:
         self.requests.append(request)
@@ -61,6 +71,17 @@ class FakeTaskOrchestrator:
                 "multica_runtime_provider": "codex",
             },
         )
+
+    async def list_comments(self, external_task_id: str, metadata=None):
+        return self.comments
+
+
+class FakeIssueTracker:
+    def __init__(self) -> None:
+        self.replies: list[IssueTrackerReply] = []
+
+    async def reply(self, reply: IssueTrackerReply) -> None:
+        self.replies.append(reply)
 
 
 class FakeAgentExecutor:
@@ -251,6 +272,9 @@ async def test_list_tasks_endpoint_returns_task_and_session_status() -> None:
             "provider": "linear",
             "external_thread_id": "issue-id-1",
             "hermes_session_id": "hermes-session-1",
+            "orchestrator_provider": None,
+            "orchestrator_issue_id": None,
+            "orchestrator_task_id": None,
             "repo": "keychain-os-erp",
             "status": "active",
             "context_summary": None,
@@ -302,6 +326,52 @@ async def test_get_task_endpoint_returns_session_event_history() -> None:
             "message": "I am working on it.",
             "metadata": {"message_id": "message-1"},
         }
+    ]
+
+
+async def test_sync_session_orchestrator_comments_records_and_mirrors_reply() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    session = await repository.create_agent_session(
+        task_id=task_id,
+        provider="linear",
+        external_thread_id="issue-id-1",
+        hermes_session_id=None,
+        repo="keychain-os-erp",
+        orchestrator_provider="multica",
+        orchestrator_issue_id="issue-1",
+        orchestrator_task_id="multica-task-1",
+    )
+    task_orchestrator = FakeTaskOrchestrator()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(f"/tasks/{task_id}/sessions/{session.id}/sync-orchestrator")
+
+    assert response.status_code == 200
+    assert response.json()["events"][-1]["event_type"] == "orchestrator_reply"
+    assert response.json()["events"][-1]["message"] == "Agent found the answer."
+    assert response.json()["events"][-1]["metadata"] == {
+        "multica_comment_id": "multica-comment-1",
+        "multica_issue_id": "issue-1",
+    }
+    assert issue_tracker.replies == [
+        IssueTrackerReply(issue_id="issue-id-1", body="Agent found the answer.")
+    ]
+
+    second = client.post(f"/tasks/{task_id}/sessions/{session.id}/sync-orchestrator")
+
+    assert second.status_code == 200
+    assert len(second.json()["events"]) == 1
+    assert issue_tracker.replies == [
+        IssueTrackerReply(issue_id="issue-id-1", body="Agent found the answer.")
     ]
 
 
