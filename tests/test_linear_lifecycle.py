@@ -1,9 +1,11 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
-from agentic_sdlc_platform.persistence.models import Base
+from agentic_sdlc_platform.persistence.models import AuditEvent, Base, TaskDag
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.hermes_session import (
     HermesSessionResponse,
@@ -169,6 +171,64 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
             },
         )
     ]
+
+
+async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=FakeTaskOrchestrator(),
+            issue_tracker=FakeIssueTracker(),
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+                "labels": {
+                    "nodes": [
+                        {"name": "repo:keychain-os-erp"},
+                        {"name": "type:bug"},
+                    ]
+                },
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-dag-template-1"},
+    )
+
+    assert response.status_code == 202
+    async with repository._session_factory() as session:
+        dag = (
+            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
+        ).one()
+        audit_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "task.dag_template_created")
+            )
+        ).one()
+
+        assert [node.node_key for node in dag.nodes] == ["reproduce", "fix", "test", "review"]
+        assert [node.repo for node in dag.nodes] == ["keychain-os-erp"] * 4
+        assert dag.nodes[0].status == "ready"
+        assert dag.nodes[1].status == "blocked"
+    assert audit_event.metadata_json["template"] == "bugfix"
+    assert audit_event.metadata_json["node_count"] == 4
 
 
 async def test_linear_assigned_issue_blocks_when_repo_label_is_unknown() -> None:

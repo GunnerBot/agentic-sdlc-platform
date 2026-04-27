@@ -18,6 +18,7 @@ def test_normalizes_linear_issue_payload_to_task_event() -> None:
                     "nodes": [
                         {"name": "agent"},
                         {"name": "repo:keychain-os-erp"},
+                        {"name": "type:feature"},
                     ]
                 },
             },
@@ -29,6 +30,7 @@ def test_normalizes_linear_issue_payload_to_task_event() -> None:
     assert task_event.external_id == "OS-1284"
     assert task_event.title == "Build webhook bridge"
     assert task_event.repo == "keychain-os-erp"
+    assert task_event.dag_template == "feature"
     assert task_event.url == "https://linear.app/keychain/issue/OS-1284"
 
 

@@ -6,6 +6,7 @@ from hashlib import sha256
 from fastapi import HTTPException, status
 
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.dag_templates import build_dag_template
 from agentic_sdlc_platform.glue.human_override import (
     HumanOverrideCommand,
     HumanOverrideHandler,
@@ -556,6 +557,22 @@ class WebhookBridge:
             and self._hermes_session is not None
         ):
             await self._start_linear_agent_session(task_id=task.id, task_event=task_event)
+        if source == "linear" and task_event.dag_template:
+            dag = await self._repository.create_task_dag(
+                task_id=task.id,
+                subtasks=build_dag_template(task_event.dag_template, task),
+            )
+            await self._repository.record_audit_event(
+                action="task.dag_template_created",
+                actor="system",
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "template": task_event.dag_template,
+                    "dag_id": dag.id,
+                    "node_count": len(dag.nodes),
+                },
+            )
         return task.id
 
     async def _start_linear_agent_session(

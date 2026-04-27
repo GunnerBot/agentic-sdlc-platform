@@ -9,6 +9,7 @@ class NormalizedTaskEvent:
     title: str
     issue_id: str | None = None
     repo: str | None = None
+    dag_template: str | None = None
     url: str | None = None
     body: str | None = None
 
@@ -74,6 +75,7 @@ class TaskEventNormalizer:
             title=title,
             issue_id=_str_value(data.get("id")),
             repo=_repo_from_labels(_linear_label_names(data)),
+            dag_template=_dag_template_from_labels(_linear_label_names(data)),
             url=_str_value(data.get("url")),
             body=_str_value(data.get("description")),
         )
@@ -180,6 +182,25 @@ def _repo_from_labels(label_names: list[str]) -> str | None:
     for label in label_names:
         if label and label.startswith("repo:"):
             return label.removeprefix("repo:")
+    return None
+
+
+def _dag_template_from_labels(label_names: list[str]) -> str | None:
+    aliases = {
+        "bug": "bugfix",
+        "bugfix": "bugfix",
+        "feature": "feature",
+        "refactor": "refactor",
+        "security": "security",
+    }
+    for label in label_names:
+        normalized = label.strip().lower()
+        if normalized.startswith("type:"):
+            normalized = normalized.removeprefix("type:")
+        if normalized.startswith("template:"):
+            normalized = normalized.removeprefix("template:")
+        if normalized in aliases:
+            return aliases[normalized]
     return None
 
 
