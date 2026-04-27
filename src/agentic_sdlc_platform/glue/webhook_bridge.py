@@ -16,6 +16,7 @@ from agentic_sdlc_platform.glue.human_override import (
 )
 from agentic_sdlc_platform.glue.task_event_normalizer import (
     NormalizedTaskEvent,
+    NormalizedTaskUpdate,
     TaskEventNormalizer,
 )
 from agentic_sdlc_platform.models.webhooks import WebhookAcceptedResponse
@@ -652,40 +653,59 @@ class WebhookBridge:
         if not ready_nodes:
             return None, None
         node = ready_nodes[0]
-        external_task = await self._task_orchestrator.create_task(
-            TaskRequest(
-                source="dag",
-                external_id=f"{dag.id}:{node.node_key}",
-                title=node.title,
-                repo=node.repo,
+        queued_nodes = await self._enqueue_ready_dag_nodes(
+            dag=dag,
+            task=task,
+            ready_nodes=[node],
+        )
+        queued_node = queued_nodes[0]
+        return queued_node.node_key, queued_node.status
+
+    async def _enqueue_ready_dag_nodes(
+        self,
+        dag,
+        task,
+        ready_nodes,
+    ):
+        queued_nodes = []
+        if self._task_orchestrator is None:
+            return queued_nodes
+        for node in ready_nodes:
+            external_task = await self._task_orchestrator.create_task(
+                TaskRequest(
+                    source="dag",
+                    external_id=f"{dag.id}:{node.node_key}",
+                    title=node.title,
+                    repo=node.repo,
+                    metadata={
+                        "parent_task_id": task.id,
+                        "parent_external_id": task.external_id,
+                        "dag_id": dag.id,
+                        "node_key": node.node_key,
+                    },
+                )
+            )
+            queued_node = await self._repository.mark_dag_node_orchestrated(
+                dag_id=dag.id,
+                node_key=node.node_key,
+                orchestrator_task_id=external_task.external_task_id,
+                orchestrator_status=external_task.status,
+            )
+            queued_nodes.append(queued_node)
+            await self._repository.record_audit_event(
+                action="task.dag_node_enqueued",
+                actor="system",
+                target_type="task_dag",
+                target_id=dag.id,
                 metadata={
-                    "parent_task_id": task.id,
-                    "parent_external_id": task.external_id,
-                    "dag_id": dag.id,
+                    "task_id": task.id,
+                    "external_id": task.external_id,
                     "node_key": node.node_key,
+                    "orchestrator_task_id": external_task.external_task_id,
+                    "status": external_task.status,
                 },
             )
-        )
-        await self._repository.mark_dag_node_orchestrated(
-            dag_id=dag.id,
-            node_key=node.node_key,
-            orchestrator_task_id=external_task.external_task_id,
-            orchestrator_status=external_task.status,
-        )
-        await self._repository.record_audit_event(
-            action="task.dag_node_enqueued",
-            actor="system",
-            target_type="task_dag",
-            target_id=dag.id,
-            metadata={
-                "task_id": task.id,
-                "external_id": task.external_id,
-                "node_key": node.node_key,
-                "orchestrator_task_id": external_task.external_task_id,
-                "status": external_task.status,
-            },
-        )
-        return node.node_key, external_task.status
+        return queued_nodes
 
     async def _start_linear_agent_session(
         self,
@@ -746,6 +766,14 @@ class WebhookBridge:
         if task_update is None:
             return None
 
+        if task_update.dag_id and task_update.dag_node_key:
+            task_id = await self._update_dag_node_from_delivery(
+                task_update=task_update,
+                event_type=event_type,
+            )
+            if task_id is not None:
+                return task_id
+
         task = await self._repository.find_task_by_external_id(task_update.external_id)
         if task is None:
             return None
@@ -783,6 +811,87 @@ class WebhookBridge:
             },
         )
         return task.id
+
+    async def _update_dag_node_from_delivery(
+        self,
+        task_update: NormalizedTaskUpdate,
+        event_type: str,
+    ) -> str | None:
+        if not task_update.dag_id or not task_update.dag_node_key:
+            return None
+
+        dag = await self._repository.get_task_dag(task_update.dag_id)
+        if dag is None:
+            return None
+        node = next(
+            (node for node in dag.nodes if node.node_key == task_update.dag_node_key),
+            None,
+        )
+        if node is None:
+            return None
+
+        orchestration_status = task_update.status
+        node_status = task_update.status
+        if task_update.status == "merged":
+            orchestration_status = "completed"
+            node_status = "completed"
+
+        if node.orchestrator_task_id and self._task_orchestrator is not None:
+            external_task = await self._task_orchestrator.update_task(
+                TaskUpdateRequest(
+                    external_task_id=node.orchestrator_task_id,
+                    status=orchestration_status,
+                    metadata={
+                        "source": task_update.source,
+                        "event_type": event_type,
+                        "external_id": task_update.external_id,
+                        "dag_id": task_update.dag_id,
+                        "node_key": task_update.dag_node_key,
+                        **(task_update.metadata or {}),
+                    },
+                )
+            )
+            orchestration_status = external_task.status
+
+        if node_status == "completed":
+            await self._repository.mark_dag_node_completed(
+                dag_id=task_update.dag_id,
+                node_key=task_update.dag_node_key,
+                orchestrator_status=orchestration_status,
+            )
+            ready_nodes = await self._repository.list_ready_dag_nodes_for_dag(
+                task_update.dag_id
+            )
+            if self._task_orchestrator is not None:
+                await self._enqueue_ready_dag_nodes(
+                    dag=dag,
+                    task=dag.task,
+                    ready_nodes=ready_nodes,
+                )
+        else:
+            await self._repository.update_dag_node_status(
+                dag_id=task_update.dag_id,
+                node_key=task_update.dag_node_key,
+                status=node_status,
+                orchestrator_status=orchestration_status,
+            )
+
+        await self._repository.record_audit_event(
+            action="task.dag_node_updated_from_github",
+            actor="system",
+            target_type="task_dag",
+            target_id=task_update.dag_id,
+            metadata={
+                "source": task_update.source,
+                "event_type": event_type,
+                "external_id": task_update.external_id,
+                "status": task_update.status,
+                "node_status": node_status,
+                "node_key": task_update.dag_node_key,
+                **(task_update.metadata or {}),
+            },
+        )
+        return dag.task_id
 
     def _verify_optional_hmac(
         self,

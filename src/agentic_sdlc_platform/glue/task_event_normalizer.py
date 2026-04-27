@@ -21,6 +21,8 @@ class NormalizedTaskUpdate:
     status: str
     repo: str | None = None
     metadata: dict[str, object] | None = None
+    dag_id: str | None = None
+    dag_node_key: str | None = None
 
 
 class TaskEventNormalizer:
@@ -124,9 +126,16 @@ class TaskEventNormalizer:
             _str_value(pull_request.get("title")),
             _str_value(pull_request.get("body")),
         )
+        dag_reference = _extract_dag_node_reference(
+            _str_value(_dict_value(pull_request.get("head")).get("ref")),
+            _str_value(pull_request.get("title")),
+            _str_value(pull_request.get("body")),
+        )
         status = _github_pull_request_status(action, pull_request.get("merged"))
-        if not external_id or not status:
+        if not (external_id or dag_reference) or not status:
             return None
+        if external_id is None and dag_reference is not None:
+            external_id = f"{dag_reference[0]}:{dag_reference[1]}"
 
         metadata: dict[str, object] = {}
         number = pull_request.get("number")
@@ -142,6 +151,8 @@ class TaskEventNormalizer:
             status=status,
             repo=_str_value(_dict_value(payload.get("repository")).get("full_name")),
             metadata=metadata,
+            dag_id=dag_reference[0] if dag_reference else None,
+            dag_node_key=dag_reference[1] if dag_reference else None,
         )
 
 
@@ -211,6 +222,27 @@ def _extract_ticket_key(*candidates: str | None) -> str | None:
         match = re.search(r"\b[A-Z][A-Z0-9]+-\d+\b", candidate)
         if match:
             return match.group(0)
+    return None
+
+
+def _extract_dag_node_reference(*candidates: str | None) -> tuple[str, str] | None:
+    uuid_pattern = (
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    )
+    node_pattern = r"[A-Za-z0-9_][A-Za-z0-9_.-]*"
+    patterns = [
+        rf"\bdag[:/]({uuid_pattern})[:/]({node_pattern})",
+        rf"\bdag-({uuid_pattern})-({node_pattern})",
+        rf"\b({uuid_pattern}):({node_pattern})",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        for pattern in patterns:
+            match = re.search(pattern, candidate)
+            if match:
+                return match.group(1), match.group(2).rstrip(".,);]}")
     return None
 
 

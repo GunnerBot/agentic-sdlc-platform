@@ -64,3 +64,27 @@ async def test_list_ready_dag_nodes_excludes_blocked_dependencies() -> None:
 
     assert [node.node_key for node in ready] == ["api"]
     assert [node.node_key for node in unblocked] == ["web"]
+
+
+async def test_update_dag_node_status_and_fetch_dag() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask(id="api", title="Add API contract"),
+        ],
+    )
+
+    await repository.update_dag_node_status(
+        dag_id=dag.id,
+        node_key="api",
+        status="pr_open",
+        orchestrator_status="pr_open",
+    )
+    fetched = await repository.get_task_dag(dag.id)
+
+    assert fetched is not None
+    assert fetched.task_id == task_id
+    assert fetched.nodes[0].status == "pr_open"
+    assert fetched.nodes[0].orchestrator_status == "pr_open"

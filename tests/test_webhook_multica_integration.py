@@ -4,7 +4,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
-from agentic_sdlc_platform.persistence.models import AuditEvent, Base, Task
+from agentic_sdlc_platform.glue.dag_decomposer import Subtask
+from agentic_sdlc_platform.persistence.models import AuditEvent, Base, Task, TaskDagNode
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskRequest,
@@ -170,3 +171,117 @@ async def test_github_pull_request_webhook_updates_existing_multica_task() -> No
     assert updated_task.status == "pr_open"
     assert updated_task.orchestrator_status == "pr_open"
     assert "task.updated_from_github" in audit_actions
+
+
+async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next() -> None:
+    repository = await build_repository()
+    inbound_event = await repository.record_inbound_event(
+        source="linear",
+        delivery_id="delivery-linear-1",
+        event_type="Issue",
+        payload={"id": "issue-1"},
+    )
+    task = await repository.create_task_from_event(
+        event_id=inbound_event.event.id,
+        source="linear",
+        external_id="OS-1284",
+        title="Build webhook bridge",
+        repo="GunnerBot/agentic-sdlc-platform",
+    )
+    dag = await repository.create_task_dag(
+        task_id=task.id,
+        subtasks=[
+            Subtask(
+                id="design",
+                title="Design webhook bridge",
+                repo="GunnerBot/agentic-sdlc-platform",
+            ),
+            Subtask(
+                id="implement",
+                title="Implement webhook bridge",
+                repo="GunnerBot/agentic-sdlc-platform",
+                depends_on=("design",),
+            ),
+        ],
+    )
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag.id,
+        node_key="design",
+        orchestrator_task_id="multica-design-1",
+        orchestrator_status="queued",
+    )
+    task_orchestrator = FakeTaskOrchestrator()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/github",
+        json={
+            "action": "closed",
+            "pull_request": {
+                "number": 18,
+                "title": "Complete design node",
+                "html_url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/18",
+                "head": {"ref": f"agent/dag/{dag.id}/design"},
+                "body": f"Completes dag:{dag.id}:design",
+                "merged": True,
+            },
+            "repository": {"full_name": "GunnerBot/agentic-sdlc-platform"},
+        },
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": "delivery-pr-dag-1",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["task_id"] == task.id
+    assert task_orchestrator.updates == [
+        TaskUpdateRequest(
+            external_task_id="multica-design-1",
+            status="completed",
+            metadata={
+                "source": "github",
+                "event_type": "pull_request",
+                "external_id": f"{dag.id}:design",
+                "dag_id": dag.id,
+                "node_key": "design",
+                "pull_request": 18,
+                "url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/18",
+            },
+        )
+    ]
+    assert task_orchestrator.requests == [
+        TaskRequest(
+            source="dag",
+            external_id=f"{dag.id}:implement",
+            title="Implement webhook bridge",
+            repo="GunnerBot/agentic-sdlc-platform",
+            metadata={
+                "parent_task_id": task.id,
+                "parent_external_id": "OS-1284",
+                "dag_id": dag.id,
+                "node_key": "implement",
+            },
+        )
+    ]
+    async with repository._session_factory() as session:
+        nodes = (
+            await session.scalars(
+                select(TaskDagNode).order_by(TaskDagNode.position)
+            )
+        ).all()
+        audit_actions = {
+            event.action for event in (await session.scalars(select(AuditEvent))).all()
+        }
+
+    assert [node.status for node in nodes] == ["completed", "queued"]
+    assert nodes[0].orchestrator_status == "completed"
+    assert nodes[1].orchestrator_task_id == "multica-task-1"
+    assert "task.dag_node_updated_from_github" in audit_actions
+    assert "task.dag_node_enqueued" in audit_actions

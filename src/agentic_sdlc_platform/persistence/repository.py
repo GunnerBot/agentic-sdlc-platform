@@ -304,6 +304,15 @@ class PersistenceRepository:
             await session.commit()
             return await self._get_task_dag(session, dag.id)
 
+    async def get_task_dag(self, dag_id: str) -> TaskDag | None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskDag)
+                .where(TaskDag.id == dag_id)
+                .options(selectinload(TaskDag.nodes), selectinload(TaskDag.task))
+            )
+            return result.scalars().first()
+
     async def list_ready_dag_nodes(self, task_id: str) -> list[TaskDagNode]:
         async with self._session_factory() as session:
             result = await session.execute(
@@ -327,7 +336,34 @@ class PersistenceRepository:
                     ready_nodes.append(node)
             return ready_nodes
 
-    async def mark_dag_node_completed(self, dag_id: str, node_key: str) -> TaskDagNode:
+    async def list_ready_dag_nodes_for_dag(self, dag_id: str) -> list[TaskDagNode]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskDag)
+                .where(TaskDag.id == dag_id)
+                .options(selectinload(TaskDag.nodes))
+            )
+            dag = result.scalars().first()
+            if dag is None:
+                return []
+
+            completed = {
+                node.node_key for node in dag.nodes if node.status == "completed"
+            }
+            ready_nodes = []
+            for node in dag.nodes:
+                if node.status not in {"ready", "blocked"}:
+                    continue
+                if all(dependency in completed for dependency in node.depends_on):
+                    ready_nodes.append(node)
+            return ready_nodes
+
+    async def mark_dag_node_completed(
+        self,
+        dag_id: str,
+        node_key: str,
+        orchestrator_status: str | None = None,
+    ) -> TaskDagNode:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(TaskDagNode).where(
@@ -337,6 +373,31 @@ class PersistenceRepository:
             )
             node = result.scalar_one()
             node.status = "completed"
+            if orchestrator_status is not None:
+                node.orchestrator_status = orchestrator_status
+            node.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(node)
+            return node
+
+    async def update_dag_node_status(
+        self,
+        dag_id: str,
+        node_key: str,
+        status: str,
+        orchestrator_status: str | None = None,
+    ) -> TaskDagNode:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskDagNode).where(
+                    TaskDagNode.dag_id == dag_id,
+                    TaskDagNode.node_key == node_key,
+                )
+            )
+            node = result.scalar_one()
+            node.status = status
+            if orchestrator_status is not None:
+                node.orchestrator_status = orchestrator_status
             node.updated_at = utc_now()
             await session.commit()
             await session.refresh(node)

@@ -141,6 +141,32 @@ def test_normalizes_github_pull_request_update_from_branch_ticket_key() -> None:
     }
 
 
+def test_normalizes_github_pull_request_update_from_dag_node_reference() -> None:
+    dag_id = "11111111-2222-3333-4444-555555555555"
+
+    task_update = TaskEventNormalizer().normalize_update(
+        source="github",
+        event_type="pull_request",
+        payload={
+            "action": "opened",
+            "pull_request": {
+                "number": 17,
+                "title": "Add implementation node",
+                "head": {"ref": f"agent/dag/{dag_id}/implement"},
+                "body": f"Node: dag:{dag_id}:implement",
+                "merged": False,
+            },
+            "repository": {"full_name": "GunnerBot/agentic-sdlc-platform"},
+        },
+    )
+
+    assert task_update is not None
+    assert task_update.external_id == f"{dag_id}:implement"
+    assert task_update.status == "pr_open"
+    assert task_update.dag_id == dag_id
+    assert task_update.dag_node_key == "implement"
+
+
 def test_normalizes_github_pull_request_merged_status() -> None:
     task_update = TaskEventNormalizer().normalize_update(
         source="github",
