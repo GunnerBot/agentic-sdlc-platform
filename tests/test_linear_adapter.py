@@ -6,6 +6,7 @@ import pytest
 from agentic_sdlc_platform.adapters.linear import LinearIssueAdapter
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.ports.issue_tracker import (
+    IssueCreateRequest,
     IssueTrackerError,
     IssueTrackerReply,
     IssueTrackerUpdate,
@@ -100,6 +101,57 @@ async def test_linear_adapter_posts_agent_reply_comment() -> None:
     assert payload["variables"] == {
         "issueId": "issue-id-1",
         "body": "I will check inventory allocation first.",
+    }
+
+
+async def test_linear_adapter_creates_issue() -> None:
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(
+            status_code=200,
+            json={
+                "data": {
+                    "issueCreate": {
+                        "success": True,
+                        "issue": {
+                            "id": "issue-id-1",
+                            "identifier": "OS-1284",
+                            "url": "https://linear.app/keychain/issue/OS-1284",
+                        },
+                    }
+                }
+            },
+        )
+
+    adapter = LinearIssueAdapter(
+        Settings(
+            linear_http_enabled=True,
+            linear_base_url="https://linear.local/graphql",
+            linear_api_key="test-key",
+            linear_team_id="team-id-1",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = await adapter.create_issue(
+        IssueCreateRequest(
+            title="Add FEFO allocation support",
+            description="Created from Slack.",
+        )
+    )
+
+    assert response.issue_id == "issue-id-1"
+    assert response.external_id == "OS-1284"
+    assert response.url == "https://linear.app/keychain/issue/OS-1284"
+    assert captured_request is not None
+    payload = json.loads(captured_request.content)
+    assert payload["variables"] == {
+        "teamId": "team-id-1",
+        "title": "Add FEFO allocation support",
+        "description": "Created from Slack.",
     }
 
 

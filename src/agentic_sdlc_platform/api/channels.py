@@ -8,6 +8,10 @@ from agentic_sdlc_platform.glue.channel_router import (
     parse_repo_query,
 )
 from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
+from agentic_sdlc_platform.glue.ticket_command import (
+    build_issue_create_request,
+    parse_create_ticket,
+)
 from agentic_sdlc_platform.models.channels import ChannelAcceptedResponse, ChannelMessageRequest
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest
 
@@ -29,6 +33,28 @@ async def accept_channel_message(
         channel=message.channel,
         sender_id=message.sender_id,
     )
+    ticket_command = parse_create_ticket(message.text)
+    if ticket_command is not None and request.app.state.issue_tracker is not None:
+        created_issue = await request.app.state.issue_tracker.create_issue(
+            build_issue_create_request(
+                ticket_command,
+                provider=message.provider.value,
+                channel=message.channel,
+                sender_id=message.sender_id,
+            )
+        )
+        return ChannelAcceptedResponse(
+            accepted=True,
+            provider=message.provider,
+            channel=message.channel,
+            route="create_ticket",
+            command="create-ticket",
+            repo=ticket_command.repo,
+            issue_id=created_issue.issue_id,
+            external_id=created_issue.external_id,
+            url=created_issue.url,
+        )
+
     override = parse_human_override(message.text)
     if override is not None:
         result = await HumanOverrideHandler(

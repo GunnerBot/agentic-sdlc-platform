@@ -30,3 +30,6 @@ class ChannelAcceptedResponse(BaseModel):
     repo: str | None = None
     answer: str | None = None
     references: list[str] | None = None
+    issue_id: str | None = None
+    external_id: str | None = None
+    url: str | None = None

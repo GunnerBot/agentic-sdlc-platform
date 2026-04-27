@@ -4,6 +4,7 @@ from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphQueryResult
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest, HermesSessionResponse
+from agentic_sdlc_platform.ports.issue_tracker import IssueCreateRequest, IssueCreateResponse
 
 
 class FakeRepo:
@@ -38,6 +39,19 @@ class FakeGraphStore:
         )
 
 
+class FakeIssueTracker:
+    def __init__(self) -> None:
+        self.created: list[IssueCreateRequest] = []
+
+    async def create_issue(self, request: IssueCreateRequest) -> IssueCreateResponse:
+        self.created.append(request)
+        return IssueCreateResponse(
+            issue_id="issue-id-1",
+            external_id="OS-1284",
+            url="https://linear.app/keychain/issue/OS-1284",
+        )
+
+
 class FakeRepository:
     async def get_repo_by_name(self, name: str):
         return FakeRepo() if name == "keychain-os-erp" else None
@@ -69,6 +83,9 @@ def test_channel_ingress_routes_questions_to_hermes_direct() -> None:
         "repo": None,
         "answer": None,
         "references": None,
+        "issue_id": None,
+        "external_id": None,
+        "url": None,
     }
 
 
@@ -87,6 +104,48 @@ def test_channel_ingress_routes_implementation_requests_to_multica_task() -> Non
 
     assert response.status_code == 202
     assert response.json()["route"] == "multica_task"
+
+
+def test_channel_ingress_create_ticket_command_creates_issue() -> None:
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(create_app(Settings(), issue_tracker=issue_tracker))
+
+    response = client.post(
+        "/channels/messages",
+        json={
+            "provider": "slack",
+            "channel": "C123",
+            "sender_id": "U123",
+            "text": "/create-ticket repo:keychain-os-erp type:bug Fix allocation bug",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["route"] == "create_ticket"
+    assert response.json()["command"] == "create-ticket"
+    assert response.json()["issue_id"] == "issue-id-1"
+    assert response.json()["external_id"] == "OS-1284"
+    assert response.json()["url"] == "https://linear.app/keychain/issue/OS-1284"
+    assert issue_tracker.created == [
+        IssueCreateRequest(
+            title="Fix allocation bug",
+            description=(
+                "Created from channel command.\n"
+                "Provider: slack\n"
+                "Channel: C123\n"
+                "Sender: U123\n"
+                "Repo: keychain-os-erp\n"
+                "Template: bug"
+            ),
+            repo="keychain-os-erp",
+            metadata={
+                "provider": "slack",
+                "channel": "C123",
+                "sender_id": "U123",
+                "template": "bug",
+            },
+        )
+    ]
 
 
 def test_channel_ingress_invokes_hermes_for_direct_questions_when_configured() -> None:
@@ -117,6 +176,9 @@ def test_channel_ingress_invokes_hermes_for_direct_questions_when_configured() -
         "repo": None,
         "answer": None,
         "references": None,
+        "issue_id": None,
+        "external_id": None,
+        "url": None,
     }
     assert hermes_session.requests == [
         HermesSessionRequest(

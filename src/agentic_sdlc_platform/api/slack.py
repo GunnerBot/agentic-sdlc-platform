@@ -15,6 +15,10 @@ from agentic_sdlc_platform.glue.channel_router import (
     parse_repo_query,
 )
 from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
+from agentic_sdlc_platform.glue.ticket_command import (
+    build_issue_create_request,
+    parse_create_ticket,
+)
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest
 
 router = APIRouter(tags=["slack"])
@@ -92,6 +96,30 @@ async def slack_events(
         channel=channel,
         sender_id=sender_id,
     )
+    ticket_command = parse_create_ticket(text)
+    if ticket_command is not None and request.app.state.issue_tracker is not None:
+        created_issue = await request.app.state.issue_tracker.create_issue(
+            build_issue_create_request(
+                ticket_command,
+                provider="slack",
+                channel=channel,
+                sender_id=sender_id,
+                message_ts=_str_value(event.get("ts")),
+                thread_ts=_str_value(event.get("thread_ts")),
+            )
+        )
+        return {
+            "ok": True,
+            "route": "create_ticket",
+            "command": "create-ticket",
+            "repo": ticket_command.repo,
+            "issue_id": created_issue.issue_id,
+            "external_id": created_issue.external_id,
+            "url": created_issue.url,
+            "session_id": None,
+            "message_id": None,
+        }
+
     override = parse_human_override(text)
     if override is not None:
         result = await HumanOverrideHandler(
@@ -206,3 +234,7 @@ def _clean_slack_text(value: object) -> str | None:
         return None
     cleaned = re.sub(r"<@[A-Z0-9]+>\s*", "", value).strip()
     return cleaned or None
+
+
+def _str_value(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None

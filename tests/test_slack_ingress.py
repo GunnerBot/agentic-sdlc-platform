@@ -9,6 +9,7 @@ from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphQueryResult
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest, HermesSessionResponse
+from agentic_sdlc_platform.ports.issue_tracker import IssueCreateRequest, IssueCreateResponse
 
 
 class FakeRepo:
@@ -36,6 +37,19 @@ class FakeGraphStore:
             provider="graphify",
             answer="Allocation lives in inventory/allocation.py.",
             references=["inventory/allocation.py"],
+        )
+
+
+class FakeIssueTracker:
+    def __init__(self) -> None:
+        self.created: list[IssueCreateRequest] = []
+
+    async def create_issue(self, request: IssueCreateRequest) -> IssueCreateResponse:
+        self.created.append(request)
+        return IssueCreateResponse(
+            issue_id="issue-id-1",
+            external_id="OS-1284",
+            url="https://linear.app/keychain/issue/OS-1284",
         )
 
 
@@ -177,5 +191,76 @@ def test_slack_app_mention_routes_repo_question_to_graph_store() -> None:
             repo="keychain-os-erp",
             question="Where does allocation live?",
             metadata={"default_branch": "main"},
+        )
+    ]
+
+
+def test_slack_create_ticket_command_creates_linear_issue_with_message_context() -> None:
+    body = json.dumps(
+        {
+            "type": "event_callback",
+            "event": {
+                "type": "app_mention",
+                "channel": "C123",
+                "user": "U123",
+                "ts": "1710000000.000100",
+                "thread_ts": "1710000000.000000",
+                "text": (
+                    "<@BOT> /create-ticket repo:keychain-os-erp type:feature "
+                    "Add FEFO allocation support | Carry over Slack context."
+                ),
+            },
+        }
+    ).encode("utf-8")
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(slack_signing_secret="secret"),
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/channels/slack/events",
+        content=body,
+        headers=signed_slack_headers(body, "secret"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "route": "create_ticket",
+        "command": "create-ticket",
+        "repo": "keychain-os-erp",
+        "issue_id": "issue-id-1",
+        "external_id": "OS-1284",
+        "url": "https://linear.app/keychain/issue/OS-1284",
+        "session_id": None,
+        "message_id": None,
+    }
+    assert issue_tracker.created == [
+        IssueCreateRequest(
+            title="Add FEFO allocation support",
+            description=(
+                "Created from channel command.\n"
+                "Provider: slack\n"
+                "Channel: C123\n"
+                "Sender: U123\n"
+                "Message timestamp: 1710000000.000100\n"
+                "Thread timestamp: 1710000000.000000\n"
+                "Repo: keychain-os-erp\n"
+                "Template: feature\n"
+                "\n"
+                "Carry over Slack context."
+            ),
+            repo="keychain-os-erp",
+            metadata={
+                "provider": "slack",
+                "channel": "C123",
+                "sender_id": "U123",
+                "message_ts": "1710000000.000100",
+                "thread_ts": "1710000000.000000",
+                "template": "feature",
+            },
         )
     ]

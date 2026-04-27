@@ -20,7 +20,26 @@ class IssueTrackerReply:
     body: str
 
 
+@dataclass(frozen=True)
+class IssueCreateRequest:
+    title: str
+    description: str
+    team_id: str | None = None
+    repo: str | None = None
+    metadata: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class IssueCreateResponse:
+    issue_id: str
+    external_id: str
+    url: str | None = None
+
+
 class IssueTrackerPort(Protocol):
+    async def create_issue(self, request: IssueCreateRequest) -> IssueCreateResponse:
+        raise NotImplementedError
+
     async def mark_task_queued(self, update: IssueTrackerUpdate) -> None:
         raise NotImplementedError
 
