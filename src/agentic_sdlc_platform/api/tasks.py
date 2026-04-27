@@ -12,6 +12,7 @@ from agentic_sdlc_platform.models.tasks import (
     CreateTaskDagRequest,
     TaskDagNodeResponse,
     TaskDagResponse,
+    TaskDagSummaryResponse,
     TaskDetailResponse,
     TaskStatusResponse,
 )
@@ -170,6 +171,7 @@ def _task_status_response(task: Task) -> TaskStatusResponse:
         status=task.status,
         orchestrator_task_id=task.orchestrator_task_id,
         orchestrator_status=task.orchestrator_status,
+        dags=[_dag_summary_response(dag) for dag in getattr(task, "dags", [])],
         sessions=[_session_status_response(session) for session in task.sessions],
     )
 
@@ -184,7 +186,27 @@ def _task_detail_response(task: Task) -> TaskDetailResponse:
         status=task.status,
         orchestrator_task_id=task.orchestrator_task_id,
         orchestrator_status=task.orchestrator_status,
+        dags=[_dag_response(dag) for dag in getattr(task, "dags", [])],
         sessions=[_session_detail_response(session) for session in task.sessions],
+    )
+
+
+def _dag_summary_response(dag: TaskDag) -> TaskDagSummaryResponse:
+    completed_nodes = [node for node in dag.nodes if node.status == "completed"]
+    completed_node_keys = {node.node_key for node in completed_nodes}
+    ready_nodes = [
+        node
+        for node in dag.nodes
+        if node.status != "completed"
+        and all(dependency in completed_node_keys for dependency in node.depends_on)
+    ]
+    return TaskDagSummaryResponse(
+        id=dag.id,
+        status=dag.status,
+        node_count=len(dag.nodes),
+        ready_count=len(ready_nodes),
+        completed_count=len(completed_nodes),
+        first_ready_node=_node_response(ready_nodes[0]) if ready_nodes else None,
     )
 
 

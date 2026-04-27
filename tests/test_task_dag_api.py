@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.dag_decomposer import Subtask
 from agentic_sdlc_platform.persistence.models import Base, TaskDag
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.model_provider import ModelRequest, ModelResponse
@@ -165,6 +166,13 @@ async def test_list_tasks_endpoint_returns_task_and_session_status() -> None:
         message="What is the status?",
         metadata={"comment_id": "comment-1"},
     )
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask("design", "Design implementation"),
+            Subtask("implement", "Implement feature", depends_on=("design",)),
+        ],
+    )
     client = TestClient(create_app(Settings(), repository=repository))
 
     response = client.get("/tasks")
@@ -180,6 +188,22 @@ async def test_list_tasks_endpoint_returns_task_and_session_status() -> None:
             "status": "queued",
             "orchestrator_task_id": None,
             "orchestrator_status": None,
+            "dags": [
+                {
+                    "id": dag.id,
+                    "status": "planned",
+                    "node_count": 2,
+                    "ready_count": 1,
+                    "completed_count": 0,
+                    "first_ready_node": {
+                        "node_key": "design",
+                        "title": "Design implementation",
+                        "repo": None,
+                        "depends_on": [],
+                        "status": "ready",
+                    },
+                }
+            ],
             "sessions": [
                 {
                     "id": session.id,
@@ -214,12 +238,34 @@ async def test_get_task_endpoint_returns_session_event_history() -> None:
         message="I am working on it.",
         metadata={"message_id": "message-1"},
     )
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask("design", "Design implementation"),
+        ],
+    )
     client = TestClient(create_app(Settings(), repository=repository))
 
     response = client.get(f"/tasks/{task_id}")
 
     assert response.status_code == 200
     assert response.json()["id"] == task_id
+    assert response.json()["dags"] == [
+        {
+            "id": dag.id,
+            "task_id": task_id,
+            "status": "planned",
+            "nodes": [
+                {
+                    "node_key": "design",
+                    "title": "Design implementation",
+                    "repo": None,
+                    "depends_on": [],
+                    "status": "ready",
+                }
+            ],
+        }
+    ]
     assert response.json()["sessions"][0]["events"] == [
         {
             "id": event.id,

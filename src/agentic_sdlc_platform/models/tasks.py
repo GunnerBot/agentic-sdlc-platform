@@ -24,6 +24,15 @@ class TaskDagResponse(BaseModel):
     nodes: list[TaskDagNodeResponse]
 
 
+class TaskDagSummaryResponse(BaseModel):
+    id: str
+    status: str
+    node_count: int
+    ready_count: int
+    completed_count: int
+    first_ready_node: TaskDagNodeResponse | None = None
+
+
 class CompleteDagNodeResponse(BaseModel):
     completed_node: str
     ready_nodes: list[TaskDagNodeResponse]
@@ -62,6 +71,7 @@ class TaskStatusResponse(BaseModel):
     status: str
     orchestrator_task_id: str | None = None
     orchestrator_status: str | None = None
+    dags: list[TaskDagSummaryResponse]
     sessions: list[AgentSessionStatusResponse]
 
 
@@ -74,4 +84,5 @@ class TaskDetailResponse(BaseModel):
     status: str
     orchestrator_task_id: str | None = None
     orchestrator_status: str | None = None
+    dags: list[TaskDagResponse]
     sessions: list[AgentSessionDetailResponse]

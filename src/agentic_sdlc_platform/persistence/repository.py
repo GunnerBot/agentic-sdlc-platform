@@ -256,7 +256,10 @@ class PersistenceRepository:
         async with self._session_factory() as session:
             statement = (
                 select(Task)
-                .options(selectinload(Task.sessions).selectinload(AgentSession.events))
+                .options(
+                    selectinload(Task.dags).selectinload(TaskDag.nodes),
+                    selectinload(Task.sessions).selectinload(AgentSession.events),
+                )
                 .order_by(Task.created_at.desc(), Task.id)
             )
             if source:
@@ -273,7 +276,10 @@ class PersistenceRepository:
             result = await session.execute(
                 select(Task)
                 .where(Task.id == task_id)
-                .options(selectinload(Task.sessions).selectinload(AgentSession.events))
+                .options(
+                    selectinload(Task.dags).selectinload(TaskDag.nodes),
+                    selectinload(Task.sessions).selectinload(AgentSession.events),
+                )
             )
             return result.scalars().first()
 
