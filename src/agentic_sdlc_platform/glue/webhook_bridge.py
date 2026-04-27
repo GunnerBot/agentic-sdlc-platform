@@ -6,6 +6,11 @@ from hashlib import sha256
 from fastapi import HTTPException, status
 
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.human_override import (
+    HumanOverrideCommand,
+    HumanOverrideHandler,
+    parse_human_override,
+)
 from agentic_sdlc_platform.glue.task_event_normalizer import (
     NormalizedTaskEvent,
     TaskEventNormalizer,
@@ -166,6 +171,7 @@ class WebhookBridge:
         body = _str_value(data.get("body"))
         if not issue_id or not body:
             return None
+        user_id = _str_value(_dict_value(data.get("user")).get("id"))
 
         agent_session = await self._repository.find_agent_session(
             provider="linear",
@@ -174,7 +180,32 @@ class WebhookBridge:
         if agent_session is None or not agent_session.hermes_session_id:
             return None
 
-        actor = f"linear:{_str_value(_dict_value(data.get('user')).get('id')) or 'unknown'}"
+        actor = f"linear:{user_id or 'unknown'}"
+        if user_id and user_id == self._settings.linear_agent_user_id:
+            await self._repository.record_audit_event(
+                action="agent_session.self_comment_ignored",
+                actor=actor,
+                target_type="agent_session",
+                target_id=agent_session.id,
+                metadata={
+                    "provider": "linear",
+                    "issue_id": issue_id,
+                    "comment_id": comment_id,
+                },
+            )
+            return agent_session.task_id
+
+        command = parse_human_override(body)
+        if command is not None:
+            return await self._handle_linear_comment_command(
+                agent_session_id=agent_session.id,
+                issue_id=issue_id,
+                comment_id=comment_id,
+                body=body,
+                actor=actor,
+                command=command,
+            )
+
         await self._repository.record_session_event(
             session_id=agent_session.id,
             direction="inbound",
@@ -213,6 +244,49 @@ class WebhookBridge:
             },
         )
         return agent_session.task_id
+
+    async def _handle_linear_comment_command(
+        self,
+        agent_session_id: str,
+        issue_id: str,
+        comment_id: str | None,
+        body: str,
+        actor: str,
+        command: HumanOverrideCommand,
+    ) -> str | None:
+        await self._repository.record_session_event(
+            session_id=agent_session_id,
+            direction="inbound",
+            event_type="command",
+            actor=actor,
+            message=body,
+            metadata={"comment_id": comment_id} if comment_id else {},
+        )
+        result = await HumanOverrideHandler(
+            repository=self._repository,
+            task_orchestrator=self._task_orchestrator,
+        ).handle(
+            command=command,
+            actor=actor,
+            channel="linear",
+        )
+        reply_body = (
+            f"Command /{result.command} applied. "
+            f"Task {command.external_id} is now {result.status}."
+        )
+        await self._repository.record_session_event(
+            session_id=agent_session_id,
+            direction="outbound",
+            event_type="command_ack",
+            actor="system",
+            message=reply_body,
+            metadata={"command": result.command, "status": result.status},
+        )
+        if self._issue_tracker is not None:
+            await self._issue_tracker.reply(
+                IssueTrackerReply(issue_id=issue_id, body=reply_body)
+            )
+        return result.task_id
 
     async def _normalize_task(
         self,

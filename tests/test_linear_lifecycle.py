@@ -16,8 +16,15 @@ from agentic_sdlc_platform.ports.task_orchestrator import TaskRequest, TaskRespo
 class FakeTaskOrchestrator:
     provider = "multica"
 
+    def __init__(self) -> None:
+        self.updated: list[tuple[str, str]] = []
+
     async def create_task(self, request: TaskRequest) -> TaskResponse:
         return TaskResponse(external_task_id="multica-task-1", status="queued")
+
+    async def update_task(self, request) -> TaskResponse:
+        self.updated.append((request.external_task_id, request.status))
+        return TaskResponse(external_task_id=request.external_task_id, status=request.status)
 
 
 class FakeIssueTracker:
@@ -257,3 +264,109 @@ async def test_linear_comment_resumes_session_and_replies_in_thread() -> None:
         ("inbound", "comment", "linear:user-1", "Please check inventory allocation first."),
         ("outbound", "reply", "agent", "I will check inventory allocation first."),
     ]
+
+
+async def test_linear_comment_from_agent_user_is_ignored_to_prevent_reply_loop() -> None:
+    repository = await build_repository()
+    hermes_session = FakeHermesSession()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=FakeTaskOrchestrator(),
+            hermes_session=hermes_session,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    assignment_response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-loop-1"},
+    )
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-1",
+                "body": "I will check inventory allocation first.",
+                "user": {"id": "agent-user-1"},
+                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-loop-2"},
+    )
+
+    assert assignment_response.status_code == 202
+    assert response.status_code == 202
+    assert response.json()["task_id"] == assignment_response.json()["task_id"]
+    assert hermes_session.resumed == []
+    assert issue_tracker.replies == []
+
+
+async def test_linear_comment_command_updates_task_status_and_replies() -> None:
+    repository = await build_repository()
+    task_orchestrator = FakeTaskOrchestrator()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            hermes_session=FakeHermesSession(),
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    assignment_response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-command-1"},
+    )
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-1",
+                "body": "/pause OS-1284 waiting for product decision",
+                "user": {"id": "user-1"},
+                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-command-2"},
+    )
+
+    assert assignment_response.status_code == 202
+    assert response.status_code == 202
+    assert response.json()["task_id"] == assignment_response.json()["task_id"]
+    assert task_orchestrator.updated == [("multica-task-1", "paused")]
+    assert issue_tracker.replies[-1] == IssueTrackerReply(
+        issue_id="issue-id-1",
+        body="Command /pause applied. Task OS-1284 is now paused.",
+    )
+    task = await repository.find_task_by_external_id("OS-1284")
+    assert task is not None
+    assert task.status == "paused"
