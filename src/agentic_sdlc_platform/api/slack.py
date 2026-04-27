@@ -7,7 +7,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
-from agentic_sdlc_platform.glue.channel_router import ChannelMessage, ChannelRouter, RouteTarget
+from agentic_sdlc_platform.glue.channel_repo_query import answer_repo_query
+from agentic_sdlc_platform.glue.channel_router import (
+    ChannelMessage,
+    ChannelRouter,
+    RouteTarget,
+    parse_repo_query,
+)
 from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest
 
@@ -106,6 +112,21 @@ async def slack_events(
     )
     session_id = None
     message_id = None
+    if route == RouteTarget.GRAPH_REPO_QUERY:
+        repo_answer = await answer_repo_query(
+            parse_repo_query(text),
+            repository=request.app.state.repository,
+            graph_store=request.app.state.graph_store,
+        )
+        return {
+            "ok": True,
+            "route": repo_answer["route"],
+            "repo": repo_answer["repo"],
+            "answer": repo_answer["answer"],
+            "references": repo_answer["references"],
+            "session_id": None,
+            "message_id": None,
+        }
     if route == RouteTarget.HERMES_DIRECT and request.app.state.hermes_session is not None:
         request.app.state.channel_budget_ledger.reserve(provider="slack", channel=channel)
         hermes_response = await request.app.state.hermes_session.ask(

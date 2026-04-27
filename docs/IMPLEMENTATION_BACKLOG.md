@@ -62,6 +62,7 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 - Add repo indexing job APIs backed by the Graphify graph store seam
 - Add repo Q&A API backed by Graphify queries for codebase questions
 - Add bulk repo indexing API for all active registered repositories
+- Route repo-scoped Slack, Telegram, and generic channel questions to Graphify
 
 ## Phase 4: DAG Decomposer
 

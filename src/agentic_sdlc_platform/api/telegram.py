@@ -4,7 +4,13 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
-from agentic_sdlc_platform.glue.channel_router import ChannelMessage, ChannelRouter, RouteTarget
+from agentic_sdlc_platform.glue.channel_repo_query import answer_repo_query
+from agentic_sdlc_platform.glue.channel_router import (
+    ChannelMessage,
+    ChannelRouter,
+    RouteTarget,
+    parse_repo_query,
+)
 from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort, HermesSessionRequest
@@ -66,6 +72,7 @@ async def telegram_webhook(
         hermes_session=request.app.state.hermes_session,
         channel_authorizer=request.app.state.channel_authorizer,
         repository=request.app.state.repository,
+        graph_store=request.app.state.graph_store,
         task_orchestrator=request.app.state.task_orchestrator,
         channel_budget_ledger=request.app.state.channel_budget_ledger,
     )
@@ -78,6 +85,7 @@ async def handle_telegram_update(
     hermes_session: HermesSessionPort | None,
     channel_authorizer,
     repository: PersistenceRepository,
+    graph_store,
     task_orchestrator: TaskOrchestratorPort | None,
     channel_budget_ledger,
 ) -> dict[str, object]:
@@ -124,6 +132,21 @@ async def handle_telegram_update(
     )
     session_id = None
     message_id = None
+    if route == RouteTarget.GRAPH_REPO_QUERY:
+        repo_answer = await answer_repo_query(
+            parse_repo_query(text),
+            repository=repository,
+            graph_store=graph_store,
+        )
+        return {
+            "ok": True,
+            "route": repo_answer["route"],
+            "repo": repo_answer["repo"],
+            "answer": repo_answer["answer"],
+            "references": repo_answer["references"],
+            "session_id": None,
+            "message_id": None,
+        }
     if route == RouteTarget.HERMES_DIRECT and hermes_session is not None:
         channel_budget_ledger.reserve(provider="telegram", channel=channel)
         hermes_response = await hermes_session.ask(

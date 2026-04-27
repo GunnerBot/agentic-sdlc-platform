@@ -1,6 +1,12 @@
 from fastapi import APIRouter, Request, status
 
-from agentic_sdlc_platform.glue.channel_router import ChannelMessage, ChannelRouter, RouteTarget
+from agentic_sdlc_platform.glue.channel_repo_query import answer_repo_query
+from agentic_sdlc_platform.glue.channel_router import (
+    ChannelMessage,
+    ChannelRouter,
+    RouteTarget,
+    parse_repo_query,
+)
 from agentic_sdlc_platform.glue.human_override import HumanOverrideHandler, parse_human_override
 from agentic_sdlc_platform.models.channels import ChannelAcceptedResponse, ChannelMessageRequest
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest
@@ -51,6 +57,22 @@ async def accept_channel_message(
     )
     session_id = None
     message_id = None
+    if route == RouteTarget.GRAPH_REPO_QUERY:
+        repo_query = parse_repo_query(message.text)
+        repo_answer = await answer_repo_query(
+            repo_query,
+            repository=request.app.state.repository,
+            graph_store=request.app.state.graph_store,
+        )
+        return ChannelAcceptedResponse(
+            accepted=True,
+            provider=message.provider,
+            channel=message.channel,
+            route=repo_answer["route"],
+            repo=repo_answer["repo"],
+            answer=repo_answer["answer"],
+            references=repo_answer["references"],
+        )
     if route == RouteTarget.HERMES_DIRECT and request.app.state.hermes_session is not None:
         request.app.state.channel_budget_ledger.reserve(
             provider=message.provider.value,

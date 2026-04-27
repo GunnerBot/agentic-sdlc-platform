@@ -27,3 +27,6 @@ class ChannelAcceptedResponse(BaseModel):
     message_id: str | None = None
     task_id: str | None = None
     command: str | None = None
+    repo: str | None = None
+    answer: str | None = None
+    references: list[str] | None = None
