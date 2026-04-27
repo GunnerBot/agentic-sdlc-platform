@@ -55,11 +55,18 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://agentic_sdlc:agentic_sdlc@localhost:5432/agentic_sdlc"
 
     vendor_http_enabled: bool = False
+    model_provider: str = "claude"
     claude_base_url: str = "https://api.anthropic.com"
     claude_api_key: str | None = Field(default=None, repr=False)
     claude_default_model: str | None = None
     claude_timeout_seconds: float = 30.0
     claude_max_retries: int = 2
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_api_key: str | None = Field(default=None, repr=False)
+    openai_default_model: str = "gpt-5.5"
+    openai_fallback_model: str = "gpt-5.4-mini"
+    openai_timeout_seconds: float = 30.0
+    openai_max_retries: int = 2
 
     graphify_base_url: str | None = None
     graphify_api_key: str | None = Field(default=None, repr=False)

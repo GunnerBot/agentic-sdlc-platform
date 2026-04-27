@@ -5,6 +5,7 @@ from agentic_sdlc_platform.adapters.hermes import HermesAgentAdapter
 from agentic_sdlc_platform.adapters.linear import LinearIssueAdapter
 from agentic_sdlc_platform.adapters.local_executor import LocalAgentExecutor
 from agentic_sdlc_platform.adapters.multica import MulticaTaskOrchestrator
+from agentic_sdlc_platform.adapters.openai import OpenAIModelProvider
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.glue.channel_budget import ChannelBudgetLedger
 from agentic_sdlc_platform.glue.channel_mapping import ChannelAuthorizer, load_channel_authorizer
@@ -20,6 +21,8 @@ from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
 
 
 def build_model_provider(settings: Settings) -> ModelProviderPort:
+    if settings.model_provider == "openai":
+        return OpenAIModelProvider(settings)
     return ClaudeModelProvider(settings)
 
 

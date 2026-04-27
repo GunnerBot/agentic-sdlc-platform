@@ -283,6 +283,7 @@ async def test_multica_adapter_requires_workspace_id_for_real_api() -> None:
             multica_http_enabled=True,
             multica_base_url="https://multica.local",
             multica_api_key="test-key",
+            multica_workspace_id=None,
         ),
         transport=httpx.MockTransport(lambda request: httpx.Response(status_code=200)),
     )

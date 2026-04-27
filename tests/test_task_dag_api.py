@@ -112,7 +112,11 @@ async def test_create_task_dag_endpoint_persists_planner_output() -> None:
     task_id = await create_parent_task(repository)
     model_provider = FakePlannerModel()
     client = TestClient(
-        create_app(Settings(), repository=repository, model_provider=model_provider)
+        create_app(
+            Settings(multica_http_enabled=False),
+            repository=repository,
+            model_provider=model_provider,
+        )
     )
 
     response = client.post(
@@ -136,7 +140,11 @@ async def test_create_task_dag_endpoint_uses_builtin_feature_template() -> None:
     task_id = await create_parent_task(repository)
     model_provider = FakePlannerModel()
     client = TestClient(
-        create_app(Settings(), repository=repository, model_provider=model_provider)
+        create_app(
+            Settings(multica_http_enabled=False),
+            repository=repository,
+            model_provider=model_provider,
+        )
     )
 
     response = client.post(
@@ -302,7 +310,11 @@ async def test_complete_dag_node_endpoint_returns_newly_ready_nodes() -> None:
     task_id = await create_parent_task(repository)
     model_provider = FakePlannerModel()
     client = TestClient(
-        create_app(Settings(), repository=repository, model_provider=model_provider)
+        create_app(
+            Settings(multica_http_enabled=False),
+            repository=repository,
+            model_provider=model_provider,
+        )
     )
     created = client.post(
         f"/tasks/{task_id}/dag",

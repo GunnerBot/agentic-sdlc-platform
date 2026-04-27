@@ -29,6 +29,16 @@ Copy `.env.example` to `.env` and use ignored `.env.local` overrides for machine
 Set `ASDLC_CHANNEL_MAPPING_PATH=config/channel-mapping.example.toml` to enforce channel
 allow-lists and repo mapping for Slack and Telegram.
 
+Model-backed planning uses `ASDLC_MODEL_PROVIDER`. For OpenAI, set:
+
+```bash
+ASDLC_VENDOR_HTTP_ENABLED=true
+ASDLC_MODEL_PROVIDER=openai
+ASDLC_OPENAI_API_KEY=<openai_api_key>
+ASDLC_OPENAI_DEFAULT_MODEL=gpt-5.5
+ASDLC_OPENAI_FALLBACK_MODEL=gpt-5.4-mini
+```
+
 GitHub App read-only repo discovery uses `ASDLC_GITHUB_APP_*` settings. Put the App ID,
 installation ID, and `ASDLC_GITHUB_APP_PRIVATE_KEY_PATH` in ignored `.env.local`, then store the
 private key in an ignored local file such as `secrets/github-app.pem`; do not commit keys. Write
