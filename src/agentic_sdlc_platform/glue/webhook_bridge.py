@@ -574,7 +574,52 @@ class WebhookBridge:
                     "node_count": len(dag.nodes),
                 },
             )
+            if self._task_orchestrator is not None:
+                await self._enqueue_first_ready_dag_node(dag=dag, task=task)
         return task.id
+
+    async def _enqueue_first_ready_dag_node(self, dag, task) -> None:
+        ready_nodes = [
+            node
+            for node in dag.nodes
+            if node.status == "ready" and not node.depends_on
+        ]
+        if not ready_nodes:
+            return
+        node = ready_nodes[0]
+        external_task = await self._task_orchestrator.create_task(
+            TaskRequest(
+                source="dag",
+                external_id=f"{dag.id}:{node.node_key}",
+                title=node.title,
+                repo=node.repo,
+                metadata={
+                    "parent_task_id": task.id,
+                    "parent_external_id": task.external_id,
+                    "dag_id": dag.id,
+                    "node_key": node.node_key,
+                },
+            )
+        )
+        await self._repository.mark_dag_node_orchestrated(
+            dag_id=dag.id,
+            node_key=node.node_key,
+            orchestrator_task_id=external_task.external_task_id,
+            orchestrator_status=external_task.status,
+        )
+        await self._repository.record_audit_event(
+            action="task.dag_node_enqueued",
+            actor="system",
+            target_type="task_dag",
+            target_id=dag.id,
+            metadata={
+                "task_id": task.id,
+                "external_id": task.external_id,
+                "node_key": node.node_key,
+                "orchestrator_task_id": external_task.external_task_id,
+                "status": external_task.status,
+            },
+        )
 
     async def _start_linear_agent_session(
         self,

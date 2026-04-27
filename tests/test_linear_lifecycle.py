@@ -18,13 +18,20 @@ from agentic_sdlc_platform.ports.task_orchestrator import TaskRequest, TaskRespo
 class FakeTaskOrchestrator:
     provider = "multica"
 
-    def __init__(self) -> None:
+    def __init__(self, task_ids: list[str] | None = None) -> None:
         self.created: list[TaskRequest] = []
         self.updated: list[tuple[str, str]] = []
+        self._task_ids = task_ids or ["multica-task-1"]
 
     async def create_task(self, request: TaskRequest) -> TaskResponse:
         self.created.append(request)
-        return TaskResponse(external_task_id="multica-task-1", status="queued")
+        index = len(self.created) - 1
+        external_task_id = (
+            self._task_ids[index]
+            if index < len(self._task_ids)
+            else f"multica-task-{index + 1}"
+        )
+        return TaskResponse(external_task_id=external_task_id, status="queued")
 
     async def update_task(self, request) -> TaskResponse:
         self.updated.append((request.external_task_id, request.status))
@@ -182,11 +189,14 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
         default_branch="main",
         metadata={},
     )
+    task_orchestrator = FakeTaskOrchestrator(
+        task_ids=["multica-parent-task-1", "multica-dag-node-1"]
+    )
     client = TestClient(
         create_app(
             Settings(linear_agent_user_id="agent-user-1"),
             repository=repository,
-            task_orchestrator=FakeTaskOrchestrator(),
+            task_orchestrator=task_orchestrator,
             issue_tracker=FakeIssueTracker(),
         )
     )
@@ -217,18 +227,53 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
         dag = (
             await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
         ).one()
-        audit_event = (
+        dag_created_event = (
             await session.scalars(
                 select(AuditEvent).where(AuditEvent.action == "task.dag_template_created")
+            )
+        ).one()
+        dag_node_enqueued_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "task.dag_node_enqueued")
             )
         ).one()
 
         assert [node.node_key for node in dag.nodes] == ["reproduce", "fix", "test", "review"]
         assert [node.repo for node in dag.nodes] == ["keychain-os-erp"] * 4
-        assert dag.nodes[0].status == "ready"
+        assert dag.nodes[0].status == "queued"
+        assert dag.nodes[0].orchestrator_task_id == "multica-dag-node-1"
         assert dag.nodes[1].status == "blocked"
-    assert audit_event.metadata_json["template"] == "bugfix"
-    assert audit_event.metadata_json["node_count"] == 4
+    assert task_orchestrator.created == [
+        TaskRequest(
+            source="linear",
+            external_id="OS-1284",
+            title="Build webhook bridge",
+            repo="keychain-os-erp",
+            inbound_event_id=task_orchestrator.created[0].inbound_event_id,
+            metadata={
+                "repo_provider": "github",
+                "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+                "repo_default_branch": "main",
+                "repo_metadata": {},
+            },
+        ),
+        TaskRequest(
+            source="dag",
+            external_id=f"{dag.id}:reproduce",
+            title="Reproduce OS-1284",
+            repo="keychain-os-erp",
+            metadata={
+                "parent_task_id": response.json()["task_id"],
+                "parent_external_id": "OS-1284",
+                "dag_id": dag.id,
+                "node_key": "reproduce",
+            },
+        ),
+    ]
+    assert dag_created_event.metadata_json["template"] == "bugfix"
+    assert dag_created_event.metadata_json["node_count"] == 4
+    assert dag_node_enqueued_event.metadata_json["node_key"] == "reproduce"
+    assert dag_node_enqueued_event.metadata_json["orchestrator_task_id"] == "multica-dag-node-1"
 
 
 async def test_linear_assigned_issue_blocks_when_repo_label_is_unknown() -> None:
