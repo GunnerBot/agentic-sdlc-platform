@@ -115,7 +115,7 @@ async def complete_dag_node(
         )
     return CompleteDagNodeResponse(
         completed_node=node_key,
-        ready_nodes=[_node_response(node) for node in ready_nodes],
+        ready_nodes=[_ready_node_response(node) for node in ready_nodes],
     )
 
 
@@ -170,7 +170,7 @@ async def skip_dag_node(
         )
     return CompleteDagNodeResponse(
         completed_node=node_key,
-        ready_nodes=[_node_response(node) for node in ready_nodes],
+        ready_nodes=[_ready_node_response(node) for node in ready_nodes],
     )
 
 
@@ -405,27 +405,18 @@ def _dag_response(dag: TaskDag) -> TaskDagResponse:
         id=dag.id,
         task_id=dag.task_id,
         status=dag.status,
-        nodes=[
-            TaskDagNodeResponse(
-                node_key=node.node_key,
-                title=node.title,
-                repo=node.repo,
-                depends_on=list(node.depends_on),
-                status=node.status,
-            )
-            for node in dag.nodes
-        ],
+        nodes=[_node_response(node) for node in dag.nodes],
     )
 
 
-def _node_response(node) -> TaskDagNodeResponse:
+def _node_response(node, status_override: str | None = None) -> TaskDagNodeResponse:
     metadata = dict(getattr(node, "metadata_json", {}) or {})
     return TaskDagNodeResponse(
         node_key=node.node_key,
         title=node.title,
         repo=node.repo,
         depends_on=list(node.depends_on),
-        status=node.status if node.status != "blocked" else "ready",
+        status=status_override or node.status,
         orchestrator_task_id=node.orchestrator_task_id,
         orchestrator_status=node.orchestrator_status,
         pr_number=_int_or_none(metadata.get("pr_number")),
@@ -444,6 +435,13 @@ def _node_response(node) -> TaskDagNodeResponse:
             _execution_response(execution)
             for execution in node.__dict__.get("executions", [])
         ],
+    )
+
+
+def _ready_node_response(node) -> TaskDagNodeResponse:
+    return _node_response(
+        node,
+        status_override="ready" if node.status == "blocked" else None,
     )
 
 
@@ -499,7 +497,7 @@ def _dag_summary_response(dag: TaskDag) -> TaskDagSummaryResponse:
         completed_count=len(completed_nodes),
         skipped_count=len(skipped_nodes),
         failed_count=len(failed_nodes),
-        first_ready_node=_node_response(ready_nodes[0]) if ready_nodes else None,
+        first_ready_node=_ready_node_response(ready_nodes[0]) if ready_nodes else None,
     )
 
 

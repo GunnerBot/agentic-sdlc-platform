@@ -16,7 +16,9 @@ async def test_openai_provider_blocks_when_vendor_http_disabled() -> None:
 
 
 async def test_openai_provider_requires_api_key_when_enabled() -> None:
-    provider = OpenAIModelProvider(Settings(vendor_http_enabled=True))
+    provider = OpenAIModelProvider(
+        Settings(vendor_http_enabled=True, openai_api_key="")
+    )
 
     with pytest.raises(ModelProviderError, match="openai API key"):
         await provider.complete(ModelRequest(role="plan_agent", prompt="Plan this"))

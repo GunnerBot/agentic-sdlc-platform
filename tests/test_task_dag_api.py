@@ -487,6 +487,48 @@ async def test_sync_dag_node_orchestrator_state_polls_task_run() -> None:
     ]
 
 
+async def test_get_task_detail_returns_rich_dag_node_metadata() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag_id,
+        node_key="api",
+        orchestrator_task_id="multica-task-1",
+        orchestrator_status="queued",
+        metadata={
+            "expected_branch": f"agent/dag/{dag_id}/api",
+            "expected_pr_reference": f"dag/{dag_id}/api",
+            "multica_issue_id": "issue-1",
+            "multica_task_id": "multica-task-1",
+            "multica_runtime_provider": "codex",
+        },
+    )
+
+    response = client.get(f"/tasks/{task_id}")
+
+    assert response.status_code == 200
+    node = response.json()["dags"][0]["nodes"][0]
+    assert node["orchestrator_task_id"] == "multica-task-1"
+    assert node["orchestrator_status"] == "queued"
+    assert node["expected_branch"] == f"agent/dag/{dag_id}/api"
+    assert node["expected_pr_reference"] == f"dag/{dag_id}/api"
+    assert node["multica_issue_id"] == "issue-1"
+    assert node["multica_task_id"] == "multica-task-1"
+    assert node["multica_runtime_provider"] == "codex"
+
+
 async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> None:
     repository = await build_repository()
     task_id = await create_parent_task(repository)

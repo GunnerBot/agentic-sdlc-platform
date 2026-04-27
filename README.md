@@ -46,8 +46,16 @@ operations for automatic branch push and PR creation remain intentionally disabl
 write-scoped GitHub App policy is approved.
 
 Docker Compose includes a local dev service that implements the Hermes and Multica HTTP contracts
-with non-production tokens. This is only for local smoke testing; replace
-`ASDLC_HERMES_*` and `ASDLC_MULTICA_*` with real hosted service credentials before production use.
+with non-production tokens. This is only for local smoke testing. To run the container against real
+host-local services, use the real overlay:
+
+```bash
+make compose-real-up
+```
+
+The real overlay reads secrets from ignored `.env.local`, keeps Postgres inside Compose, and points
+the app container at host-local services with `host.docker.internal` because `127.0.0.1` inside a
+container means the container itself.
 
 For real self-hosted Multica, configure the platform with the Multica backend URL, PAT, workspace
 ID, and preferred runtime provider:
