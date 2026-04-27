@@ -131,6 +131,36 @@ class PersistenceRepository:
             await session.refresh(task)
             return task
 
+    async def list_tasks(
+        self,
+        source: str | None = None,
+        repo: str | None = None,
+        status: str | None = None,
+    ) -> list[Task]:
+        async with self._session_factory() as session:
+            statement = (
+                select(Task)
+                .options(selectinload(Task.sessions).selectinload(AgentSession.events))
+                .order_by(Task.created_at.desc(), Task.id)
+            )
+            if source:
+                statement = statement.where(Task.source == source)
+            if repo:
+                statement = statement.where(Task.repo == repo)
+            if status:
+                statement = statement.where(Task.status == status)
+            result = await session.execute(statement)
+            return list(result.scalars().all())
+
+    async def get_task(self, task_id: str) -> Task | None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Task)
+                .where(Task.id == task_id)
+                .options(selectinload(Task.sessions).selectinload(AgentSession.events))
+            )
+            return result.scalars().first()
+
     async def create_task_dag(self, task_id: str, subtasks: list[Subtask]) -> TaskDag:
         async with self._session_factory() as session:
             dag = TaskDag(task_id=task_id)

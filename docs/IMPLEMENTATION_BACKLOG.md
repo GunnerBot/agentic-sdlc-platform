@@ -57,6 +57,7 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 - Add channel auth and repo mapping for Slack channels and Telegram chats
 - Add human override commands: `/pause`, `/resume`, `/takeover`, `/context`, `/reject`
 - Enforce per-channel cost caps
+- Expose task and agent session status APIs for triggered work and channel conversations
 
 ## Phase 4: DAG Decomposer
 

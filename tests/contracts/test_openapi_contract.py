@@ -12,6 +12,14 @@ class FakeEvent:
 
 class FakeTask:
     id = "task-1"
+    source = "linear"
+    external_id = "OS-1284"
+    title = "Build task status API"
+    repo = "keychain-os-erp"
+    status = "queued"
+    orchestrator_task_id = None
+    orchestrator_status = None
+    sessions = []
 
 
 class FakeWriteResult:
@@ -45,6 +53,12 @@ class FakeRepository:
         return None
 
     async def update_task_status(self, **kwargs):
+        return FakeTask()
+
+    async def list_tasks(self, **kwargs):
+        return [FakeTask()]
+
+    async def get_task(self, task_id):
         return FakeTask()
 
     async def record_audit_event(self, **kwargs):

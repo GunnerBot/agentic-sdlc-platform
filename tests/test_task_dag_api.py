@@ -90,6 +90,91 @@ async def test_create_task_dag_endpoint_persists_planner_output() -> None:
     assert len(dags) == 1
 
 
+async def test_list_tasks_endpoint_returns_task_and_session_status() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    session = await repository.create_agent_session(
+        task_id=task_id,
+        provider="linear",
+        external_thread_id="issue-id-1",
+        hermes_session_id="hermes-session-1",
+        repo="keychain-os-erp",
+    )
+    await repository.record_session_event(
+        session_id=session.id,
+        direction="inbound",
+        event_type="comment",
+        actor="linear:user-1",
+        message="What is the status?",
+        metadata={"comment_id": "comment-1"},
+    )
+    client = TestClient(create_app(Settings(), repository=repository))
+
+    response = client.get("/tasks")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "id": task_id,
+            "source": "linear",
+            "external_id": "OS-1284",
+            "title": "Build agentic SDLC platform",
+            "repo": "keychain-os-erp",
+            "status": "queued",
+            "orchestrator_task_id": None,
+            "orchestrator_status": None,
+            "sessions": [
+                {
+                    "id": session.id,
+                    "provider": "linear",
+                    "external_thread_id": "issue-id-1",
+                    "hermes_session_id": "hermes-session-1",
+                    "repo": "keychain-os-erp",
+                    "status": "active",
+                    "context_summary": None,
+                    "event_count": 1,
+                }
+            ],
+        }
+    ]
+
+
+async def test_get_task_endpoint_returns_session_event_history() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    session = await repository.create_agent_session(
+        task_id=task_id,
+        provider="linear",
+        external_thread_id="issue-id-1",
+        hermes_session_id="hermes-session-1",
+        repo="keychain-os-erp",
+    )
+    event = await repository.record_session_event(
+        session_id=session.id,
+        direction="outbound",
+        event_type="reply",
+        actor="agent",
+        message="I am working on it.",
+        metadata={"message_id": "message-1"},
+    )
+    client = TestClient(create_app(Settings(), repository=repository))
+
+    response = client.get(f"/tasks/{task_id}")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == task_id
+    assert response.json()["sessions"][0]["events"] == [
+        {
+            "id": event.id,
+            "direction": "outbound",
+            "event_type": "reply",
+            "actor": "agent",
+            "message": "I am working on it.",
+            "metadata": {"message_id": "message-1"},
+        }
+    ]
+
+
 async def test_complete_dag_node_endpoint_returns_newly_ready_nodes() -> None:
     repository = await build_repository()
     task_id = await create_parent_task(repository)
