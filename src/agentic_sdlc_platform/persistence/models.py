@@ -178,6 +178,15 @@ class TaskDagNode(Base):
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
 
     dag: Mapped[TaskDag] = relationship(back_populates="nodes")
+    executions: Mapped[list["DagNodeExecution"]] = relationship(
+        cascade="all, delete-orphan",
+        primaryjoin=(
+            "and_(TaskDagNode.dag_id == foreign(DagNodeExecution.dag_id), "
+            "TaskDagNode.node_key == foreign(DagNodeExecution.node_key))"
+        ),
+        order_by="DagNodeExecution.created_at",
+        viewonly=True,
+    )
 
     @property
     def depends_on(self) -> tuple[str, ...]:
@@ -189,6 +198,44 @@ class TaskDagNode(Base):
     @property
     def node_metadata(self) -> dict[str, object]:
         return dict(self.metadata_json)
+
+
+class DagNodeExecution(Base):
+    __tablename__ = "dag_node_executions"
+    __table_args__ = (
+        Index("ix_dag_node_executions_dag_node", "dag_id", "node_key"),
+        Index("ix_dag_node_executions_status", "status"),
+        Index("ix_dag_node_executions_external", "external_execution_id"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    dag_id: Mapped[str] = mapped_column(
+        ForeignKey("task_dags.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    node_key: Mapped[str] = mapped_column(nullable=False)
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    executor_provider: Mapped[str] = mapped_column(nullable=False)
+    external_execution_id: Mapped[str | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(nullable=False, default="queued")
+    branch_name: Mapped[str | None] = mapped_column(nullable=True)
+    pr_url: Mapped[str | None] = mapped_column(nullable=True)
+    pr_number: Mapped[int | None] = mapped_column(nullable=True)
+    workspace_path: Mapped[str | None] = mapped_column(nullable=True)
+    error: Mapped[str | None] = mapped_column(nullable=True)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        MutableDict.as_mutable(JsonDocument),
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+
+    dag: Mapped[TaskDag] = relationship()
+    task: Mapped[Task] = relationship()
 
 
 class AuditEvent(Base):

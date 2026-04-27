@@ -9,6 +9,7 @@ from agentic_sdlc_platform.glue.dag_decomposer import Subtask
 from agentic_sdlc_platform.persistence.models import (
     AgentSession,
     AuditEvent,
+    DagNodeExecution,
     InboundEvent,
     RepoIndexJob,
     RepositoryRecord,
@@ -20,6 +21,7 @@ from agentic_sdlc_platform.persistence.models import (
 )
 
 DEPENDENCY_COMPLETE_STATUSES = {"completed", "skipped"}
+ACTIVE_EXECUTION_STATUSES = {"queued", "running", "needs_input"}
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,9 @@ class PersistenceRepository:
                 .where(Task.external_id == external_id)
                 .options(
                     selectinload(Task.dags).selectinload(TaskDag.nodes),
+                    selectinload(Task.dags)
+                    .selectinload(TaskDag.nodes)
+                    .selectinload(TaskDagNode.executions),
                     selectinload(Task.sessions).selectinload(AgentSession.events),
                 )
             )
@@ -263,6 +268,9 @@ class PersistenceRepository:
                 select(Task)
                 .options(
                     selectinload(Task.dags).selectinload(TaskDag.nodes),
+                    selectinload(Task.dags)
+                    .selectinload(TaskDag.nodes)
+                    .selectinload(TaskDagNode.executions),
                     selectinload(Task.sessions).selectinload(AgentSession.events),
                 )
                 .order_by(Task.created_at.desc(), Task.id)
@@ -283,6 +291,9 @@ class PersistenceRepository:
                 .where(Task.id == task_id)
                 .options(
                     selectinload(Task.dags).selectinload(TaskDag.nodes),
+                    selectinload(Task.dags)
+                    .selectinload(TaskDag.nodes)
+                    .selectinload(TaskDagNode.executions),
                     selectinload(Task.sessions).selectinload(AgentSession.events),
                 )
             )
@@ -313,6 +324,7 @@ class PersistenceRepository:
                 .where(TaskDag.id == dag_id)
                 .options(
                     selectinload(TaskDag.nodes),
+                    selectinload(TaskDag.nodes).selectinload(TaskDagNode.executions),
                     selectinload(TaskDag.task).selectinload(Task.sessions),
                 )
             )
@@ -500,6 +512,107 @@ class PersistenceRepository:
             await session.refresh(node)
             return node
 
+    async def create_dag_node_execution(
+        self,
+        dag_id: str,
+        node_key: str,
+        task_id: str,
+        executor_provider: str,
+        status: str,
+        branch_name: str | None = None,
+        workspace_path: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> DagNodeExecution:
+        async with self._session_factory() as session:
+            existing = await self._find_active_execution(
+                session=session,
+                dag_id=dag_id,
+                node_key=node_key,
+            )
+            if existing is not None:
+                return existing
+            execution = DagNodeExecution(
+                dag_id=dag_id,
+                node_key=node_key,
+                task_id=task_id,
+                executor_provider=executor_provider,
+                status=status,
+                branch_name=branch_name,
+                workspace_path=workspace_path,
+                metadata_json=metadata or {},
+            )
+            session.add(execution)
+            await session.commit()
+            await session.refresh(execution)
+            return execution
+
+    async def update_dag_node_execution(
+        self,
+        execution_id: str,
+        status: str,
+        external_execution_id: str | None = None,
+        branch_name: str | None = None,
+        pr_url: str | None = None,
+        pr_number: int | None = None,
+        workspace_path: str | None = None,
+        error: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> DagNodeExecution:
+        async with self._session_factory() as session:
+            execution = await session.get(DagNodeExecution, execution_id)
+            if execution is None:
+                raise LookupError(f"dag node execution {execution_id} not found")
+            execution.status = status
+            if external_execution_id is not None:
+                execution.external_execution_id = external_execution_id
+            if branch_name is not None:
+                execution.branch_name = branch_name
+            if pr_url is not None:
+                execution.pr_url = pr_url
+            if pr_number is not None:
+                execution.pr_number = pr_number
+            if workspace_path is not None:
+                execution.workspace_path = workspace_path
+            if error is not None:
+                execution.error = error
+            if metadata is not None:
+                execution.metadata_json.update(metadata)
+            execution.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(execution)
+            return execution
+
+    async def list_dag_node_executions(
+        self,
+        dag_id: str,
+        node_key: str | None = None,
+    ) -> list[DagNodeExecution]:
+        async with self._session_factory() as session:
+            statement = (
+                select(DagNodeExecution)
+                .where(DagNodeExecution.dag_id == dag_id)
+                .order_by(DagNodeExecution.created_at.desc(), DagNodeExecution.id)
+            )
+            if node_key is not None:
+                statement = statement.where(DagNodeExecution.node_key == node_key)
+            result = await session.execute(statement)
+            return list(result.scalars().all())
+
+    async def list_active_dag_node_executions(
+        self,
+        task_id: str | None = None,
+    ) -> list[DagNodeExecution]:
+        async with self._session_factory() as session:
+            statement = (
+                select(DagNodeExecution)
+                .where(DagNodeExecution.status.in_(ACTIVE_EXECUTION_STATUSES))
+                .order_by(DagNodeExecution.created_at.desc(), DagNodeExecution.id)
+            )
+            if task_id is not None:
+                statement = statement.where(DagNodeExecution.task_id == task_id)
+            result = await session.execute(statement)
+            return list(result.scalars().all())
+
     async def create_agent_session(
         self,
         task_id: str,
@@ -618,6 +731,21 @@ class PersistenceRepository:
             )
         )
         return result.scalar_one()
+
+    async def _find_active_execution(
+        self,
+        session: AsyncSession,
+        dag_id: str,
+        node_key: str,
+    ) -> DagNodeExecution | None:
+        result = await session.execute(
+            select(DagNodeExecution).where(
+                DagNodeExecution.dag_id == dag_id,
+                DagNodeExecution.node_key == node_key,
+                DagNodeExecution.status.in_(ACTIVE_EXECUTION_STATUSES),
+            )
+        )
+        return result.scalars().first()
 
 
 def _completed_dependency_keys(nodes: list[TaskDagNode]) -> set[str]:

@@ -9,7 +9,9 @@ from agentic_sdlc_platform.glue.channel_router import (
 )
 from agentic_sdlc_platform.glue.human_override import (
     HumanOverrideHandler,
+    NodeOverrideHandler,
     parse_human_override,
+    parse_node_override,
     parse_task_info,
 )
 from agentic_sdlc_platform.glue.task_info import TaskInfoHandler
@@ -72,6 +74,27 @@ async def accept_channel_message(
             command=result.command,
             external_id=result.external_id,
             answer=result.answer,
+        )
+
+    node_override = parse_node_override(message.text)
+    if node_override is not None:
+        result = await NodeOverrideHandler(request.app.state.repository).handle(
+            command=node_override,
+            actor=message.sender_id,
+            channel=message.channel,
+        )
+        return ChannelAcceptedResponse(
+            accepted=True,
+            provider=message.provider,
+            channel=message.channel,
+            route="node_override",
+            task_id=result.task_id,
+            command=result.command,
+            external_id=node_override.external_id,
+            answer=(
+                f"Node {result.node_key} on {node_override.external_id} "
+                f"is now {result.status}."
+            ),
         )
 
     override = parse_human_override(message.text)

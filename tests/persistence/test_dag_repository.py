@@ -117,3 +117,44 @@ async def test_retry_and_skip_dag_node_update_ready_dependencies() -> None:
     assert retried.status == "ready"
     assert retried.metadata_json["retry_count"] == 1
     assert [node.node_key for node in ready] == ["web"]
+
+
+async def test_dag_node_execution_records_are_idempotent_while_active() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask(id="api", title="Add API contract"),
+        ],
+    )
+
+    first = await repository.create_dag_node_execution(
+        dag_id=dag.id,
+        node_key="api",
+        task_id=task_id,
+        executor_provider="local",
+        status="queued",
+        branch_name=f"agent/dag/{dag.id}/api",
+        metadata={"expected_pr_reference": f"dag/{dag.id}/api"},
+    )
+    duplicate = await repository.create_dag_node_execution(
+        dag_id=dag.id,
+        node_key="api",
+        task_id=task_id,
+        executor_provider="local",
+        status="queued",
+    )
+    updated = await repository.update_dag_node_execution(
+        execution_id=first.id,
+        status="running",
+        external_execution_id="local-1",
+        workspace_path="/tmp/workspace",
+    )
+    listed = await repository.list_dag_node_executions(dag_id=dag.id, node_key="api")
+
+    assert duplicate.id == first.id
+    assert updated.status == "running"
+    assert updated.external_execution_id == "local-1"
+    assert updated.workspace_path == "/tmp/workspace"
+    assert [execution.id for execution in listed] == [first.id]

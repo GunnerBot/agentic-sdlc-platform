@@ -1,7 +1,11 @@
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.dag_decomposer import Subtask
+from agentic_sdlc_platform.persistence.models import Base
+from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphQueryResult
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest, HermesSessionResponse
 from agentic_sdlc_platform.ports.issue_tracker import IssueCreateRequest, IssueCreateResponse
@@ -73,6 +77,37 @@ class FakeRepository:
 
     async def find_task_by_external_id(self, external_id: str):
         return FakeTask() if external_id == "OS-1284" else None
+
+
+async def build_repository() -> PersistenceRepository:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    return PersistenceRepository(async_sessionmaker(engine, expire_on_commit=False))
+
+
+async def create_task_with_dag(repository: PersistenceRepository) -> str:
+    event = await repository.record_inbound_event(
+        source="linear",
+        delivery_id="delivery-1",
+        event_type="Issue",
+        payload={},
+    )
+    task = await repository.create_task_from_event(
+        event_id=event.event.id,
+        source="linear",
+        external_id="OS-1284",
+        title="Build allocation",
+        repo="keychain-os-erp",
+    )
+    await repository.create_task_dag(
+        task_id=task.id,
+        subtasks=[
+            Subtask(id="api", title="Add API"),
+            Subtask(id="web", title="Add web", depends_on=("api",)),
+        ],
+    )
+    return task.id
 
 
 def test_channel_ingress_routes_questions_to_hermes_direct() -> None:
@@ -281,3 +316,47 @@ def test_channel_ingress_task_status_command_returns_task_info() -> None:
         "Orchestrator: multica-task-1 (queued). "
         "Repo: keychain-os-erp. Sessions: 1 active session. DAG: none."
     )
+
+
+async def test_channel_ingress_running_why_blocked_and_node_override_commands() -> None:
+    repository = await build_repository()
+    task_id = await create_task_with_dag(repository)
+    client = TestClient(create_app(Settings(), repository=repository))
+
+    running = client.post(
+        "/channels/messages",
+        json={
+            "provider": "slack",
+            "channel": "C123",
+            "sender_id": "U123",
+            "text": "/running OS-1284",
+        },
+    )
+    blocked = client.post(
+        "/channels/messages",
+        json={
+            "provider": "slack",
+            "channel": "C123",
+            "sender_id": "U123",
+            "text": "/why-blocked OS-1284",
+        },
+    )
+    skipped = client.post(
+        "/channels/messages",
+        json={
+            "provider": "slack",
+            "channel": "C123",
+            "sender_id": "U123",
+            "text": "/skip-node OS-1284 api duplicate work",
+        },
+    )
+
+    assert running.status_code == 202
+    assert running.json()["route"] == "task_info"
+    assert running.json()["answer"] == "Task OS-1284 running:\n- none"
+    assert blocked.status_code == 202
+    assert "- web: waiting on api" in blocked.json()["answer"]
+    assert skipped.status_code == 202
+    assert skipped.json()["route"] == "node_override"
+    assert skipped.json()["task_id"] == task_id
+    assert skipped.json()["answer"] == "Node api on OS-1284 is now skipped."

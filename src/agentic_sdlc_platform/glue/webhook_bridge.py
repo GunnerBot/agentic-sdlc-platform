@@ -6,7 +6,10 @@ from hashlib import sha256
 from fastapi import HTTPException, status
 
 from agentic_sdlc_platform.core.config import Settings
-from agentic_sdlc_platform.glue.dag_execution import build_dag_node_execution_metadata
+from agentic_sdlc_platform.glue.dag_execution import (
+    build_dag_node_execution_metadata,
+    create_or_start_execution,
+)
 from agentic_sdlc_platform.glue.dag_templates import build_dag_template
 from agentic_sdlc_platform.glue.human_override import (
     HumanOverrideCommand,
@@ -26,6 +29,7 @@ from agentic_sdlc_platform.persistence.repository import (
     InboundEventWriteResult,
     PersistenceRepository,
 )
+from agentic_sdlc_platform.ports.agent_executor import AgentExecutorPort
 from agentic_sdlc_platform.ports.graph_store import GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import (
     HermesSessionPort,
@@ -58,6 +62,7 @@ class WebhookBridge:
         issue_tracker: IssueTrackerPort | None = None,
         hermes_session: HermesSessionPort | None = None,
         graph_store: GraphStorePort | None = None,
+        agent_executor: AgentExecutorPort | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
@@ -65,6 +70,7 @@ class WebhookBridge:
         self._issue_tracker = issue_tracker
         self._hermes_session = hermes_session
         self._graph_store = graph_store
+        self._agent_executor = agent_executor
         self._normalizer = TaskEventNormalizer(
             linear_agent_user_id=settings.linear_agent_user_id
         )
@@ -687,6 +693,14 @@ class WebhookBridge:
                 metadata=metadata,
             )
             queued_nodes.append(queued_node)
+            await create_or_start_execution(
+                repository=self._repository,
+                agent_executor=self._agent_executor,
+                dag=dag,
+                task=task,
+                node=node,
+                metadata=metadata,
+            )
             await self._repository.record_audit_event(
                 action="task.dag_node_enqueued",
                 actor="system",
@@ -831,6 +845,7 @@ class WebhookBridge:
                 node_key=task_update.dag_node_key,
                 metadata=_pr_node_metadata(task_update),
             )
+            await self._update_latest_execution_from_pr(task_update, "completed")
             return dag.task_id
 
         orchestration_status = task_update.status
@@ -867,6 +882,7 @@ class WebhookBridge:
                 node_key=task_update.dag_node_key,
                 metadata=_pr_node_metadata(task_update),
             )
+            await self._update_latest_execution_from_pr(task_update, "completed")
             dag = await self._repository.get_task_dag(task_update.dag_id)
             if dag is None:
                 return None
@@ -887,6 +903,7 @@ class WebhookBridge:
                 orchestrator_status=orchestration_status,
                 metadata=_pr_node_metadata(task_update),
             )
+            await self._update_latest_execution_from_pr(task_update, node_status)
 
         await self._repository.record_audit_event(
             action="task.dag_node_updated_from_github",
@@ -904,6 +921,29 @@ class WebhookBridge:
             },
         )
         return dag.task_id
+
+    async def _update_latest_execution_from_pr(
+        self,
+        task_update: NormalizedTaskUpdate,
+        status: str,
+    ) -> None:
+        if not task_update.dag_id or not task_update.dag_node_key:
+            return
+        executions = await self._repository.list_dag_node_executions(
+            dag_id=task_update.dag_id,
+            node_key=task_update.dag_node_key,
+        )
+        if not executions:
+            return
+        latest = executions[0]
+        metadata = _pr_node_metadata(task_update)
+        await self._repository.update_dag_node_execution(
+            execution_id=latest.id,
+            status=status,
+            pr_url=_str_or_none(metadata.get("pr_url")),
+            pr_number=_int_or_none(metadata.get("pr_number")),
+            metadata=metadata,
+        )
 
     def _verify_optional_hmac(
         self,
@@ -950,6 +990,14 @@ def _dict_value(value: object) -> dict[str, object]:
 
 def _str_value(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _str_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) else None
 
 
 def _single_line(value: str | None) -> str:

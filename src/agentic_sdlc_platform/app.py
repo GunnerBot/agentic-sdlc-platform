@@ -9,6 +9,7 @@ from agentic_sdlc_platform.api.telegram import router as telegram_router
 from agentic_sdlc_platform.api.webhooks import router as webhook_router
 from agentic_sdlc_platform.core.config import Settings, get_settings
 from agentic_sdlc_platform.core.dependencies import (
+    build_agent_executor,
     build_channel_authorizer,
     build_channel_budget_ledger,
     build_graph_store,
@@ -19,6 +20,7 @@ from agentic_sdlc_platform.core.dependencies import (
     build_task_orchestrator,
 )
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
+from agentic_sdlc_platform.ports.agent_executor import AgentExecutorPort
 from agentic_sdlc_platform.ports.graph_store import GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort
 from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerPort
@@ -34,6 +36,7 @@ def create_app(
     model_provider: ModelProviderPort | None = None,
     graph_store: GraphStorePort | None = None,
     issue_tracker: IssueTrackerPort | None = None,
+    agent_executor: AgentExecutorPort | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     app = FastAPI(
@@ -52,6 +55,7 @@ def create_app(
     app.state.channel_authorizer = build_channel_authorizer(resolved_settings)
     app.state.channel_budget_ledger = build_channel_budget_ledger(resolved_settings)
     app.state.issue_tracker = issue_tracker or build_issue_tracker(resolved_settings)
+    app.state.agent_executor = agent_executor or build_agent_executor(resolved_settings)
     app.include_router(health_router)
     app.include_router(channel_router, prefix="/channels")
     app.include_router(repo_router, prefix="/repos")

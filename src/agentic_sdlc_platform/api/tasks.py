@@ -3,20 +3,26 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from agentic_sdlc_platform.glue.dag_decomposer import DagDecomposer
-from agentic_sdlc_platform.glue.dag_execution import build_dag_node_execution_metadata
+from agentic_sdlc_platform.glue.dag_execution import (
+    build_dag_node_execution_metadata,
+    create_or_start_execution,
+)
 from agentic_sdlc_platform.glue.dag_templates import build_dag_template
 from agentic_sdlc_platform.models.tasks import (
     AgentSessionDetailResponse,
     AgentSessionEventResponse,
     AgentSessionStatusResponse,
     CompleteDagNodeResponse,
+    CreateDagNodeExecutionRequest,
     CreateTaskDagRequest,
+    DagNodeExecutionResponse,
     FailDagNodeRequest,
     TaskDagNodeResponse,
     TaskDagResponse,
     TaskDagSummaryResponse,
     TaskDetailResponse,
     TaskStatusResponse,
+    UpdateDagNodeExecutionRequest,
 )
 from agentic_sdlc_platform.persistence.models import AgentSession, SessionEvent, Task, TaskDag
 from agentic_sdlc_platform.ports.task_orchestrator import TaskRequest
@@ -198,6 +204,93 @@ async def retry_dag_node(
     return _node_response(node)
 
 
+@router.post(
+    "/{task_id}/dag/{dag_id}/nodes/{node_key}/executions",
+    response_model=DagNodeExecutionResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "DAG not found"}},
+)
+async def create_dag_node_execution(
+    task_id: str,
+    dag_id: str,
+    node_key: str,
+    request: Request,
+    body: CreateDagNodeExecutionRequest,
+) -> DagNodeExecutionResponse:
+    dag = await _require_task_dag(request, task_id, dag_id)
+    node = _node_from_dag(dag, node_key)
+    metadata = await build_dag_node_execution_metadata(
+        dag=dag,
+        task=dag.task,
+        node=node,
+        repository=request.app.state.repository,
+        graph_store=request.app.state.graph_store,
+    )
+    execution = await create_or_start_execution(
+        repository=request.app.state.repository,
+        agent_executor=request.app.state.agent_executor if body.start else None,
+        dag=dag,
+        task=dag.task,
+        node=node,
+        metadata=metadata,
+    )
+    return _execution_response(execution)
+
+
+@router.get(
+    "/{task_id}/dag/{dag_id}/nodes/{node_key}/executions",
+    response_model=list[DagNodeExecutionResponse],
+    status_code=status.HTTP_200_OK,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "DAG not found"}},
+)
+async def list_dag_node_executions(
+    task_id: str,
+    dag_id: str,
+    node_key: str,
+    request: Request,
+) -> list[DagNodeExecutionResponse]:
+    await _require_task_dag(request, task_id, dag_id)
+    executions = await request.app.state.repository.list_dag_node_executions(
+        dag_id=dag_id,
+        node_key=node_key,
+    )
+    return [_execution_response(execution) for execution in executions]
+
+
+@router.patch(
+    "/{task_id}/dag/{dag_id}/nodes/{node_key}/executions/{execution_id}",
+    response_model=DagNodeExecutionResponse,
+    status_code=status.HTTP_200_OK,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "DAG not found"}},
+)
+async def update_dag_node_execution(
+    task_id: str,
+    dag_id: str,
+    node_key: str,
+    execution_id: str,
+    request: Request,
+    body: UpdateDagNodeExecutionRequest,
+) -> DagNodeExecutionResponse:
+    await _require_task_dag(request, task_id, dag_id)
+    execution = await request.app.state.repository.update_dag_node_execution(
+        execution_id=execution_id,
+        status=body.status,
+        external_execution_id=body.external_execution_id,
+        branch_name=body.branch_name,
+        pr_url=body.pr_url,
+        pr_number=body.pr_number,
+        workspace_path=body.workspace_path,
+        error=body.error,
+        metadata=body.metadata,
+    )
+    if execution.dag_id != dag_id or execution.node_key != node_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Execution not found",
+        )
+    return _execution_response(execution)
+
+
 async def _enqueue_ready_nodes(
     request: Request,
     dag,
@@ -231,6 +324,14 @@ async def _enqueue_ready_nodes(
                 metadata=metadata,
             )
         )
+        await create_or_start_execution(
+            repository=request.app.state.repository,
+            agent_executor=request.app.state.agent_executor,
+            dag=dag,
+            task=task,
+            node=node,
+            metadata=metadata,
+        )
     return queued_nodes
 
 
@@ -242,6 +343,16 @@ async def _require_task_dag(request: Request, task_id: str, dag_id: str):
             detail="DAG not found",
         )
     return dag
+
+
+def _node_from_dag(dag, node_key: str):
+    node = next((node for node in dag.nodes if node.node_key == node_key), None)
+    if node is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="DAG node not found",
+        )
+    return node
 
 
 def _dag_response(dag: TaskDag) -> TaskDagResponse:
@@ -279,6 +390,10 @@ def _node_response(node) -> TaskDagNodeResponse:
         expected_branch=_str_or_none(metadata.get("expected_branch")),
         failure_error=_str_or_none(metadata.get("failure_error")),
         retry_count=_int_or_none(metadata.get("retry_count")) or 0,
+        executions=[
+            _execution_response(execution)
+            for execution in node.__dict__.get("executions", [])
+        ],
     )
 
 
@@ -365,6 +480,24 @@ def _str_or_none(value: object) -> str | None:
 
 def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _execution_response(execution) -> DagNodeExecutionResponse:
+    return DagNodeExecutionResponse(
+        id=execution.id,
+        dag_id=execution.dag_id,
+        node_key=execution.node_key,
+        task_id=execution.task_id,
+        executor_provider=execution.executor_provider,
+        external_execution_id=execution.external_execution_id,
+        status=execution.status,
+        branch_name=execution.branch_name,
+        pr_url=execution.pr_url,
+        pr_number=execution.pr_number,
+        workspace_path=execution.workspace_path,
+        error=execution.error,
+        metadata=dict(execution.metadata_json),
+    )
 
 
 def _session_event_response(event: SessionEvent) -> AgentSessionEventResponse:

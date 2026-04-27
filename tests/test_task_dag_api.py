@@ -7,6 +7,10 @@ from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.glue.dag_decomposer import Subtask
 from agentic_sdlc_platform.persistence.models import Base, TaskDag
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
+from agentic_sdlc_platform.ports.agent_executor import (
+    AgentExecutionRequest,
+    AgentExecutionResponse,
+)
 from agentic_sdlc_platform.ports.model_provider import ModelRequest, ModelResponse
 from agentic_sdlc_platform.ports.task_orchestrator import TaskRequest, TaskResponse
 
@@ -40,6 +44,26 @@ class FakeTaskOrchestrator:
         return TaskResponse(
             external_task_id=f"multica-{request.external_id}",
             status="queued",
+        )
+
+
+class FakeAgentExecutor:
+    provider = "fake-executor"
+
+    def __init__(self) -> None:
+        self.requests: list[AgentExecutionRequest] = []
+
+    async def start_execution(
+        self,
+        request: AgentExecutionRequest,
+    ) -> AgentExecutionResponse:
+        self.requests.append(request)
+        return AgentExecutionResponse(
+            external_execution_id=f"exec-{request.node_key}",
+            status="running",
+            branch_name=request.branch_name,
+            workspace_path=f"/tmp/{request.dag_id}/{request.node_key}",
+            metadata={"started": True},
         )
 
 
@@ -392,3 +416,52 @@ async def test_fail_skip_and_retry_dag_node_endpoints() -> None:
     assert skipped.json()["completed_node"] == "api"
     assert skipped.json()["ready_nodes"][0]["node_key"] == "web"
     assert skipped.json()["ready_nodes"][0]["status"] == "queued"
+
+
+async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    model_provider = FakePlannerModel()
+    agent_executor = FakeAgentExecutor()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=model_provider,
+            agent_executor=agent_executor,
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+
+    created_execution = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/executions",
+        json={"start": True},
+    )
+    execution_id = created_execution.json()["id"]
+    listed = client.get(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/executions")
+    updated = client.patch(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/executions/{execution_id}",
+        json={
+            "status": "pr_open",
+            "pr_url": "https://github.com/acme/erp-api/pull/17",
+            "pr_number": 17,
+            "metadata": {"review": "requested"},
+        },
+    )
+
+    assert created_execution.status_code == 201
+    assert created_execution.json()["status"] == "running"
+    assert created_execution.json()["executor_provider"] == "fake-executor"
+    assert created_execution.json()["external_execution_id"] == "exec-api"
+    assert agent_executor.requests[0].branch_name == f"agent/dag/{dag_id}/api"
+    assert agent_executor.requests[0].pr_reference == f"dag/{dag_id}/api"
+    assert listed.status_code == 200
+    assert listed.json()[0]["id"] == execution_id
+    assert updated.status_code == 200
+    assert updated.json()["status"] == "pr_open"
+    assert updated.json()["pr_number"] == 17
+    assert updated.json()["metadata"]["review"] == "requested"

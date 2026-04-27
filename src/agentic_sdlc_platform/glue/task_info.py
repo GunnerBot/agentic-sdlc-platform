@@ -30,6 +30,10 @@ class TaskInfoHandler:
             answer = agents_reply(task)
         elif command.command == "nodes":
             answer = nodes_reply(task)
+        elif command.command == "running":
+            answer = running_reply(task)
+        elif command.command == "why-blocked":
+            answer = why_blocked_reply(task)
         else:
             answer = status_reply(task)
         return TaskInfoResult(
@@ -140,6 +144,62 @@ def nodes_reply(task) -> str:
             *node_lines,
         ]
     )
+
+
+def running_reply(task) -> str:
+    active_statuses = {"queued", "running", "needs_input", "pr_open", "in_review"}
+    lines = []
+    for dag in getattr(task, "dags", []):
+        for node in dag.nodes:
+            if node.status in active_statuses:
+                executions = [
+                    execution
+                    for execution in getattr(node, "executions", [])
+                    if execution.status in {"queued", "running", "needs_input"}
+                ]
+                execution_summary = (
+                    f"{executions[-1].id} ({executions[-1].status})"
+                    if executions
+                    else "none"
+                )
+                lines.append(
+                    "- "
+                    f"{node.node_key}: {node.status}; "
+                    f"repo {node.repo or 'none'}; "
+                    f"execution {execution_summary}"
+                )
+    if not lines:
+        lines = ["- none"]
+    return "\n".join([f"Task {task.external_id} running:", *lines])
+
+
+def why_blocked_reply(task) -> str:
+    lines = []
+    for dag in getattr(task, "dags", []):
+        status_by_node = {node.node_key: node.status for node in dag.nodes}
+        for node in dag.nodes:
+            if node.status != "blocked":
+                continue
+            missing = [
+                dependency
+                for dependency in node.depends_on
+                if status_by_node.get(dependency) not in {"completed", "skipped"}
+            ]
+            failed = [
+                dependency
+                for dependency in node.depends_on
+                if status_by_node.get(dependency) == "failed"
+            ]
+            if failed:
+                reason = f"failed dependencies {','.join(failed)}"
+            elif missing:
+                reason = f"waiting on {','.join(missing)}"
+            else:
+                reason = "ready to unblock"
+            lines.append(f"- {node.node_key}: {reason}")
+    if not lines:
+        lines = ["- none"]
+    return "\n".join([f"Task {task.external_id} blocked nodes:", *lines])
 
 
 def dag_progress_summary(task) -> str:

@@ -17,7 +17,9 @@ from agentic_sdlc_platform.glue.channel_router import (
 )
 from agentic_sdlc_platform.glue.human_override import (
     HumanOverrideHandler,
+    NodeOverrideHandler,
     parse_human_override,
+    parse_node_override,
     parse_task_info,
 )
 from agentic_sdlc_platform.glue.task_info import TaskInfoHandler
@@ -145,6 +147,27 @@ async def slack_events(
             "external_id": result.external_id,
             "command": result.command,
             "answer": result.answer,
+            "session_id": None,
+            "message_id": None,
+        }
+
+    node_override = parse_node_override(text)
+    if node_override is not None:
+        result = await NodeOverrideHandler(request.app.state.repository).handle(
+            command=node_override,
+            actor=sender_id,
+            channel=channel,
+        )
+        return {
+            "ok": True,
+            "route": "node_override",
+            "task_id": result.task_id,
+            "external_id": node_override.external_id,
+            "command": result.command,
+            "answer": (
+                f"Node {result.node_key} on {node_override.external_id} "
+                f"is now {result.status}."
+            ),
             "session_id": None,
             "message_id": None,
         }

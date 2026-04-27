@@ -1,4 +1,11 @@
+from agentic_sdlc_platform.ports.agent_executor import (
+    AgentExecutionRequest,
+    AgentExecutorError,
+    AgentExecutorPort,
+)
 from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphStoreError, GraphStorePort
+
+EXECUTOR_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
 
 async def build_dag_node_execution_metadata(
@@ -42,6 +49,62 @@ async def build_dag_node_execution_metadata(
     if repo_context is not None:
         metadata["repo_context"] = repo_context
     return metadata
+
+
+async def create_or_start_execution(
+    *,
+    repository,
+    agent_executor: AgentExecutorPort | None,
+    dag,
+    task,
+    node,
+    metadata: dict[str, object],
+) -> object | None:
+    branch_name = _str(metadata.get("expected_branch"))
+    execution = await repository.create_dag_node_execution(
+        dag_id=dag.id,
+        node_key=node.node_key,
+        task_id=task.id,
+        executor_provider=agent_executor.provider if agent_executor else "none",
+        status="queued",
+        branch_name=branch_name,
+        metadata=metadata,
+    )
+    if agent_executor is None or execution.status == "running":
+        return execution
+
+    try:
+        response = await agent_executor.start_execution(
+            AgentExecutionRequest(
+                execution_id=execution.id,
+                task_id=task.id,
+                dag_id=dag.id,
+                node_key=node.node_key,
+                title=node.title,
+                repo=node.repo,
+                branch_name=branch_name or expected_branch(dag.id, node.node_key),
+                pr_reference=_str(metadata.get("expected_pr_reference"))
+                or expected_pr_reference(dag.id, node.node_key),
+                metadata=metadata,
+            )
+        )
+    except AgentExecutorError as exc:
+        return await repository.update_dag_node_execution(
+            execution_id=execution.id,
+            status="failed",
+            error=str(exc),
+        )
+
+    return await repository.update_dag_node_execution(
+        execution_id=execution.id,
+        status=response.status,
+        external_execution_id=response.external_execution_id,
+        branch_name=response.branch_name,
+        pr_url=response.pr_url,
+        pr_number=response.pr_number,
+        workspace_path=response.workspace_path,
+        metadata=response.metadata,
+    )
 
 
 def expected_pr_reference(dag_id: str, node_key: str) -> str:
@@ -88,3 +151,7 @@ async def _repo_context(
         "references": result.references,
         "provider": result.provider,
     }
+
+
+def _str(value: object) -> str | None:
+    return value if isinstance(value, str) else None

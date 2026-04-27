@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     hermes_timeout_seconds: float = 10.0
     hermes_max_retries: int = 2
 
+    agent_executor_enabled: bool = False
+    agent_executor_provider: str = "local"
+    agent_executor_workspace_root: str = "/tmp/agentic-sdlc-platform/workspaces"
+
 
 @lru_cache
 def get_settings() -> Settings:

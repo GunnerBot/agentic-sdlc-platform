@@ -24,6 +24,7 @@ class TaskDagNodeResponse(BaseModel):
     expected_branch: str | None = None
     failure_error: str | None = None
     retry_count: int = 0
+    executions: list["DagNodeExecutionResponse"] = Field(default_factory=list)
 
 
 class TaskDagResponse(BaseModel):
@@ -51,6 +52,39 @@ class CompleteDagNodeResponse(BaseModel):
 
 class FailDagNodeRequest(BaseModel):
     error: str = Field(min_length=1)
+
+
+class CreateDagNodeExecutionRequest(BaseModel):
+    start: bool = True
+
+
+class UpdateDagNodeExecutionRequest(BaseModel):
+    status: str = Field(
+        pattern="^(queued|running|needs_input|pr_open|completed|failed|cancelled)$"
+    )
+    external_execution_id: str | None = None
+    branch_name: str | None = None
+    pr_url: str | None = None
+    pr_number: int | None = None
+    workspace_path: str | None = None
+    error: str | None = None
+    metadata: dict[str, object] | None = None
+
+
+class DagNodeExecutionResponse(BaseModel):
+    id: str
+    dag_id: str
+    node_key: str
+    task_id: str
+    executor_provider: str
+    external_execution_id: str | None = None
+    status: str
+    branch_name: str | None = None
+    pr_url: str | None = None
+    pr_number: int | None = None
+    workspace_path: str | None = None
+    error: str | None = None
+    metadata: dict[str, object]
 
 
 class AgentSessionEventResponse(BaseModel):

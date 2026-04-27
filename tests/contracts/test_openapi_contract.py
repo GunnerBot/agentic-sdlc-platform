@@ -57,6 +57,23 @@ class FakeDagNode:
     orchestrator_task_id = None
     orchestrator_status = None
     metadata_json = {}
+    executions = []
+
+
+class FakeDagNodeExecution:
+    id = "execution-1"
+    dag_id = "dag-1"
+    node_key = "api"
+    task_id = "task-1"
+    executor_provider = "local"
+    external_execution_id = "local:execution-1"
+    status = "running"
+    branch_name = "agent/dag/dag-1/api"
+    pr_url = None
+    pr_number = None
+    workspace_path = "/tmp/workspace"
+    error = None
+    metadata_json = {}
 
 
 class FakeDag:
@@ -145,6 +162,18 @@ class FakeRepository:
         node = FakeDagNode()
         node.metadata_json = {"retry_count": 1}
         return node
+
+    async def create_dag_node_execution(self, **kwargs):
+        return FakeDagNodeExecution()
+
+    async def update_dag_node_execution(self, **kwargs):
+        return FakeDagNodeExecution()
+
+    async def list_dag_node_executions(self, **kwargs):
+        return [FakeDagNodeExecution()]
+
+    async def list_active_dag_node_executions(self, **kwargs):
+        return [FakeDagNodeExecution()]
 
 
 class FakeModelProvider:
