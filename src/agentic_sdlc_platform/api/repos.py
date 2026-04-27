@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from agentic_sdlc_platform.models.repos import (
+    RepoIndexAllResponse,
     RepoIndexJobResponse,
     RepoQuestionRequest,
     RepoQuestionResponse,
@@ -42,6 +43,30 @@ async def list_repos(
         status=status_filter,
     )
     return [_repo_response(repo) for repo in repos]
+
+
+@router.post(
+    "/index-all",
+    response_model=RepoIndexAllResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def index_all_repos(request: Request) -> RepoIndexAllResponse:
+    repos = await request.app.state.repository.list_repos(status="active")
+    jobs = [await _index_repo_record(repo, request) for repo in repos]
+    return RepoIndexAllResponse(
+        total=len(jobs),
+        indexed=len([job for job in jobs if job.status == "indexed"]),
+        failed=len([job for job in jobs if job.status == "failed"]),
+        jobs=[_index_job_response(job) for job in jobs],
+    )
+
+
+@router.get("/index-all", include_in_schema=False)
+async def reject_get_index_all() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        headers={"Allow": "POST"},
+    )
 
 
 @router.get("/{repo_name}", response_model=RepoResponse)
@@ -111,31 +136,7 @@ async def index_repo(repo_name: str, request: Request) -> RepoIndexJobResponse:
             detail="Repository not found",
         )
 
-    job = await request.app.state.repository.create_repo_index_job(
-        repo_name=repo.name,
-        provider="graphify",
-        metadata={"default_branch": repo.default_branch},
-    )
-    try:
-        result = await request.app.state.graph_store.index(
-            GraphIndexRequest(
-                repo=repo.name,
-                clone_url=repo.clone_url,
-                default_branch=repo.default_branch,
-                metadata={key: str(value) for key, value in repo.metadata_json.items()},
-            )
-        )
-    except GraphStoreError as exc:
-        job = await request.app.state.repository.mark_repo_index_job_failed(
-            job_id=job.id,
-            error=str(exc),
-        )
-    else:
-        job = await request.app.state.repository.mark_repo_index_job_completed(
-            job_id=job.id,
-            external_index_id=result.external_index_id,
-            status=result.status,
-        )
+    job = await _index_repo_record(repo, request)
     return _index_job_response(job)
 
 
@@ -154,6 +155,34 @@ def _repo_response(repo: RepositoryRecord) -> RepoResponse:
         default_branch=repo.default_branch,
         status=repo.status,
         metadata=repo.metadata_json,
+    )
+
+
+async def _index_repo_record(repo: RepositoryRecord, request: Request) -> RepoIndexJob:
+    job = await request.app.state.repository.create_repo_index_job(
+        repo_name=repo.name,
+        provider="graphify",
+        metadata={"default_branch": repo.default_branch},
+    )
+    try:
+        result = await request.app.state.graph_store.index(
+            GraphIndexRequest(
+                repo=repo.name,
+                clone_url=repo.clone_url,
+                default_branch=repo.default_branch,
+                metadata={key: str(value) for key, value in repo.metadata_json.items()},
+            )
+        )
+    except GraphStoreError as exc:
+        return await request.app.state.repository.mark_repo_index_job_failed(
+            job_id=job.id,
+            error=str(exc),
+        )
+
+    return await request.app.state.repository.mark_repo_index_job_completed(
+        job_id=job.id,
+        external_index_id=result.external_index_id,
+        status=result.status,
     )
 
 

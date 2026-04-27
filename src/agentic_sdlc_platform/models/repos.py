@@ -30,6 +30,13 @@ class RepoIndexJobResponse(BaseModel):
     metadata: dict[str, object]
 
 
+class RepoIndexAllResponse(BaseModel):
+    total: int
+    indexed: int
+    failed: int
+    jobs: list[RepoIndexJobResponse]
+
+
 class RepoQuestionRequest(BaseModel):
     question: str = Field(min_length=1)
 

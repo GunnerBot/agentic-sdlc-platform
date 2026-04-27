@@ -37,6 +37,10 @@ class FakeGraphStore:
 
 
 class DisabledGraphStore(FakeGraphStore):
+    async def index(self, request: GraphIndexRequest) -> GraphIndexResult:
+        self.index_requests.append(request)
+        raise GraphStoreError("vendor HTTP is disabled")
+
     async def query(self, request: GraphQuery) -> GraphQueryResult:
         raise GraphStoreError("vendor HTTP is disabled")
 
@@ -199,3 +203,66 @@ async def test_ask_repo_endpoint_returns_503_when_graph_store_is_disabled() -> N
 
     assert response.status_code == 503
     assert response.json() == {"detail": "vendor HTTP is disabled"}
+
+
+async def test_index_all_repos_indexes_only_active_repositories() -> None:
+    repository = await build_repository()
+    graph_store = FakeGraphStore()
+    client = TestClient(create_app(Settings(), repository=repository, graph_store=graph_store))
+    client.post(
+        "/repos",
+        json={
+            "name": "keychain-os-erp",
+            "provider": "github",
+            "clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            "default_branch": "main",
+        },
+    )
+    client.post(
+        "/repos",
+        json={
+            "name": "legacy-erp",
+            "provider": "github",
+            "default_branch": "main",
+            "status": "disabled",
+        },
+    )
+
+    response = client.post("/repos/index-all")
+
+    assert response.status_code == 202
+    assert [job["repo_name"] for job in response.json()["jobs"]] == ["keychain-os-erp"]
+    assert response.json()["total"] == 1
+    assert response.json()["indexed"] == 1
+    assert response.json()["failed"] == 0
+    assert graph_store.index_requests == [
+        GraphIndexRequest(
+            repo="keychain-os-erp",
+            clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            default_branch="main",
+            metadata={},
+        )
+    ]
+
+
+async def test_index_all_repos_records_failed_jobs_when_graph_store_is_disabled() -> None:
+    repository = await build_repository()
+    graph_store = DisabledGraphStore()
+    client = TestClient(create_app(Settings(), repository=repository, graph_store=graph_store))
+    client.post(
+        "/repos",
+        json={
+            "name": "keychain-os-erp",
+            "provider": "github",
+            "default_branch": "main",
+        },
+    )
+
+    response = client.post("/repos/index-all")
+
+    assert response.status_code == 202
+    assert response.json()["total"] == 1
+    assert response.json()["indexed"] == 0
+    assert response.json()["failed"] == 1
+    assert response.json()["jobs"][0]["status"] == "failed"
+    assert response.json()["jobs"][0]["error"] == "vendor HTTP is disabled"
