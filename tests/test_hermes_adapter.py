@@ -11,6 +11,18 @@ from agentic_sdlc_platform.ports.hermes_session import (
     HermesStartSessionRequest,
 )
 
+AGENT_POLICY_PAYLOAD = {
+    "runtime_policy": {
+        "shell_command_prefix": "rtk",
+        "use_rtk_for_terminal_commands": True,
+    },
+    "repo_context_policy": {
+        "preferred_context_source": "graphify",
+        "verify_graph_context_against_source": True,
+        "avoid_repeated_broad_scans_when_indexed_context_is_available": True,
+    },
+}
+
 
 async def test_hermes_adapter_blocks_when_http_disabled() -> None:
     adapter = HermesAgentAdapter(Settings(hermes_http_enabled=False))
@@ -72,6 +84,7 @@ async def test_hermes_adapter_posts_direct_question() -> None:
         "sender_id": "U123",
         "text": "How does FEFO allocation work?",
         "repo": "keychain-os-erp",
+        **AGENT_POLICY_PAYLOAD,
     }
 
 
@@ -137,6 +150,7 @@ async def test_hermes_adapter_starts_task_session() -> None:
         "external_thread_id": "issue-id-1",
         "text": "Build webhook bridge",
         "repo": "keychain-os-erp",
+        **AGENT_POLICY_PAYLOAD,
     }
 
 
@@ -173,4 +187,5 @@ async def test_hermes_adapter_resumes_task_session() -> None:
     assert json.loads(captured_request.content) == {
         "text": "Please inspect inventory allocation.",
         "actor": "user-1",
+        **AGENT_POLICY_PAYLOAD,
     }

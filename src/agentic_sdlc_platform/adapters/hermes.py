@@ -27,6 +27,7 @@ class HermesAgentAdapter:
             "sender_id": request.sender_id,
             "text": request.text,
             "repo": request.repo,
+            **_agent_policy_payload(),
         }
         response = await self._post(
             path="/api/sessions/ask",
@@ -45,6 +46,7 @@ class HermesAgentAdapter:
             "external_thread_id": request.external_thread_id,
             "text": request.text,
             "repo": request.repo,
+            **_agent_policy_payload(),
         }
         response = await self._post(
             path="/api/sessions",
@@ -64,7 +66,7 @@ class HermesAgentAdapter:
     ) -> HermesSessionResponse:
         response = await self._post(
             path=f"/api/sessions/{session_id}/messages",
-            payload={"text": text, "actor": actor},
+            payload={"text": text, "actor": actor, **_agent_policy_payload()},
             failure_message="hermes resume_session failed",
         )
         return self._session_response(
@@ -118,3 +120,17 @@ class HermesAgentAdapter:
             message_id=message_id,
             answer=answer if isinstance(answer, str) else None,
         )
+
+
+def _agent_policy_payload() -> dict[str, object]:
+    return {
+        "runtime_policy": {
+            "shell_command_prefix": "rtk",
+            "use_rtk_for_terminal_commands": True,
+        },
+        "repo_context_policy": {
+            "preferred_context_source": "graphify",
+            "verify_graph_context_against_source": True,
+            "avoid_repeated_broad_scans_when_indexed_context_is_available": True,
+        },
+    }
