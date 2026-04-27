@@ -454,6 +454,10 @@ class WebhookBridge:
             },
         )
         task_metadata: dict[str, object] | None = None
+        repo_name: str | None = None
+        dag_template: str | None = None
+        first_dag_node: str | None = None
+        first_dag_node_status: str | None = None
         if source == "linear" and task_event.repo:
             repo = await self._repository.get_repo_by_name(task_event.repo)
             if repo is None:
@@ -501,6 +505,7 @@ class WebhookBridge:
                     "default_branch": repo.default_branch,
                 },
             )
+            repo_name = repo.name
         if self._task_orchestrator is not None:
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
@@ -559,6 +564,7 @@ class WebhookBridge:
         ):
             await self._start_linear_agent_session(task_id=task.id, task_event=task_event)
         if source == "linear" and task_event.dag_template:
+            dag_template = task_event.dag_template
             dag = await self._repository.create_task_dag(
                 task_id=task.id,
                 subtasks=build_dag_template(task_event.dag_template, task),
@@ -575,17 +581,50 @@ class WebhookBridge:
                 },
             )
             if self._task_orchestrator is not None:
-                await self._enqueue_first_ready_dag_node(dag=dag, task=task)
+                first_dag_node, first_dag_node_status = await self._enqueue_first_ready_dag_node(
+                    dag=dag,
+                    task=task,
+                )
+        if source == "linear" and task_event.issue_id and self._issue_tracker is not None:
+            reply_body = _linear_assignment_reply(
+                external_id=task_event.external_id,
+                repo=repo_name or task_event.repo,
+                dag_template=dag_template,
+                first_dag_node=first_dag_node,
+                first_dag_node_status=first_dag_node_status,
+            )
+            await self._issue_tracker.reply(
+                IssueTrackerReply(issue_id=task_event.issue_id, body=reply_body)
+            )
+            await self._repository.record_audit_event(
+                action="issue_tracker.assignment_acknowledged",
+                actor="system",
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "provider": "linear",
+                    "issue_id": task_event.issue_id,
+                    "external_id": task_event.external_id,
+                    "repo": repo_name or task_event.repo,
+                    "dag_template": dag_template,
+                    "first_dag_node": first_dag_node,
+                    "first_dag_node_status": first_dag_node_status,
+                },
+            )
         return task.id
 
-    async def _enqueue_first_ready_dag_node(self, dag, task) -> None:
+    async def _enqueue_first_ready_dag_node(
+        self,
+        dag,
+        task,
+    ) -> tuple[str, str] | tuple[None, None]:
         ready_nodes = [
             node
             for node in dag.nodes
             if node.status == "ready" and not node.depends_on
         ]
         if not ready_nodes:
-            return
+            return None, None
         node = ready_nodes[0]
         external_task = await self._task_orchestrator.create_task(
             TaskRequest(
@@ -620,6 +659,7 @@ class WebhookBridge:
                 "status": external_task.status,
             },
         )
+        return node.node_key, external_task.status
 
     async def _start_linear_agent_session(
         self,
@@ -795,3 +835,26 @@ def _dag_progress_summary(task) -> str:
         f"DAG: {dag.status}, {len(completed)}/{len(dag.nodes)} completed, "
         f"{len(ready_nodes)} ready, next: {next_node}."
     )
+
+
+def _linear_assignment_reply(
+    external_id: str,
+    repo: str | None,
+    dag_template: str | None,
+    first_dag_node: str | None,
+    first_dag_node_status: str | None,
+) -> str:
+    lines = [
+        f"Accepted {external_id}.",
+        f"Repo: {repo or 'none'}.",
+    ]
+    if dag_template:
+        lines.append(f"DAG template: {dag_template}.")
+    else:
+        lines.append("DAG template: none.")
+    if first_dag_node:
+        lines.append(f"First DAG node queued: {first_dag_node} ({first_dag_node_status}).")
+    else:
+        lines.append("First DAG node queued: none.")
+    lines.append(f"Commands: /status {external_id}, /context {external_id}, /agents {external_id}.")
+    return "\n".join(lines)

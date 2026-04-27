@@ -125,6 +125,18 @@ async def test_linear_assigned_issue_comments_when_agent_task_is_queued() -> Non
             orchestrator_task_id="multica-task-1",
         )
     ]
+    assert issue_tracker.replies == [
+        IssueTrackerReply(
+            issue_id="issue-id-1",
+            body=(
+                "Accepted OS-1284.\n"
+                "Repo: keychain-os-erp.\n"
+                "DAG template: none.\n"
+                "First DAG node queued: none.\n"
+                "Commands: /status OS-1284, /context OS-1284, /agents OS-1284."
+            ),
+        )
+    ]
 
 
 async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
@@ -137,12 +149,13 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
         metadata={"linear_team_key": "OS"},
     )
     task_orchestrator = FakeTaskOrchestrator()
+    issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
             Settings(linear_agent_user_id="agent-user-1"),
             repository=repository,
             task_orchestrator=task_orchestrator,
-            issue_tracker=FakeIssueTracker(),
+            issue_tracker=issue_tracker,
         )
     )
 
@@ -178,6 +191,18 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
             },
         )
     ]
+    assert issue_tracker.replies == [
+        IssueTrackerReply(
+            issue_id="issue-id-1",
+            body=(
+                "Accepted OS-1284.\n"
+                "Repo: keychain-os-erp.\n"
+                "DAG template: none.\n"
+                "First DAG node queued: none.\n"
+                "Commands: /status OS-1284, /context OS-1284, /agents OS-1284."
+            ),
+        )
+    ]
 
 
 async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> None:
@@ -192,12 +217,13 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
     task_orchestrator = FakeTaskOrchestrator(
         task_ids=["multica-parent-task-1", "multica-dag-node-1"]
     )
+    issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
             Settings(linear_agent_user_id="agent-user-1"),
             repository=repository,
             task_orchestrator=task_orchestrator,
-            issue_tracker=FakeIssueTracker(),
+            issue_tracker=issue_tracker,
         )
     )
 
@@ -274,6 +300,18 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
     assert dag_created_event.metadata_json["node_count"] == 4
     assert dag_node_enqueued_event.metadata_json["node_key"] == "reproduce"
     assert dag_node_enqueued_event.metadata_json["orchestrator_task_id"] == "multica-dag-node-1"
+    assert issue_tracker.replies == [
+        IssueTrackerReply(
+            issue_id="issue-id-1",
+            body=(
+                "Accepted OS-1284.\n"
+                "Repo: keychain-os-erp.\n"
+                "DAG template: bugfix.\n"
+                "First DAG node queued: reproduce (queued).\n"
+                "Commands: /status OS-1284, /context OS-1284, /agents OS-1284."
+            ),
+        )
+    ]
 
 
 async def test_linear_assigned_issue_blocks_when_repo_label_is_unknown() -> None:
@@ -472,12 +510,12 @@ async def test_linear_comment_resumes_session_and_replies_in_thread() -> None:
             "linear:user-1",
         )
     ]
-    assert issue_tracker.replies == [
+    assert issue_tracker.replies[-1] == (
         IssueTrackerReply(
             issue_id="issue-id-1",
             body="I will check inventory allocation first.",
         )
-    ]
+    )
     persisted = await repository.find_agent_session(
         provider="linear",
         external_thread_id="issue-id-1",
@@ -541,7 +579,8 @@ async def test_linear_comment_from_agent_user_is_ignored_to_prevent_reply_loop()
     assert response.status_code == 202
     assert response.json()["task_id"] == assignment_response.json()["task_id"]
     assert hermes_session.resumed == []
-    assert issue_tracker.replies == []
+    assert len(issue_tracker.replies) == 1
+    assert issue_tracker.replies[0].body.startswith("Accepted OS-1284.")
 
 
 async def test_linear_comment_command_updates_task_status_and_replies() -> None:
