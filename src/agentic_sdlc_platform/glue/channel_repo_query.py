@@ -5,8 +5,23 @@ from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphStoreError
 
 
 async def answer_repo_query(repo_query: RepoQuery, repository, graph_store) -> dict[str, object]:
-    repo = await repository.get_repo_by_name(repo_query.repo)
-    if repo is None:
+    return await answer_repo_question(
+        repo=repo_query.repo,
+        question=repo_query.question,
+        repository=repository,
+        graph_store=graph_store,
+    )
+
+
+async def answer_repo_question(
+    *,
+    repo: str,
+    question: str,
+    repository,
+    graph_store,
+) -> dict[str, object]:
+    repo_record = await repository.get_repo_by_name(repo)
+    if repo_record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Repository not found",
@@ -14,11 +29,11 @@ async def answer_repo_query(repo_query: RepoQuery, repository, graph_store) -> d
     try:
         result = await graph_store.query(
             GraphQuery(
-                repo=repo.name,
-                question=repo_query.question,
+                repo=repo_record.name,
+                question=question,
                 metadata={
-                    **{key: str(value) for key, value in repo.metadata_json.items()},
-                    "default_branch": repo.default_branch,
+                    **{key: str(value) for key, value in repo_record.metadata_json.items()},
+                    "default_branch": repo_record.default_branch,
                 },
             )
         )
@@ -29,7 +44,7 @@ async def answer_repo_query(repo_query: RepoQuery, repository, graph_store) -> d
         ) from exc
     return {
         "route": "graph_repo_query",
-        "repo": repo.name,
+        "repo": repo_record.name,
         "answer": result.answer,
         "references": result.references,
     }

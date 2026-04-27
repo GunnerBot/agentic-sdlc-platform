@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, status
 
-from agentic_sdlc_platform.glue.channel_repo_query import answer_repo_query
+from agentic_sdlc_platform.glue.channel_repo_query import answer_repo_query, answer_repo_question
 from agentic_sdlc_platform.glue.channel_router import (
     ChannelMessage,
     ChannelRouter,
@@ -141,6 +141,27 @@ async def accept_channel_message(
             answer=repo_answer["answer"],
             references=repo_answer["references"],
         )
+    repo_scope = message.repo or (mapping.repo if mapping else None)
+    if (
+        route == RouteTarget.HERMES_DIRECT
+        and repo_scope
+        and request.app.state.settings.vendor_http_enabled
+    ):
+        repo_answer = await answer_repo_question(
+            repo=repo_scope,
+            question=message.text,
+            repository=request.app.state.repository,
+            graph_store=request.app.state.graph_store,
+        )
+        return ChannelAcceptedResponse(
+            accepted=True,
+            provider=message.provider,
+            channel=message.channel,
+            route=repo_answer["route"],
+            repo=repo_answer["repo"],
+            answer=repo_answer["answer"],
+            references=repo_answer["references"],
+        )
     if route == RouteTarget.HERMES_DIRECT and request.app.state.hermes_session is not None:
         request.app.state.channel_budget_ledger.reserve(
             provider=message.provider.value,
@@ -152,7 +173,7 @@ async def accept_channel_message(
                 channel=message.channel,
                 sender_id=message.sender_id,
                 text=message.text,
-                repo=message.repo or (mapping.repo if mapping else None),
+                repo=repo_scope,
             )
         )
         session_id = hermes_response.session_id

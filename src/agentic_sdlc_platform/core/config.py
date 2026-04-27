@@ -73,6 +73,9 @@ class Settings(BaseSettings):
 
     graphify_base_url: str | None = None
     graphify_api_key: str | None = Field(default=None, repr=False)
+    graphify_mode: str = "cli"
+    graphify_command: str = "graphify"
+    graphify_output_root: str | None = None
     graphify_timeout_seconds: float = 10.0
     graphify_max_retries: int = 2
 

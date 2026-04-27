@@ -84,6 +84,21 @@ The adapter creates/reuses a deterministic Multica agent named
 `<ASDLC_MULTICA_AGENT_NAME_PREFIX>-<provider>`, creates an assigned Multica issue for each DAG node,
 then stores the real Multica issue, task, agent, runtime, and provider IDs on the DAG node metadata.
 
+Graph-backed repo questions use the provider-neutral `GraphStore` port. Graphify is the first real
+adapter. By default it runs the official `graphify` CLI, so repo metadata must include either
+`graph_path`, `graphify_graph_path`, `local_path`, `repo_path`, or `workspace_path`:
+
+```bash
+ASDLC_VENDOR_HTTP_ENABLED=true
+ASDLC_GRAPHIFY_MODE=cli
+ASDLC_GRAPHIFY_COMMAND=graphify
+```
+
+CLI query mode runs `graphify query <question> --graph <graphify-out/graph.json>`. CLI index mode
+runs `graphify <repo_path> --update --no-viz`. A compatible self-hosted HTTP wrapper can be used
+with `ASDLC_GRAPHIFY_MODE=http` and `ASDLC_GRAPHIFY_BASE_URL`; it must expose `POST /api/index` and
+`POST /api/query` using the internal GraphStore request/response shape.
+
 ## Delivery Plan
 
 See `docs/IMPLEMENTATION_BACKLOG.md`.

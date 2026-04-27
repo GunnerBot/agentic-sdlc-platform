@@ -90,6 +90,10 @@ async def test_actionable_linear_webhook_creates_multica_task_when_configured() 
                 "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
                 "repo_default_branch": "main",
                 "repo_metadata": {},
+                "repo_context": {
+                    "status": "unavailable",
+                    "reason": "graphify CLI query requires graph_path or repo local_path metadata",
+                },
             },
         )
     ]

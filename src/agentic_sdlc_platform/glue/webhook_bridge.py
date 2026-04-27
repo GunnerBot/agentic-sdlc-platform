@@ -710,7 +710,6 @@ class WebhookBridge:
         if (
             self._graph_store is None
             or not self._settings.vendor_http_enabled
-            or not self._settings.graphify_base_url
         ):
             return None
         question = task_event.title
@@ -727,9 +726,10 @@ class WebhookBridge:
                     },
                 )
             )
-        except GraphStoreError:
-            return None
+        except GraphStoreError as exc:
+            return {"status": "unavailable", "reason": str(exc)}
         return {
+            "status": "available",
             "provider": result.provider,
             "answer": result.answer,
             "references": result.references,

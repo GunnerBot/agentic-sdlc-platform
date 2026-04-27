@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from agentic_sdlc_platform.adapters.slack import SlackClient
-from agentic_sdlc_platform.glue.channel_repo_query import answer_repo_query
+from agentic_sdlc_platform.glue.channel_repo_query import answer_repo_query, answer_repo_question
 from agentic_sdlc_platform.glue.channel_router import (
     ChannelMessage,
     ChannelRouter,
@@ -216,6 +216,27 @@ async def slack_events(
             provider="slack",
             external_thread_id=thread_id,
         )
+        repo_scope = mapping.repo if mapping else None
+        if (
+            existing_session is None
+            and repo_scope
+            and request.app.state.settings.vendor_http_enabled
+        ):
+            repo_answer = await answer_repo_question(
+                repo=repo_scope,
+                question=text,
+                repository=request.app.state.repository,
+                graph_store=request.app.state.graph_store,
+            )
+            return {
+                "ok": True,
+                "route": repo_answer["route"],
+                "repo": repo_answer["repo"],
+                "answer": repo_answer["answer"],
+                "references": repo_answer["references"],
+                "session_id": None,
+                "message_id": None,
+            }
         request.app.state.channel_budget_ledger.reserve(provider="slack", channel=channel)
         hermes_response = None
         if (
@@ -289,7 +310,7 @@ async def slack_events(
                 source="slack",
                 external_id=thread_id,
                 title=text[:200],
-                repo=mapping.repo if mapping else None,
+                repo=repo_scope,
             )
             hermes_response = await request.app.state.hermes_session.start_session(
                 HermesStartSessionRequest(
@@ -297,7 +318,7 @@ async def slack_events(
                     provider="slack",
                     external_thread_id=thread_id,
                     text=text,
-                    repo=mapping.repo if mapping else None,
+                    repo=repo_scope,
                 )
             )
             existing_session = await request.app.state.repository.create_agent_session(

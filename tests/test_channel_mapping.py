@@ -7,7 +7,32 @@ from fastapi.testclient import TestClient
 
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphQueryResult
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest, HermesSessionResponse
+
+
+class FakeRepo:
+    name = "keychain-os-erp"
+    metadata_json = {}
+    default_branch = "main"
+
+
+class FakeRepository:
+    async def get_repo_by_name(self, name: str):
+        return FakeRepo() if name == "keychain-os-erp" else None
+
+
+class FakeGraphStore:
+    def __init__(self) -> None:
+        self.queries: list[GraphQuery] = []
+
+    async def query(self, request: GraphQuery) -> GraphQueryResult:
+        self.queries.append(request)
+        return GraphQueryResult(
+            provider="graphify",
+            answer="Graph answer.",
+            references=["src/allocation.py"],
+        )
 
 
 class FakeHermesSession:
@@ -55,7 +80,10 @@ def test_generic_channel_ingress_applies_mapped_repo(tmp_path) -> None:
     hermes_session = FakeHermesSession()
     client = TestClient(
         create_app(
-            Settings(channel_mapping_path=write_mapping(tmp_path)),
+            Settings(
+                channel_mapping_path=write_mapping(tmp_path),
+                vendor_http_enabled=False,
+            ),
             hermes_session=hermes_session,
         )
     )
@@ -72,6 +100,44 @@ def test_generic_channel_ingress_applies_mapped_repo(tmp_path) -> None:
 
     assert response.status_code == 202
     assert hermes_session.requests[0].repo == "keychain-os-erp"
+
+
+def test_generic_channel_ingress_uses_graph_for_mapped_repo_when_enabled(tmp_path) -> None:
+    hermes_session = FakeHermesSession()
+    graph_store = FakeGraphStore()
+    client = TestClient(
+        create_app(
+            Settings(
+                channel_mapping_path=write_mapping(tmp_path),
+                vendor_http_enabled=True,
+            ),
+            repository=FakeRepository(),
+            graph_store=graph_store,
+            hermes_session=hermes_session,
+        )
+    )
+
+    response = client.post(
+        "/channels/messages",
+        json={
+            "provider": "slack",
+            "channel": "C123",
+            "sender_id": "U123",
+            "text": "How does FEFO allocation work?",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["route"] == "graph_repo_query"
+    assert response.json()["answer"] == "Graph answer."
+    assert hermes_session.requests == []
+    assert graph_store.queries == [
+        GraphQuery(
+            repo="keychain-os-erp",
+            question="How does FEFO allocation work?",
+            metadata={"default_branch": "main"},
+        )
+    ]
 
 
 def test_generic_channel_ingress_rejects_unknown_mapped_channel(tmp_path) -> None:
@@ -127,6 +193,7 @@ def test_telegram_ingress_applies_mapped_repo(tmp_path) -> None:
             Settings(
                 telegram_secret_token="secret",
                 channel_mapping_path=write_mapping(tmp_path),
+                vendor_http_enabled=False,
             ),
             hermes_session=hermes_session,
         )

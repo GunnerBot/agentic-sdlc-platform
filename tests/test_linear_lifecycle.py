@@ -233,6 +233,10 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
                 "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
                 "repo_default_branch": "develop",
                 "repo_metadata": {"linear_team_key": "OS"},
+                "repo_context": {
+                    "status": "unavailable",
+                    "reason": "graphify CLI query requires graph_path or repo local_path metadata",
+                },
             },
         )
     ]
@@ -309,6 +313,7 @@ async def test_linear_assigned_issue_includes_graphify_repo_context_when_availab
         "repo_default_branch": "develop",
         "repo_metadata": {"linear_team_key": "OS"},
         "repo_context": {
+            "status": "available",
             "provider": "graphify",
             "answer": "Foo DAFET dry-run validation is resolved from indexed repo context.",
             "references": ["apps/foo/dafet/form.ts:42"],
@@ -391,6 +396,10 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
             "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
             "repo_default_branch": "main",
             "repo_metadata": {},
+            "repo_context": {
+                "status": "unavailable",
+                "reason": "graphify CLI query requires graph_path or repo local_path metadata",
+            },
         },
     )
     assert task_orchestrator.created[1].source == "dag"

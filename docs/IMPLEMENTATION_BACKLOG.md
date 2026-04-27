@@ -25,7 +25,7 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 - Provider-neutral model provider port
 - Provider-neutral graph store port
 - Claude model provider adapter seam
-- Graphify graph store adapter seam
+- Real Graphify graph store adapter through official CLI mode, with optional compatible HTTP mode
 - Disabled and configured-path tests for both adapters
 
 ## Phase 1: Webhook Bridge

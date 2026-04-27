@@ -203,7 +203,12 @@ def test_channel_ingress_create_ticket_command_creates_issue() -> None:
 
 def test_channel_ingress_invokes_hermes_for_direct_questions_when_configured() -> None:
     hermes_session = FakeHermesSession()
-    client = TestClient(create_app(Settings(), hermes_session=hermes_session))
+    client = TestClient(
+        create_app(
+            Settings(vendor_http_enabled=False),
+            hermes_session=hermes_session,
+        )
+    )
 
     response = client.post(
         "/channels/messages",
@@ -240,6 +245,42 @@ def test_channel_ingress_invokes_hermes_for_direct_questions_when_configured() -
             sender_id="U123",
             text="How does FEFO allocation work?",
             repo="keychain-os-erp",
+        )
+    ]
+
+
+def test_channel_ingress_routes_repo_field_question_to_graph_when_enabled() -> None:
+    graph_store = FakeGraphStore()
+    hermes_session = FakeHermesSession()
+    client = TestClient(
+        create_app(
+            Settings(vendor_http_enabled=True),
+            repository=FakeRepository(),
+            graph_store=graph_store,
+            hermes_session=hermes_session,
+        )
+    )
+
+    response = client.post(
+        "/channels/messages",
+        json={
+            "provider": "slack",
+            "channel": "C123",
+            "sender_id": "U123",
+            "text": "How does FEFO allocation work?",
+            "repo": "keychain-os-erp",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["route"] == "graph_repo_query"
+    assert response.json()["answer"] == "Allocation lives in inventory/allocation.py."
+    assert hermes_session.requests == []
+    assert graph_store.queries == [
+        GraphQuery(
+            repo="keychain-os-erp",
+            question="How does FEFO allocation work?",
+            metadata={"linear_team_key": "OS", "default_branch": "main"},
         )
     ]
 
