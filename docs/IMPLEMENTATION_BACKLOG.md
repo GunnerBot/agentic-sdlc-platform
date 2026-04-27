@@ -70,6 +70,9 @@ This backlog follows the Agentic SDLC Platform design spec and keeps delivery in
 - Call planner model through the model router
 - Persist DAG nodes and dependencies
 - Support dependency unblocking after PR merge
+- Add GitHub App read-only installation integration for repo discovery/import
+- Keep GitHub write enablement explicitly pending until a narrowly scoped GitHub App write policy is approved:
+  branch create, commit push, PR create/comment, and checks read on allowlisted repositories only
 
 ## Phase 5: Model And Cost Router
 

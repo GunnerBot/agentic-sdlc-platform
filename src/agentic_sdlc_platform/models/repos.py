@@ -45,3 +45,25 @@ class RepoQuestionResponse(BaseModel):
     provider: str
     answer: str
     references: list[str]
+
+
+class GitHubAppRepositoryResponse(BaseModel):
+    name: str
+    full_name: str
+    clone_url: str | None = None
+    html_url: str | None = None
+    default_branch: str
+    private: bool
+    permissions: dict[str, bool]
+
+
+class GitHubAppInstallationResponse(BaseModel):
+    provider: str
+    installation_id: str
+    account: str | None = None
+    repositories: list[GitHubAppRepositoryResponse]
+
+
+class GitHubAppImportResponse(BaseModel):
+    imported: int
+    repositories: list[RepoResponse]

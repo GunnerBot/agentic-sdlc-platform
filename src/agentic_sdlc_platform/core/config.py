@@ -5,7 +5,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ASDLC_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="ASDLC_",
+        env_file=(".env", ".env.local"),
+        extra="ignore",
+    )
 
     service_name: str = "agentic-sdlc-platform"
     version: str = "0.1.0"
@@ -23,6 +27,13 @@ class Settings(BaseSettings):
     linear_agent_user_id: str | None = None
     linear_team_id: str | None = None
     github_webhook_secret: str | None = None
+    github_app_read_only_enabled: bool = False
+    github_app_id: str | None = None
+    github_app_installation_id: str | None = None
+    github_app_private_key: str | None = Field(default=None, repr=False)
+    github_app_private_key_path: str | None = Field(default=None, repr=False)
+    github_app_api_base_url: str = "https://api.github.com"
+    github_app_timeout_seconds: float = 10.0
     slack_signing_secret: str | None = Field(default=None, repr=False)
     slack_bot_token: str | None = Field(default=None, repr=False)
     slack_signature_tolerance_seconds: int = 300

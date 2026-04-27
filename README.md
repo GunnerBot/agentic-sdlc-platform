@@ -25,9 +25,15 @@ uv run agentic-sdlc-platform
 
 ## Environment
 
-Copy `.env.example` to `.env` and fill only the integrations you are testing locally.
+Copy `.env.example` to `.env` and use ignored `.env.local` overrides for machine-local secrets.
 Set `ASDLC_CHANNEL_MAPPING_PATH=config/channel-mapping.example.toml` to enforce channel
 allow-lists and repo mapping for Slack and Telegram.
+
+GitHub App read-only repo discovery uses `ASDLC_GITHUB_APP_*` settings. Put the App ID,
+installation ID, and `ASDLC_GITHUB_APP_PRIVATE_KEY_PATH` in ignored `.env.local`, then store the
+private key in an ignored local file such as `secrets/github-app.pem`; do not commit keys. Write
+operations for automatic branch push and PR creation remain intentionally disabled until a separate
+write-scoped GitHub App policy is approved.
 
 ## Delivery Plan
 

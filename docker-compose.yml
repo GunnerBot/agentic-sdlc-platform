@@ -17,6 +17,9 @@ services:
 
   agentic-sdlc-platform:
     build: .
+    env_file:
+      - path: .env.local
+        required: false
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,6 +30,8 @@ services:
       ASDLC_DATABASE_URL: postgresql+asyncpg://agentic_sdlc:agentic_sdlc@postgres:5432/agentic_sdlc
     ports:
       - "8080:8080"
+    volumes:
+      - ./secrets:/app/secrets:ro
 
 volumes:
   postgres-data:

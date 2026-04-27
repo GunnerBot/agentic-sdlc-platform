@@ -1,4 +1,5 @@
 from agentic_sdlc_platform.adapters.claude import ClaudeModelProvider
+from agentic_sdlc_platform.adapters.github_app import GitHubAppSourceControl
 from agentic_sdlc_platform.adapters.graphify import GraphifyGraphStore
 from agentic_sdlc_platform.adapters.hermes import HermesAgentAdapter
 from agentic_sdlc_platform.adapters.linear import LinearIssueAdapter
@@ -14,6 +15,7 @@ from agentic_sdlc_platform.ports.graph_store import GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort
 from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerPort
 from agentic_sdlc_platform.ports.model_provider import ModelProviderPort
+from agentic_sdlc_platform.ports.source_control import SourceControlPort
 from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
 
 
@@ -62,3 +64,9 @@ def build_issue_tracker(settings: Settings) -> IssueTrackerPort | None:
     if not settings.linear_http_enabled:
         return None
     return LinearIssueAdapter(settings)
+
+
+def build_source_control(settings: Settings) -> SourceControlPort | None:
+    if not settings.github_app_read_only_enabled:
+        return None
+    return GitHubAppSourceControl(settings)

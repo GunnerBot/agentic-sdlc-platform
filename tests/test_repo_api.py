@@ -12,6 +12,7 @@ from agentic_sdlc_platform.ports.graph_store import (
     GraphQueryResult,
     GraphStoreError,
 )
+from agentic_sdlc_platform.ports.source_control import SourceInstallation, SourceRepository
 
 
 class FakeGraphStore:
@@ -43,6 +44,28 @@ class DisabledGraphStore(FakeGraphStore):
 
     async def query(self, request: GraphQuery) -> GraphQueryResult:
         raise GraphStoreError("vendor HTTP is disabled")
+
+
+class FakeSourceControl:
+    provider = "github"
+
+    async def list_installation_repositories(self) -> SourceInstallation:
+        return SourceInstallation(
+            provider="github",
+            installation_id="installation-1",
+            account="GunnerBot",
+            repositories=[
+                SourceRepository(
+                    name="agentic-sdlc-platform",
+                    full_name="GunnerBot/agentic-sdlc-platform",
+                    clone_url="https://github.com/GunnerBot/agentic-sdlc-platform.git",
+                    html_url="https://github.com/GunnerBot/agentic-sdlc-platform",
+                    default_branch="main",
+                    private=True,
+                    permissions={"contents": True, "pull_requests": False},
+                )
+            ],
+        )
 
 
 async def build_repository() -> PersistenceRepository:
@@ -266,3 +289,57 @@ async def test_index_all_repos_records_failed_jobs_when_graph_store_is_disabled(
     assert response.json()["failed"] == 1
     assert response.json()["jobs"][0]["status"] == "failed"
     assert response.json()["jobs"][0]["error"] == "vendor HTTP is disabled"
+
+
+async def test_github_app_installation_endpoint_lists_read_only_repositories() -> None:
+    client = TestClient(create_app(Settings(), source_control=FakeSourceControl()))
+
+    response = client.get("/repos/github-app/installation")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "github",
+        "installation_id": "installation-1",
+        "account": "GunnerBot",
+        "repositories": [
+            {
+                "name": "agentic-sdlc-platform",
+                "full_name": "GunnerBot/agentic-sdlc-platform",
+                "clone_url": "https://github.com/GunnerBot/agentic-sdlc-platform.git",
+                "html_url": "https://github.com/GunnerBot/agentic-sdlc-platform",
+                "default_branch": "main",
+                "private": True,
+                "permissions": {"contents": True, "pull_requests": False},
+            }
+        ],
+    }
+
+
+async def test_github_app_import_endpoint_registers_repositories_without_write_enabled() -> None:
+    repository = await build_repository()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            source_control=FakeSourceControl(),
+        )
+    )
+
+    response = client.post("/repos/github-app/import")
+
+    assert response.status_code == 201
+    assert response.json()["imported"] == 1
+    assert response.json()["repositories"][0]["name"] == "GunnerBot/agentic-sdlc-platform"
+    assert response.json()["repositories"][0]["metadata"]["write_enabled"] is False
+    assert response.json()["repositories"][0]["metadata"]["github_permissions"] == {
+        "contents": True,
+        "pull_requests": False,
+    }
+
+
+async def test_github_app_installation_endpoint_requires_configuration() -> None:
+    client = TestClient(create_app(Settings()))
+
+    response = client.get("/repos/github-app/installation")
+
+    assert response.status_code == 503

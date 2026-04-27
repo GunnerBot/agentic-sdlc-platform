@@ -1,6 +1,9 @@
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from agentic_sdlc_platform.models.repos import (
+    GitHubAppImportResponse,
+    GitHubAppInstallationResponse,
+    GitHubAppRepositoryResponse,
     RepoIndexAllResponse,
     RepoIndexJobResponse,
     RepoQuestionRequest,
@@ -10,6 +13,7 @@ from agentic_sdlc_platform.models.repos import (
 )
 from agentic_sdlc_platform.persistence.models import RepoIndexJob, RepositoryRecord
 from agentic_sdlc_platform.ports.graph_store import GraphIndexRequest, GraphQuery, GraphStoreError
+from agentic_sdlc_platform.ports.source_control import SourceControlError, SourceInstallation
 
 router = APIRouter(tags=["repos"])
 
@@ -58,6 +62,53 @@ async def index_all_repos(request: Request) -> RepoIndexAllResponse:
         indexed=len([job for job in jobs if job.status == "indexed"]),
         failed=len([job for job in jobs if job.status == "failed"]),
         jobs=[_index_job_response(job) for job in jobs],
+    )
+
+
+@router.get(
+    "/github-app/installation",
+    response_model=GitHubAppInstallationResponse,
+    responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "GitHub App unavailable"}},
+)
+async def get_github_app_installation(request: Request) -> GitHubAppInstallationResponse:
+    installation = await _github_app_installation(request)
+    return _github_app_installation_response(installation)
+
+
+@router.post(
+    "/github-app/import",
+    response_model=GitHubAppImportResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "GitHub App unavailable"}},
+)
+async def import_github_app_repositories(request: Request) -> GitHubAppImportResponse:
+    installation = await _github_app_installation(request)
+    imported = []
+    for repo in installation.repositories:
+        imported.append(
+            await request.app.state.repository.upsert_repo(
+                name=repo.full_name,
+                provider="github",
+                clone_url=repo.clone_url,
+                default_branch=repo.default_branch,
+                status="active",
+                metadata={
+                    "github_app_installation_id": installation.installation_id,
+                    "github_app_account": installation.account,
+                    "github_html_url": repo.html_url,
+                    "github_private": repo.private,
+                    "github_permissions": repo.permissions,
+                    "write_enabled": False,
+                    "write_enablement_todo": (
+                        "Enable GitHub App write scopes before automatic branch push "
+                        "and PR creation."
+                    ),
+                },
+            )
+        )
+    return GitHubAppImportResponse(
+        imported=len(imported),
+        repositories=[_repo_response(repo) for repo in imported],
     )
 
 
@@ -155,6 +206,44 @@ def _repo_response(repo: RepositoryRecord) -> RepoResponse:
         default_branch=repo.default_branch,
         status=repo.status,
         metadata=repo.metadata_json,
+    )
+
+
+async def _github_app_installation(request: Request) -> SourceInstallation:
+    source_control = request.app.state.source_control
+    if source_control is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GitHub App read-only integration is not configured",
+        )
+    try:
+        return await source_control.list_installation_repositories()
+    except SourceControlError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+
+def _github_app_installation_response(
+    installation: SourceInstallation,
+) -> GitHubAppInstallationResponse:
+    return GitHubAppInstallationResponse(
+        provider=installation.provider,
+        installation_id=installation.installation_id,
+        account=installation.account,
+        repositories=[
+            GitHubAppRepositoryResponse(
+                name=repo.name,
+                full_name=repo.full_name,
+                clone_url=repo.clone_url,
+                html_url=repo.html_url,
+                default_branch=repo.default_branch,
+                private=repo.private,
+                permissions=repo.permissions,
+            )
+            for repo in installation.repositories
+        ],
     )
 
 

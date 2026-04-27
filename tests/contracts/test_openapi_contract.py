@@ -4,6 +4,7 @@ from hypothesis import HealthCheck, settings
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.ports.model_provider import ModelResponse
+from agentic_sdlc_platform.ports.source_control import SourceInstallation, SourceRepository
 
 
 class FakeEvent:
@@ -202,6 +203,26 @@ class FakeGraphStore:
         return Result()
 
 
+class FakeSourceControl:
+    async def list_installation_repositories(self):
+        return SourceInstallation(
+            provider="github",
+            installation_id="installation-1",
+            account="GunnerBot",
+            repositories=[
+                SourceRepository(
+                    name="agentic-sdlc-platform",
+                    full_name="GunnerBot/agentic-sdlc-platform",
+                    clone_url="https://github.com/GunnerBot/agentic-sdlc-platform.git",
+                    html_url="https://github.com/GunnerBot/agentic-sdlc-platform",
+                    default_branch="main",
+                    private=True,
+                    permissions={"contents": True, "pull_requests": False},
+                )
+            ],
+        )
+
+
 schema = schemathesis.openapi.from_asgi(
     "/openapi.json",
     create_app(
@@ -209,6 +230,7 @@ schema = schemathesis.openapi.from_asgi(
         repository=FakeRepository(),
         model_provider=FakeModelProvider(),
         graph_store=FakeGraphStore(),
+        source_control=FakeSourceControl(),
     ),
 )
 
