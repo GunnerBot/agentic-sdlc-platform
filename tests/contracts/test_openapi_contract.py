@@ -176,6 +176,12 @@ class FakeRepository:
     async def list_active_dag_node_executions(self, **kwargs):
         return [FakeDagNodeExecution()]
 
+    async def create_task_artifact(self, **kwargs):
+        return None
+
+    async def list_task_artifacts(self, **kwargs):
+        return []
+
 
 class FakeModelProvider:
     async def complete(self, request):

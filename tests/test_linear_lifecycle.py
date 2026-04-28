@@ -1269,6 +1269,7 @@ async def test_linear_assigned_issue_hydrates_image_attachment_summary() -> None
     ]
     assert task_orchestrator.created[0].repo == "webapp-monorepo"
     spec_ingestion = task_orchestrator.created[0].metadata["spec_ingestion"]
+    assert task_orchestrator.created[0].metadata["hydrated_spec_artifact_id"]
     assert any(
         source["kind"] == "attachment"
         and source["title"] == "form-title.png"
@@ -1283,6 +1284,21 @@ async def test_linear_assigned_issue_hydrates_image_attachment_summary() -> None
             "content_type": "image/png",
         }
     ]
+    artifacts = await repository.list_task_artifacts(
+        task_id=response.json()["task_id"],
+        kind="hydrated_spec",
+    )
+    assert len(artifacts) == 1
+    assert artifacts[0].id == task_orchestrator.created[0].metadata[
+        "hydrated_spec_artifact_id"
+    ]
+    assert artifacts[0].content_json["text_sources"][1]["text"] == (
+        "Image attachment: form-title.png\n\n"
+        "## Repositories\n"
+        "- webapp-monorepo\n\n"
+        "## Acceptance\n"
+        "- The dynamic form title appears above the first editable field."
+    )
     async with repository._session_factory() as session:
         hydrated_event = (
             await session.scalars(

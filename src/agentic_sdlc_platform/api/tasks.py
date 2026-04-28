@@ -18,6 +18,7 @@ from agentic_sdlc_platform.models.tasks import (
     CreateTaskDagRequest,
     DagNodeExecutionResponse,
     FailDagNodeRequest,
+    TaskArtifactResponse,
     TaskDagNodeResponse,
     TaskDagResponse,
     TaskDagSummaryResponse,
@@ -25,7 +26,13 @@ from agentic_sdlc_platform.models.tasks import (
     TaskStatusResponse,
     UpdateDagNodeExecutionRequest,
 )
-from agentic_sdlc_platform.persistence.models import AgentSession, SessionEvent, Task, TaskDag
+from agentic_sdlc_platform.persistence.models import (
+    AgentSession,
+    SessionEvent,
+    Task,
+    TaskArtifact,
+    TaskDag,
+)
 from agentic_sdlc_platform.ports.task_orchestrator import TaskReadRequest, TaskRequest
 
 router = APIRouter(tags=["tasks"])
@@ -55,6 +62,34 @@ async def get_task(task_id: str, request: Request) -> TaskDetailResponse:
             detail="Task not found",
         )
     return _task_detail_response(task)
+
+
+@router.get(
+    "/{task_id}/artifacts",
+    response_model=list[TaskArtifactResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def list_task_artifacts(
+    task_id: str,
+    request: Request,
+    kind: str | None = None,
+    dag_id: str | None = None,
+    node_key: str | None = None,
+    execution_id: str | None = None,
+) -> list[TaskArtifactResponse]:
+    if await request.app.state.repository.get_task(task_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    artifacts = await request.app.state.repository.list_task_artifacts(
+        task_id=task_id,
+        kind=kind,
+        dag_id=dag_id,
+        node_key=node_key,
+        execution_id=execution_id,
+    )
+    return [_artifact_response(artifact) for artifact in artifacts]
 
 
 @router.post(
@@ -530,6 +565,14 @@ def _task_detail_response(task: Task) -> TaskDetailResponse:
         orchestrator_status=task.orchestrator_status,
         dags=[_dag_response(dag) for dag in getattr(task, "dags", [])],
         sessions=[_session_detail_response(session) for session in task.sessions],
+        artifacts=[
+            _artifact_response(artifact)
+            for artifact in sorted(
+                getattr(task, "artifacts", []),
+                key=lambda item: (item.created_at, item.id),
+                reverse=True,
+            )
+        ],
     )
 
 
@@ -631,4 +674,18 @@ def _session_event_response(event: SessionEvent) -> AgentSessionEventResponse:
         actor=event.actor,
         message=event.message,
         metadata=event.metadata_json,
+    )
+
+
+def _artifact_response(artifact: TaskArtifact) -> TaskArtifactResponse:
+    return TaskArtifactResponse(
+        id=artifact.id,
+        task_id=artifact.task_id,
+        dag_id=artifact.dag_id,
+        node_key=artifact.node_key,
+        execution_id=artifact.execution_id,
+        kind=artifact.kind,
+        name=artifact.name,
+        content=dict(artifact.content_json),
+        metadata=dict(artifact.metadata_json),
     )

@@ -871,13 +871,25 @@ class WebhookBridge:
                 "repo": effective_repo,
             },
         )
+        hydrated_spec_artifact_id: str | None = None
         if spec_bundle is not None:
+            artifact = await self._repository.create_task_artifact(
+                task_id=task.id,
+                kind="hydrated_spec",
+                name=f"{task_event.external_id}:hydrated-spec",
+                content=spec_bundle.to_artifact_content(task_event),
+                metadata=spec_bundle.to_metadata(),
+            )
+            hydrated_spec_artifact_id = artifact.id
             await self._repository.record_audit_event(
                 action="task.spec_ingested",
                 actor="system",
                 target_type="task",
                 target_id=task.id,
-                metadata=spec_bundle.to_metadata(),
+                metadata={
+                    **spec_bundle.to_metadata(),
+                    "artifact_id": artifact.id,
+                },
             )
         if (
             source == "linear"
@@ -908,7 +920,10 @@ class WebhookBridge:
                 event_type="repo_clarification_requested",
                 actor="system",
                 message=reply_body,
-                metadata={"spec_ingestion": spec_bundle.to_metadata()},
+                metadata={
+                    "spec_ingestion": spec_bundle.to_metadata(),
+                    "hydrated_spec_artifact_id": hydrated_spec_artifact_id,
+                },
             )
             if self._issue_tracker is not None:
                 await self._issue_tracker.reply(
@@ -988,6 +1003,7 @@ class WebhookBridge:
             if task_metadata is None:
                 task_metadata = {}
             task_metadata["spec_ingestion"] = spec_bundle.to_metadata()
+            task_metadata["hydrated_spec_artifact_id"] = hydrated_spec_artifact_id
         if self._task_orchestrator is not None:
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
@@ -1111,6 +1127,7 @@ class WebhookBridge:
                 task_event=task_event,
                 spec_bundle=spec_bundle,
                 dag_plan=dag_plan,
+                hydrated_spec_artifact_id=hydrated_spec_artifact_id,
             )
             for node in dag.nodes:
                 await self._repository.update_dag_node_metadata(
@@ -2008,9 +2025,11 @@ def _linear_spec_node_metadata(
     task_event: NormalizedTaskEvent,
     spec_bundle: SpecIngestionBundle,
     dag_plan: LinearDagPlan,
+    hydrated_spec_artifact_id: str | None = None,
 ) -> dict[str, object]:
     return {
         "spec_ingestion": spec_bundle.to_metadata(),
+        "hydrated_spec_artifact_id": hydrated_spec_artifact_id,
         "planning_strategy": dag_plan.strategy,
         "execution_policy": {
             "terminal_command_prefix": "rtk",

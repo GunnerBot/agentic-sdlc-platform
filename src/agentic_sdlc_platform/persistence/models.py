@@ -122,6 +122,7 @@ class Task(Base):
     inbound_event: Mapped[InboundEvent] = relationship(back_populates="tasks")
     dags: Mapped[list["TaskDag"]] = relationship(back_populates="task")
     sessions: Mapped[list["AgentSession"]] = relationship(back_populates="task")
+    artifacts: Mapped[list["TaskArtifact"]] = relationship(back_populates="task")
 
 
 class TaskDag(Base):
@@ -236,6 +237,47 @@ class DagNodeExecution(Base):
 
     dag: Mapped[TaskDag] = relationship()
     task: Mapped[Task] = relationship()
+
+
+class TaskArtifact(Base):
+    __tablename__ = "task_artifacts"
+    __table_args__ = (
+        Index("ix_task_artifacts_task_kind", "task_id", "kind"),
+        Index("ix_task_artifacts_dag_node", "dag_id", "node_key"),
+        Index("ix_task_artifacts_execution", "execution_id"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    dag_id: Mapped[str | None] = mapped_column(
+        ForeignKey("task_dags.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    node_key: Mapped[str | None] = mapped_column(nullable=True)
+    execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("dag_node_executions.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    kind: Mapped[str] = mapped_column(nullable=False)
+    name: Mapped[str] = mapped_column(nullable=False)
+    content_json: Mapped[dict[str, object]] = mapped_column(
+        MutableDict.as_mutable(JsonDocument),
+        nullable=False,
+        default=dict,
+    )
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        MutableDict.as_mutable(JsonDocument),
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+
+    task: Mapped[Task] = relationship(back_populates="artifacts")
+    dag: Mapped[TaskDag | None] = relationship()
+    execution: Mapped[DagNodeExecution | None] = relationship()
 
 
 class AuditEvent(Base):

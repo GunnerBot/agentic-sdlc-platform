@@ -646,3 +646,23 @@ async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> No
     assert updated.json()["status"] == "pr_open"
     assert updated.json()["pr_number"] == 17
     assert updated.json()["metadata"]["review"] == "requested"
+    artifacts = client.get(f"/tasks/{task_id}/artifacts")
+    assert artifacts.status_code == 200
+    artifact_kinds = [artifact["kind"] for artifact in artifacts.json()]
+    assert "dag_node_execution_input" in artifact_kinds
+    assert "dag_node_execution_result" in artifact_kinds
+    input_artifact = next(
+        artifact
+        for artifact in artifacts.json()
+        if artifact["kind"] == "dag_node_execution_input"
+    )
+    result_artifact = next(
+        artifact
+        for artifact in artifacts.json()
+        if artifact["kind"] == "dag_node_execution_result"
+        and artifact["metadata"]["status"] == "pr_open"
+    )
+    assert input_artifact["execution_id"] == execution_id
+    assert input_artifact["content"]["pr_reference"] == f"dag/{dag_id}/api"
+    assert result_artifact["execution_id"] == execution_id
+    assert result_artifact["content"]["pr_url"] == "https://github.com/acme/erp-api/pull/17"

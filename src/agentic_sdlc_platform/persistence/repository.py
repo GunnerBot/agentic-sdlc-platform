@@ -15,6 +15,7 @@ from agentic_sdlc_platform.persistence.models import (
     RepositoryRecord,
     SessionEvent,
     Task,
+    TaskArtifact,
     TaskDag,
     TaskDagNode,
     utc_now,
@@ -132,6 +133,7 @@ class PersistenceRepository:
                     .selectinload(TaskDag.nodes)
                     .selectinload(TaskDagNode.executions),
                     selectinload(Task.sessions).selectinload(AgentSession.events),
+                    selectinload(Task.artifacts),
                 )
             )
             return result.scalars().first()
@@ -289,6 +291,7 @@ class PersistenceRepository:
                     .selectinload(TaskDag.nodes)
                     .selectinload(TaskDagNode.executions),
                     selectinload(Task.sessions).selectinload(AgentSession.events),
+                    selectinload(Task.artifacts),
                 )
                 .order_by(Task.created_at.desc(), Task.id)
             )
@@ -312,6 +315,7 @@ class PersistenceRepository:
                     .selectinload(TaskDag.nodes)
                     .selectinload(TaskDagNode.executions),
                     selectinload(Task.sessions).selectinload(AgentSession.events),
+                    selectinload(Task.artifacts),
                 )
             )
             return result.scalars().first()
@@ -595,9 +599,76 @@ class PersistenceRepository:
             if metadata is not None:
                 execution.metadata_json.update(metadata)
             execution.updated_at = utc_now()
+            session.add(
+                TaskArtifact(
+                    task_id=execution.task_id,
+                    dag_id=execution.dag_id,
+                    node_key=execution.node_key,
+                    execution_id=execution.id,
+                    kind="dag_node_execution_result",
+                    name=f"{execution.node_key}:{status}",
+                    content_json=_execution_snapshot(execution),
+                    metadata_json={
+                        "status": status,
+                        "executor_provider": execution.executor_provider,
+                    },
+                )
+            )
             await session.commit()
             await session.refresh(execution)
             return execution
+
+    async def create_task_artifact(
+        self,
+        task_id: str,
+        kind: str,
+        name: str,
+        content: dict[str, object],
+        metadata: dict[str, object] | None = None,
+        dag_id: str | None = None,
+        node_key: str | None = None,
+        execution_id: str | None = None,
+    ) -> TaskArtifact:
+        async with self._session_factory() as session:
+            artifact = TaskArtifact(
+                task_id=task_id,
+                dag_id=dag_id,
+                node_key=node_key,
+                execution_id=execution_id,
+                kind=kind,
+                name=name,
+                content_json=content,
+                metadata_json=metadata or {},
+            )
+            session.add(artifact)
+            await session.commit()
+            await session.refresh(artifact)
+            return artifact
+
+    async def list_task_artifacts(
+        self,
+        task_id: str,
+        kind: str | None = None,
+        dag_id: str | None = None,
+        node_key: str | None = None,
+        execution_id: str | None = None,
+    ) -> list[TaskArtifact]:
+        async with self._session_factory() as session:
+            statement = (
+                select(TaskArtifact)
+                .where(TaskArtifact.task_id == task_id)
+                .order_by(TaskArtifact.created_at.desc(), TaskArtifact.id)
+            )
+            if kind is not None:
+                statement = statement.where(TaskArtifact.kind == kind)
+            if dag_id is not None:
+                statement = statement.where(TaskArtifact.dag_id == dag_id)
+            if node_key is not None:
+                statement = statement.where(TaskArtifact.node_key == node_key)
+            if execution_id is not None:
+                statement = statement.where(TaskArtifact.execution_id == execution_id)
+            result = await session.execute(statement)
+            return list(result.scalars().all())
 
     async def list_dag_node_executions(
         self,
@@ -818,4 +889,22 @@ def _completed_dependency_keys(nodes: list[TaskDagNode]) -> set[str]:
         node.node_key
         for node in nodes
         if node.status in DEPENDENCY_COMPLETE_STATUSES
+    }
+
+
+def _execution_snapshot(execution: DagNodeExecution) -> dict[str, object]:
+    return {
+        "execution_id": execution.id,
+        "dag_id": execution.dag_id,
+        "node_key": execution.node_key,
+        "task_id": execution.task_id,
+        "executor_provider": execution.executor_provider,
+        "external_execution_id": execution.external_execution_id,
+        "status": execution.status,
+        "branch_name": execution.branch_name,
+        "pr_url": execution.pr_url,
+        "pr_number": execution.pr_number,
+        "workspace_path": execution.workspace_path,
+        "error": execution.error,
+        "metadata": dict(execution.metadata_json),
     }

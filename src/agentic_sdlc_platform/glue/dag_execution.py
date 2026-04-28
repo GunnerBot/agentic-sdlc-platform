@@ -70,6 +70,36 @@ async def create_or_start_execution(
         branch_name=branch_name,
         metadata=metadata,
     )
+    existing_inputs = await repository.list_task_artifacts(
+        task_id=task.id,
+        kind="dag_node_execution_input",
+        execution_id=execution.id,
+    )
+    if not existing_inputs:
+        await repository.create_task_artifact(
+            task_id=task.id,
+            dag_id=dag.id,
+            node_key=node.node_key,
+            execution_id=execution.id,
+            kind="dag_node_execution_input",
+            name=f"{node.node_key}:input",
+            content={
+                "execution_id": execution.id,
+                "task_id": task.id,
+                "dag_id": dag.id,
+                "node_key": node.node_key,
+                "title": node.title,
+                "repo": node.repo,
+                "branch_name": branch_name or expected_branch(dag.id, node.node_key),
+                "pr_reference": _str(metadata.get("expected_pr_reference"))
+                or expected_pr_reference(dag.id, node.node_key),
+                "metadata": metadata,
+            },
+            metadata={
+                "executor_provider": execution.executor_provider,
+                "status": execution.status,
+            },
+        )
     if agent_executor is None or execution.status == "running":
         return execution
 

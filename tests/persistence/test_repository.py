@@ -119,3 +119,33 @@ async def test_record_audit_event_persists_action_metadata() -> None:
     assert audit_event.action == "webhook.accepted"
     assert audit_event.actor == "system"
     assert audit_event.metadata_json == {"source": "linear"}
+
+
+async def test_task_artifacts_are_persisted_and_filterable() -> None:
+    repository = await build_repository()
+    event_result = await repository.record_inbound_event(
+        source="linear",
+        delivery_id="delivery-1",
+        event_type="Issue",
+        payload={"id": "issue-1"},
+    )
+    task = await repository.create_task_from_event(
+        event_id=event_result.event.id,
+        source="linear",
+        external_id="OS-1284",
+        title="Build webhook bridge",
+        repo="keychain-os-erp",
+    )
+
+    artifact = await repository.create_task_artifact(
+        task_id=task.id,
+        kind="hydrated_spec",
+        name="OS-1284:hydrated-spec",
+        content={"text_sources": [{"title": "Linear description", "text": "Spec"}]},
+        metadata={"asset_count": 0},
+    )
+    filtered = await repository.list_task_artifacts(task_id=task.id, kind="hydrated_spec")
+
+    assert [item.id for item in filtered] == [artifact.id]
+    assert filtered[0].content_json["text_sources"][0]["text"] == "Spec"
+    assert filtered[0].metadata_json == {"asset_count": 0}

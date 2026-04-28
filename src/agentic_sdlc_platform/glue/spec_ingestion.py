@@ -96,6 +96,31 @@ class SpecIngestionBundle:
             "asset_count": len(self.design_assets),
         }
 
+    def to_artifact_content(self, task_event: NormalizedTaskEvent) -> dict[str, object]:
+        return {
+            "source": self.source,
+            "task": {
+                "source": task_event.source,
+                "external_id": task_event.external_id,
+                "issue_id": task_event.issue_id,
+                "title": task_event.title,
+                "url": task_event.url,
+                "body": task_event.body,
+            },
+            "text_sources": [
+                {
+                    "kind": source.kind,
+                    "title": source.title,
+                    "text": source.text,
+                    "length": len(source.text),
+                }
+                for source in self.text_sources
+            ],
+            "design_assets": [asset.to_metadata() for asset in self.design_assets],
+            "repo_scope": self.repo_scope.to_metadata(),
+            "prompt_suffix": self.prompt_suffix(),
+        }
+
     def prompt_suffix(self) -> str:
         lines = ["", "Ingested Linear spec context:"]
         if self.selected_repos:

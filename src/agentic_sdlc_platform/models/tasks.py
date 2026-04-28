@@ -119,6 +119,18 @@ class AgentSessionDetailResponse(AgentSessionStatusResponse):
     events: list[AgentSessionEventResponse]
 
 
+class TaskArtifactResponse(BaseModel):
+    id: str
+    task_id: str
+    dag_id: str | None = None
+    node_key: str | None = None
+    execution_id: str | None = None
+    kind: str
+    name: str
+    content: dict[str, object]
+    metadata: dict[str, object]
+
+
 class TaskStatusResponse(BaseModel):
     id: str
     source: str
@@ -143,3 +155,4 @@ class TaskDetailResponse(BaseModel):
     orchestrator_status: str | None = None
     dags: list[TaskDagResponse]
     sessions: list[AgentSessionDetailResponse]
+    artifacts: list[TaskArtifactResponse] = Field(default_factory=list)
