@@ -105,6 +105,21 @@ Graphify output is generated local index data and must not be committed. The rep
 `graphify-out/` and `.graphify/`; store graph paths in ignored local config or repository metadata,
 not as checked-in artifacts.
 
+Linear spec ingestion can read linked Notion pages and Google Docs when configured. Put these in
+ignored local config:
+
+```bash
+ASDLC_NOTION_HTTP_ENABLED=true
+ASDLC_NOTION_API_KEY=<notion_internal_integration_secret>
+ASDLC_GOOGLE_DOCS_HTTP_ENABLED=true
+ASDLC_GOOGLE_DOCS_BEARER_TOKEN=<optional_google_oauth_token>
+```
+
+Notion links require the integration to be granted access to the page. Google Docs links are fetched
+through the text export endpoint; private docs require a bearer token with access. Hydrated document
+text is treated as an additional spec text source for repo detection, planning, Hermes context, and
+DAG node metadata.
+
 In the real Docker overlay, host repos are mounted read-only at `/repos` and generated Graphify data
 is written to the Docker-managed `/graphify-data` volume. Example repo metadata for the local
 `keychain-os-erp` checkout:
@@ -131,6 +146,8 @@ creating Multica work:
   parsing the spec. If the repo scope is still missing or unregistered, the task is blocked and the
   bot asks for a registered repo in Linear; a follow-up comment naming one registered repo resumes
   the task.
+- Linked Notion pages and Google Docs in the Linear description, comments, or text attachments are
+  fetched as additional spec text when the matching document adapter is enabled.
 - When `ASDLC_LINEAR_SPEC_PLANNER_ENABLED=true`, hydrated specs are planned through the configured
   model provider. The planner can create multiple repo-scoped DAG nodes, including multiple nodes
   for one repo, and invalid model plans fall back to the deterministic one-node-per-repo DAG.

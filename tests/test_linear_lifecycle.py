@@ -7,6 +7,7 @@ from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.persistence.models import AuditEvent, Base, TaskDag
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
+from agentic_sdlc_platform.ports.document_context import DocumentContext
 from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphQueryResult
 from agentic_sdlc_platform.ports.hermes_session import (
     HermesSessionResponse,
@@ -138,6 +139,16 @@ class FakePlanningModel:
     async def complete(self, request: ModelRequest) -> ModelResponse:
         self.requests.append(request)
         return ModelResponse(provider="fake", model="planner-test", content=self.content)
+
+
+class FakeDocumentContext:
+    def __init__(self, documents: dict[str, DocumentContext]) -> None:
+        self.documents = documents
+        self.fetched_urls: list[str] = []
+
+    async def fetch(self, url: str) -> DocumentContext | None:
+        self.fetched_urls.append(url)
+        return self.documents.get(url)
 
 
 async def build_repository() -> PersistenceRepository:
@@ -980,6 +991,85 @@ async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None
             "Commands: /status OS-3001, /context OS-3001, /agents OS-3001."
         ),
     )
+
+
+async def test_linear_assigned_issue_hydrates_notion_doc_from_description() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    notion_url = (
+        "https://acme.notion.site/Dynamic-form-titles-"
+        "1234567890abcdef1234567890abcdef"
+    )
+    document_context = FakeDocumentContext(
+        {
+            notion_url: DocumentContext(
+                provider="notion",
+                url=notion_url,
+                title="Dynamic form titles spec",
+                text=(
+                    "## Repositories\n"
+                    "- keychain-os-erp\n\n"
+                    "## Acceptance\n"
+                    "- Backend persists title expression metadata."
+                ),
+                metadata={"page_id": "1234567890abcdef1234567890abcdef"},
+            )
+        }
+    )
+    task_orchestrator = FakeTaskOrchestrator()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            document_context=document_context,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-3004",
+                "title": "Support dynamic form titles",
+                "description": f"Spec: {notion_url}",
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-notion-doc-1"},
+    )
+
+    assert response.status_code == 202
+    assert document_context.fetched_urls == [notion_url]
+    assert task_orchestrator.created[0].repo == "keychain-os-erp"
+    assert task_orchestrator.created[0].metadata["spec_ingestion"]["repo_scope"] == {
+        "scope": "single_repo",
+        "repos": [{"repo": "keychain-os-erp", "reason": "mentioned_in_spec"}],
+        "unknown_repos": [],
+    }
+    assert task_orchestrator.created[0].metadata["spec_ingestion"]["text_sources"][1] == {
+        "kind": "attachment",
+        "title": "Dynamic form titles spec",
+        "length": 94,
+    }
+    async with repository._session_factory() as session:
+        hydrated_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "linear.documents_hydrated")
+            )
+        ).one()
+    assert hydrated_event.metadata_json["providers"] == ["notion"]
 
 
 async def test_linear_assigned_issue_blocks_and_asks_for_repo_when_spec_is_ambiguous() -> None:

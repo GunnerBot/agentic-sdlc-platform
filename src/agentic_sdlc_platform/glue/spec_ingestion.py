@@ -6,6 +6,7 @@ from agentic_sdlc_platform.glue.dag_decomposer import Subtask
 from agentic_sdlc_platform.glue.task_event_normalizer import NormalizedTaskEvent
 
 FIGMA_URL_RE = re.compile(r"https?://(?:www\.)?figma\.com/[^\s)>\]]+", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s)>\]]+")
 MARKDOWN_SIGNAL_RE = re.compile(r"(?im)^\s{0,3}#{1,6}\s+|^\s*[-*]\s+")
 IMAGE_EXTENSIONS = {".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"}
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt"}
@@ -137,6 +138,21 @@ def ingest_linear_spec(
         design_assets=tuple(design_assets),
         repo_scope=repo_scope,
     )
+
+
+def linear_document_urls(
+    payload: dict[str, object],
+    task_event: NormalizedTaskEvent,
+) -> list[str]:
+    seen = set()
+    urls = []
+    for source in _linear_text_sources(payload, task_event):
+        for url in URL_RE.findall(source.text):
+            normalized = url.rstrip(".,")
+            if normalized not in seen and _is_supported_doc_url(normalized):
+                seen.add(normalized)
+                urls.append(normalized)
+    return urls
 
 
 def _linear_text_sources(
@@ -358,6 +374,16 @@ def _is_image_attachment(title: str, content_type: str | None) -> bool:
 
 def _is_figma_url(url: str) -> bool:
     return FIGMA_URL_RE.match(url) is not None
+
+
+def _is_supported_doc_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    return (
+        host.endswith("notion.so")
+        or host.endswith("notion.site")
+        or host == "docs.google.com"
+    )
 
 
 def _node_key(repo: str) -> str:

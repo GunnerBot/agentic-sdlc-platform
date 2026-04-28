@@ -84,6 +84,16 @@ class Settings(BaseSettings):
     graphify_timeout_seconds: float = 10.0
     graphify_max_retries: int = 2
 
+    notion_http_enabled: bool = False
+    notion_base_url: str = "https://api.notion.com"
+    notion_api_key: str | None = Field(default=None, repr=False)
+    notion_version: str = "2022-06-28"
+    notion_timeout_seconds: float = 10.0
+    google_docs_http_enabled: bool = False
+    google_docs_base_url: str = "https://docs.google.com"
+    google_docs_bearer_token: str | None = Field(default=None, repr=False)
+    google_docs_timeout_seconds: float = 10.0
+
     hermes_http_enabled: bool = False
     hermes_base_url: str | None = None
     hermes_api_key: str | None = Field(default=None, repr=False)

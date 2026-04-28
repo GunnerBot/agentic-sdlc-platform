@@ -24,6 +24,7 @@ from agentic_sdlc_platform.glue.human_override import (
 from agentic_sdlc_platform.glue.spec_ingestion import (
     SpecIngestionBundle,
     ingest_linear_spec,
+    linear_document_urls,
 )
 from agentic_sdlc_platform.glue.task_event_normalizer import (
     NormalizedTaskEvent,
@@ -37,6 +38,10 @@ from agentic_sdlc_platform.persistence.repository import (
     PersistenceRepository,
 )
 from agentic_sdlc_platform.ports.agent_executor import AgentExecutorPort
+from agentic_sdlc_platform.ports.document_context import (
+    DocumentContextError,
+    DocumentContextPort,
+)
 from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphStoreError, GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import (
     HermesSessionPort,
@@ -88,6 +93,7 @@ class WebhookBridge:
         issue_tracker: IssueTrackerPort | None = None,
         hermes_session: HermesSessionPort | None = None,
         graph_store: GraphStorePort | None = None,
+        document_context: DocumentContextPort | None = None,
         agent_executor: AgentExecutorPort | None = None,
         model_provider: ModelProviderPort | None = None,
     ) -> None:
@@ -97,6 +103,7 @@ class WebhookBridge:
         self._issue_tracker = issue_tracker
         self._hermes_session = hermes_session
         self._graph_store = graph_store
+        self._document_context = document_context
         self._agent_executor = agent_executor
         self._model_provider = model_provider
         self._normalizer = TaskEventNormalizer(
@@ -813,6 +820,11 @@ class WebhookBridge:
                 task_event=task_event,
                 inbound_event_id=result.event.id,
             )
+            payload = await self._hydrate_linear_document_context(
+                payload=payload,
+                task_event=task_event,
+                inbound_event_id=result.event.id,
+            )
 
         registered_repos = []
         spec_bundle: SpecIngestionBundle | None = None
@@ -1236,6 +1248,52 @@ class WebhookBridge:
             },
         )
         return hydrated_payload, hydrated_event
+
+    async def _hydrate_linear_document_context(
+        self,
+        payload: dict[str, object],
+        task_event: NormalizedTaskEvent,
+        inbound_event_id: str,
+    ) -> dict[str, object]:
+        if self._document_context is None:
+            return payload
+        fetched_documents = []
+        for url in linear_document_urls(payload, task_event):
+            try:
+                document = await self._document_context.fetch(url)
+            except DocumentContextError as exc:
+                await self._repository.record_audit_event(
+                    action="linear.document_hydration_failed",
+                    actor="system",
+                    target_type="inbound_event",
+                    target_id=inbound_event_id,
+                    metadata={
+                        "url": url,
+                        "external_id": task_event.external_id,
+                        "reason": str(exc),
+                    },
+                )
+                continue
+            if document is None or not document.text:
+                continue
+            fetched_documents.append(document)
+        if not fetched_documents:
+            return payload
+
+        merged = _merge_linear_document_context(payload, fetched_documents)
+        await self._repository.record_audit_event(
+            action="linear.documents_hydrated",
+            actor="system",
+            target_type="inbound_event",
+            target_id=inbound_event_id,
+            metadata={
+                "external_id": task_event.external_id,
+                "document_count": len(fetched_documents),
+                "providers": [document.provider for document in fetched_documents],
+                "urls": [document.url for document in fetched_documents],
+            },
+        )
+        return merged
 
     async def _plan_linear_spec_dag(
         self,
@@ -1990,6 +2048,46 @@ def _merge_linear_issue_context(
         }
     merged["data"] = data
     return merged
+
+
+def _merge_linear_document_context(
+    payload: dict[str, object],
+    documents: list[object],
+) -> dict[str, object]:
+    merged = dict(payload)
+    data = dict(_dict_value(merged.get("data")))
+    existing_documents = _extract_payload_nodes(data.get("documents"))
+    data["documents"] = {
+        "nodes": [
+            *existing_documents,
+            *[_linear_document_payload(document) for document in documents],
+        ]
+    }
+    merged["data"] = data
+    return merged
+
+
+def _linear_document_payload(document) -> dict[str, object]:
+    return {
+        "id": document.url,
+        "title": document.title or document.url,
+        "url": document.url,
+        "contentType": "text/markdown",
+        "content": document.text,
+        "provider": document.provider,
+        "metadata": document.metadata or {},
+    }
+
+
+def _extract_payload_nodes(value: object) -> list[dict[str, object]]:
+    if isinstance(value, dict):
+        nodes = value.get("nodes")
+        if isinstance(nodes, list):
+            return [node for node in nodes if isinstance(node, dict)]
+        return [value]
+    if isinstance(value, list):
+        return [node for node in value if isinstance(node, dict)]
+    return []
 
 
 def _linear_attachment_payload(attachment) -> dict[str, object]:

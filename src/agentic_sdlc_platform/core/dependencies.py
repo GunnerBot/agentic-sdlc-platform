@@ -1,4 +1,5 @@
 from agentic_sdlc_platform.adapters.claude import ClaudeModelProvider
+from agentic_sdlc_platform.adapters.document_context import build_document_context_adapter
 from agentic_sdlc_platform.adapters.github_app import GitHubAppSourceControl
 from agentic_sdlc_platform.adapters.graphify import GraphifyGraphStore
 from agentic_sdlc_platform.adapters.hermes import HermesAgentAdapter
@@ -12,6 +13,7 @@ from agentic_sdlc_platform.glue.channel_mapping import ChannelAuthorizer, load_c
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.persistence.session import build_session_factory
 from agentic_sdlc_platform.ports.agent_executor import AgentExecutorPort
+from agentic_sdlc_platform.ports.document_context import DocumentContextPort
 from agentic_sdlc_platform.ports.graph_store import GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort
 from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerPort
@@ -28,6 +30,10 @@ def build_model_provider(settings: Settings) -> ModelProviderPort:
 
 def build_graph_store(settings: Settings) -> GraphStorePort:
     return GraphifyGraphStore(settings)
+
+
+def build_document_context(settings: Settings) -> DocumentContextPort | None:
+    return build_document_context_adapter(settings)
 
 
 def build_repository(settings: Settings) -> PersistenceRepository:
