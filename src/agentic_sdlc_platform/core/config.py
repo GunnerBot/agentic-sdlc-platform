@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     claude_max_retries: int = 2
     openai_base_url: str = "https://api.openai.com/v1"
     openai_api_key: str | None = Field(default=None, repr=False)
-    openai_default_model: str = "gpt-5.5"
+    openai_default_model: str = "gpt-5.4-mini"
     openai_fallback_model: str = "gpt-5.4-mini"
     openai_timeout_seconds: float = 30.0
     openai_max_retries: int = 2

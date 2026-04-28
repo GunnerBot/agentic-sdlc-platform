@@ -46,4 +46,4 @@ def test_cost_router_uses_cross_family_critic_default() -> None:
     route = CostRouter().route("critic_agent")
 
     assert route.provider == "openai"
-    assert route.model == "gpt-5.5"
+    assert route.model == "gpt-5.4-mini"
