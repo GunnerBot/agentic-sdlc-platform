@@ -321,6 +321,214 @@ async def test_linear_assigned_issue_includes_graphify_repo_context_when_availab
     }
 
 
+async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    await repository.upsert_repo(
+        name="webapp-monorepo",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        default_branch="main",
+        metadata={},
+    )
+    graph_store = FakeGraphStore()
+    task_orchestrator = FakeTaskOrchestrator(
+        task_ids=["multica-parent-task-1", "multica-os-node", "multica-web-node"]
+    )
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                vendor_http_enabled=True,
+                graphify_base_url="http://graphify.local",
+            ),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            graph_store=graph_store,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-2222",
+                "title": "Support dynamic form titles",
+                "description": (
+                    "## Repositories\n"
+                    "- keychain-os-erp\n"
+                    "- webapp-monorepo\n\n"
+                    "## Acceptance\n"
+                    "- Backend supplies title metadata.\n"
+                    "- Webapp renders dynamic titles."
+                ),
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-multirepo-spec-1"},
+    )
+
+    assert response.status_code == 202
+    async with repository._session_factory() as session:
+        dag = (
+            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
+        ).one()
+        spec_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "task.spec_ingested")
+            )
+        ).one()
+
+    assert [node.node_key for node in dag.nodes] == [
+        "scope_keychain_os_erp",
+        "scope_webapp_monorepo",
+    ]
+    assert [node.repo for node in dag.nodes] == ["keychain-os-erp", "webapp-monorepo"]
+    assert [request.repo for request in task_orchestrator.created] == [
+        None,
+        "keychain-os-erp",
+        "webapp-monorepo",
+    ]
+    assert task_orchestrator.created[0].metadata["spec_ingestion"]["repo_scope"] == {
+        "scope": "multi_repo",
+        "repos": [
+            {"repo": "keychain-os-erp", "reason": "mentioned_in_spec"},
+            {"repo": "webapp-monorepo", "reason": "mentioned_in_spec"},
+        ],
+        "unknown_repos": [],
+    }
+    assert task_orchestrator.created[1].metadata["spec_ingestion"]["repo_scope"][
+        "scope"
+    ] == "multi_repo"
+    assert task_orchestrator.created[2].metadata["spec_ingestion"]["repo_scope"][
+        "scope"
+    ] == "multi_repo"
+    assert [query.repo for query in graph_store.queries] == [
+        "keychain-os-erp",
+        "webapp-monorepo",
+    ]
+    assert spec_event.metadata_json["repo_scope"]["scope"] == "multi_repo"
+    assert issue_tracker.replies == [
+        IssueTrackerReply(
+            issue_id="issue-id-1",
+            body=(
+                "Accepted OS-2222.\n"
+                "Repo: none.\n"
+                "Spec repo scope: multi_repo (keychain-os-erp, webapp-monorepo).\n"
+                "DAG template: linear-spec.\n"
+                "First DAG node queued: scope_keychain_os_erp (queued).\n"
+                "Commands: /status OS-2222, /context OS-2222, /agents OS-2222."
+            ),
+        )
+    ]
+
+
+async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="webapp-monorepo",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        default_branch="main",
+        metadata={},
+    )
+    hermes_session = FakeHermesSession()
+    task_orchestrator = FakeTaskOrchestrator()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            hermes_session=hermes_session,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "WEB-991",
+                "title": "Build dynamic form title designs",
+                "description": (
+                    "## Repositories\n"
+                    "- webapp-monorepo\n\n"
+                    "## Design\n"
+                    "Use https://www.figma.com/file/abc123/form-title-flow"
+                ),
+                "assignee": {"id": "agent-user-1"},
+                "attachments": {
+                    "nodes": [
+                        {
+                            "id": "attachment-1",
+                            "title": "form-title-mobile.png",
+                            "url": "https://linear.local/form-title-mobile.png",
+                            "contentType": "image/png",
+                        },
+                        {
+                            "id": "attachment-2",
+                            "title": "frontend-notes.md",
+                            "content": "## Repositories\n- webapp-monorepo",
+                            "contentType": "text/markdown",
+                        },
+                    ]
+                },
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-design-spec-1"},
+    )
+
+    assert response.status_code == 202
+    assert hermes_session.started[0] == HermesStartSessionRequest(
+        task_id=response.json()["task_id"],
+        provider="linear",
+        external_thread_id="issue-id-1",
+        text=(
+            "Build dynamic form title designs\n\n"
+            "## Repositories\n"
+            "- webapp-monorepo\n\n"
+            "## Design\n"
+            "Use https://www.figma.com/file/abc123/form-title-flow\n\n"
+            "Ingested Linear spec context:\n"
+            "Repos: webapp-monorepo\n"
+            "Design assets:\n"
+            "- form-title-mobile.png (https://linear.local/form-title-mobile.png)\n"
+            "- Figma link (https://www.figma.com/file/abc123/form-title-flow)"
+        ),
+        repo="webapp-monorepo",
+    )
+    assert task_orchestrator.created[0].metadata["spec_ingestion"]["asset_count"] == 2
+    assert issue_tracker.replies == [
+        IssueTrackerReply(
+            issue_id="issue-id-1",
+            body=(
+                "Accepted WEB-991.\n"
+                "Repo: webapp-monorepo.\n"
+                "Spec repo scope: single_repo (webapp-monorepo).\n"
+                "Design assets: 2.\n"
+                "DAG template: none.\n"
+                "First DAG node queued: none.\n"
+                "Commands: /status WEB-991, /context WEB-991, /agents WEB-991."
+            ),
+        )
+    ]
+
+
 async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> None:
     repository = await build_repository()
     await repository.upsert_repo(

@@ -117,6 +117,15 @@ Indexing copies that read-only repo into `/graphify-data/keychain-os-erp/` and c
 `/graphify-data/keychain-os-erp/graphify-out/graph.json`. Nothing is written back to the host repo
 checkout, and nothing under `graphify-out/` is committed.
 
+Linear assignment can ingest markdown specs directly from the issue description and text/markdown
+attachments. When the spec names registered repos, the platform resolves the repo scope before
+creating Multica work:
+
+- Single registered repo: the task is bound to that repo even without a `repo:*` label.
+- Multiple registered repos: the platform creates a `linear-spec` DAG with one ready node per repo.
+- Design inputs: image attachments and Figma links are summarized into Hermes, Multica, DAG node,
+  and audit metadata. Binary/image data is not stored in the repository.
+
 Conversation sync can poll Multica-backed sessions and mirror new agent comments back to the
 originating channel. The real Docker overlay enables it by default:
 

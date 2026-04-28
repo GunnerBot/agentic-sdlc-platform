@@ -18,6 +18,10 @@ from agentic_sdlc_platform.glue.human_override import (
     parse_human_override,
     parse_task_info,
 )
+from agentic_sdlc_platform.glue.spec_ingestion import (
+    SpecIngestionBundle,
+    ingest_linear_spec,
+)
 from agentic_sdlc_platform.glue.task_event_normalizer import (
     NormalizedTaskEvent,
     NormalizedTaskUpdate,
@@ -508,12 +512,29 @@ class WebhookBridge:
         if task_event is None:
             return None
 
+        spec_bundle: SpecIngestionBundle | None = None
+        effective_repo = task_event.repo
+        if source == "linear":
+            registered_repos = await self._repository.list_repos(status="active")
+            spec_bundle = ingest_linear_spec(
+                payload=payload,
+                task_event=task_event,
+                registered_repos=registered_repos,
+            )
+            if (
+                effective_repo is None
+                and spec_bundle is not None
+                and spec_bundle.repo_scope.scope == "single_repo"
+                and spec_bundle.selected_repos
+            ):
+                effective_repo = spec_bundle.selected_repos[0]
+
         task = await self._repository.create_task_from_event(
             event_id=result.event.id,
             source=task_event.source,
             external_id=task_event.external_id,
             title=task_event.title,
-            repo=task_event.repo,
+            repo=effective_repo,
         )
         await self._repository.record_audit_event(
             action="task.normalized",
@@ -523,16 +544,24 @@ class WebhookBridge:
             metadata={
                 "source": task_event.source,
                 "external_id": task_event.external_id,
-                "repo": task_event.repo,
+                "repo": effective_repo,
             },
         )
+        if spec_bundle is not None:
+            await self._repository.record_audit_event(
+                action="task.spec_ingested",
+                actor="system",
+                target_type="task",
+                target_id=task.id,
+                metadata=spec_bundle.to_metadata(),
+            )
         task_metadata: dict[str, object] | None = None
         repo_name: str | None = None
         dag_template: str | None = None
         first_dag_node: str | None = None
         first_dag_node_status: str | None = None
-        if source == "linear" and task_event.repo:
-            repo = await self._repository.get_repo_by_name(task_event.repo)
+        if source == "linear" and effective_repo:
+            repo = await self._repository.get_repo_by_name(effective_repo)
             if repo is None:
                 task = await self._repository.update_task_status(
                     task_id=task.id,
@@ -546,7 +575,7 @@ class WebhookBridge:
                     metadata={
                         "provider": "linear",
                         "external_id": task_event.external_id,
-                        "repo": task_event.repo,
+                        "repo": effective_repo,
                     },
                 )
                 if task_event.issue_id and self._issue_tracker is not None:
@@ -554,7 +583,7 @@ class WebhookBridge:
                         IssueTrackerReply(
                             issue_id=task_event.issue_id,
                             body=(
-                                f"Repository {task_event.repo} is not registered. "
+                                f"Repository {effective_repo} is not registered. "
                                 f"Register it before I can work on {task_event.external_id}."
                             ),
                         )
@@ -582,13 +611,17 @@ class WebhookBridge:
                 },
             )
             repo_name = repo.name
+        if spec_bundle is not None:
+            if task_metadata is None:
+                task_metadata = {}
+            task_metadata["spec_ingestion"] = spec_bundle.to_metadata()
         if self._task_orchestrator is not None:
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
                     source=task_event.source,
                     external_id=task_event.external_id,
                     title=task_event.title,
-                    repo=task_event.repo,
+                    repo=effective_repo,
                     inbound_event_id=result.event.id,
                     metadata=task_metadata,
                 )
@@ -604,7 +637,7 @@ class WebhookBridge:
                     provider="linear",
                     external_thread_id=task_event.issue_id,
                     hermes_session_id=None,
-                    repo=task_event.repo,
+                    repo=effective_repo,
                     orchestrator_provider=self._task_orchestrator.provider,
                     orchestrator_issue_id=_str_value(
                         (external_task.metadata or {}).get("multica_issue_id")
@@ -651,7 +684,12 @@ class WebhookBridge:
             and task_event.issue_id
             and self._hermes_session is not None
         ):
-            await self._start_linear_agent_session(task_id=task.id, task_event=task_event)
+            await self._start_linear_agent_session(
+                task_id=task.id,
+                task_event=task_event,
+                repo=effective_repo,
+                spec_bundle=spec_bundle,
+            )
         if source == "linear" and task_event.dag_template:
             dag_template = task_event.dag_template
             dag = await self._repository.create_task_dag(
@@ -674,13 +712,51 @@ class WebhookBridge:
                     dag=dag,
                     task=task,
                 )
+        elif (
+            source == "linear"
+            and spec_bundle is not None
+            and spec_bundle.repo_scope.scope == "multi_repo"
+        ):
+            dag_template = "linear-spec"
+            dag = await self._repository.create_task_dag(
+                task_id=task.id,
+                subtasks=spec_bundle.to_repo_subtasks(),
+            )
+            await self._repository.record_audit_event(
+                action="task.dag_template_created",
+                actor="system",
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "template": dag_template,
+                    "dag_id": dag.id,
+                    "node_count": len(dag.nodes),
+                    "repo_scope": spec_bundle.repo_scope.to_metadata(),
+                },
+            )
+            if self._task_orchestrator is not None:
+                ready_nodes = [
+                    node
+                    for node in dag.nodes
+                    if node.status == "ready" and not node.depends_on
+                ]
+                queued_nodes = await self._enqueue_ready_dag_nodes(
+                    dag=dag,
+                    task=task,
+                    ready_nodes=ready_nodes,
+                    extra_metadata={"spec_ingestion": spec_bundle.to_metadata()},
+                )
+                if queued_nodes:
+                    first_dag_node = queued_nodes[0].node_key
+                    first_dag_node_status = queued_nodes[0].status
         if source == "linear" and task_event.issue_id and self._issue_tracker is not None:
             reply_body = _linear_assignment_reply(
                 external_id=task_event.external_id,
-                repo=repo_name or task_event.repo,
+                repo=repo_name or effective_repo,
                 dag_template=dag_template,
                 first_dag_node=first_dag_node,
                 first_dag_node_status=first_dag_node_status,
+                spec_bundle=spec_bundle,
             )
             await self._issue_tracker.reply(
                 IssueTrackerReply(issue_id=task_event.issue_id, body=reply_body)
@@ -694,10 +770,11 @@ class WebhookBridge:
                     "provider": "linear",
                     "issue_id": task_event.issue_id,
                     "external_id": task_event.external_id,
-                    "repo": repo_name or task_event.repo,
+                    "repo": repo_name or effective_repo,
                     "dag_template": dag_template,
                     "first_dag_node": first_dag_node,
                     "first_dag_node_status": first_dag_node_status,
+                    "spec_ingestion": spec_bundle.to_metadata() if spec_bundle else None,
                 },
             )
         return task.id
@@ -761,6 +838,7 @@ class WebhookBridge:
         dag,
         task,
         ready_nodes,
+        extra_metadata: dict[str, object] | None = None,
     ):
         queued_nodes = []
         if self._task_orchestrator is None:
@@ -773,6 +851,8 @@ class WebhookBridge:
                 repository=self._repository,
                 graph_store=self._graph_store,
             )
+            if extra_metadata:
+                metadata.update(extra_metadata)
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
                     source="dag",
@@ -821,10 +901,14 @@ class WebhookBridge:
         self,
         task_id: str,
         task_event: NormalizedTaskEvent,
+        repo: str | None = None,
+        spec_bundle: SpecIngestionBundle | None = None,
     ) -> None:
         text = task_event.title
         if task_event.body:
             text = f"{task_event.title}\n\n{task_event.body}"
+        if spec_bundle is not None:
+            text = f"{text}\n{spec_bundle.prompt_suffix()}"
 
         response = await self._hermes_session.start_session(
             HermesStartSessionRequest(
@@ -832,7 +916,7 @@ class WebhookBridge:
                 provider="linear",
                 external_thread_id=task_event.issue_id,
                 text=text,
-                repo=task_event.repo,
+                repo=repo,
             )
         )
         agent_session = await self._repository.create_agent_session(
@@ -840,7 +924,7 @@ class WebhookBridge:
             provider="linear",
             external_thread_id=task_event.issue_id,
             hermes_session_id=response.session_id,
-            repo=task_event.repo,
+            repo=repo,
         )
         await self._repository.record_session_event(
             session_id=agent_session.id,
@@ -1158,11 +1242,17 @@ def _linear_assignment_reply(
     dag_template: str | None,
     first_dag_node: str | None,
     first_dag_node_status: str | None,
+    spec_bundle: SpecIngestionBundle | None = None,
 ) -> str:
     lines = [
         f"Accepted {external_id}.",
         f"Repo: {repo or 'none'}.",
     ]
+    if spec_bundle is not None:
+        repos = ", ".join(spec_bundle.selected_repos) or "none"
+        lines.append(f"Spec repo scope: {spec_bundle.repo_scope.scope} ({repos}).")
+        if spec_bundle.design_assets:
+            lines.append(f"Design assets: {len(spec_bundle.design_assets)}.")
     if dag_template:
         lines.append(f"DAG template: {dag_template}.")
     else:
