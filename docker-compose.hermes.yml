@@ -1,0 +1,40 @@
+services:
+  hermes:
+    image: nousresearch/hermes-agent:latest
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        /opt/hermes/.venv/bin/python3 -c 'import os, yaml; path="/opt/data/config.yaml"; data=yaml.safe_load(open(path)) or {}; model=data.setdefault("model", {}); model["default"]=os.getenv("HERMES_MODEL", "gpt-5.4-mini"); model["provider"]=os.getenv("HERMES_INFERENCE_PROVIDER", "custom"); model["base_url"]=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"); yaml.safe_dump(data, open(path, "w"), sort_keys=False)'
+        exec /opt/hermes/.venv/bin/hermes gateway run
+    restart: unless-stopped
+    environment:
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: "8642"
+      API_SERVER_KEY: ${ASDLC_HERMES_API_KEY:?Set ASDLC_HERMES_API_KEY in .env.local}
+      API_SERVER_MODEL_NAME: ${ASDLC_HERMES_MODEL:-hermes-agent}
+      HERMES_INFERENCE_PROVIDER: ${ASDLC_HERMES_INFERENCE_PROVIDER:-custom}
+      HERMES_MODEL: ${ASDLC_HERMES_INFERENCE_MODEL:-gpt-5.4-mini}
+      OPENAI_API_KEY: ${ASDLC_OPENAI_API_KEY:?Set ASDLC_OPENAI_API_KEY in .env.local}
+      OPENAI_BASE_URL: ${ASDLC_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      HERMES_EXEC_ASK: ${ASDLC_HERMES_EXEC_ASK:-false}
+      HERMES_EPHEMERAL_SYSTEM_PROMPT: ${ASDLC_HERMES_EPHEMERAL_SYSTEM_PROMPT:-Use rtk for terminal commands.}
+    ports:
+      - "8642:8642"
+    volumes:
+      - hermes-data:/opt/data
+
+  agentic-sdlc-platform:
+    environment:
+      ASDLC_HERMES_HTTP_ENABLED: "true"
+      ASDLC_HERMES_API_MODE: openai_compatible
+      ASDLC_HERMES_BASE_URL: http://hermes:8642
+      ASDLC_HERMES_API_KEY: ${ASDLC_HERMES_API_KEY:?Set ASDLC_HERMES_API_KEY in .env.local}
+      ASDLC_HERMES_MODEL: ${ASDLC_HERMES_MODEL:-hermes-agent}
+    depends_on:
+      hermes:
+        condition: service_started
+
+volumes:
+  hermes-data:

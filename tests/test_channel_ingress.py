@@ -111,7 +111,7 @@ async def create_task_with_dag(repository: PersistenceRepository) -> str:
 
 
 def test_channel_ingress_routes_questions_to_hermes_direct() -> None:
-    client = TestClient(create_app(Settings()))
+    client = TestClient(create_app(Settings(hermes_http_enabled=False)))
 
     response = client.post(
         "/channels/messages",

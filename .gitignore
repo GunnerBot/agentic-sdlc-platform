@@ -11,6 +11,7 @@ dist/
 secrets/
 *.pem
 *.key
+.hermes/
 
 # Generated local code-graph/index data. Keep this out of git.
 graphify-out/

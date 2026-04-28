@@ -93,7 +93,11 @@ def create_app(
     app.state.design_context = design_context or build_design_context(resolved_settings)
     app.state.repository = repository or build_repository(resolved_settings)
     app.state.task_orchestrator = task_orchestrator or build_task_orchestrator(resolved_settings)
-    app.state.hermes_session = hermes_session or build_hermes_session(resolved_settings)
+    app.state.hermes_session = (
+        hermes_session
+        if hermes_session is not None or repository is not None
+        else build_hermes_session(resolved_settings)
+    )
     app.state.channel_authorizer = build_channel_authorizer(resolved_settings)
     app.state.channel_budget_ledger = build_channel_budget_ledger(resolved_settings)
     app.state.issue_tracker = issue_tracker or build_issue_tracker(resolved_settings)

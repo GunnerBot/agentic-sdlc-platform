@@ -104,8 +104,10 @@ class Settings(BaseSettings):
     design_image_fetch_timeout_seconds: float = 10.0
 
     hermes_http_enabled: bool = False
+    hermes_api_mode: str = "native"
     hermes_base_url: str | None = None
     hermes_api_key: str | None = Field(default=None, repr=False)
+    hermes_model: str = "hermes-agent"
     hermes_timeout_seconds: float = 10.0
     hermes_max_retries: int = 2
 

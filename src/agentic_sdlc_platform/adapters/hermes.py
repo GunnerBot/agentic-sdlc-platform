@@ -21,6 +21,22 @@ class HermesAgentAdapter:
         self._transport = transport
 
     async def ask(self, request: HermesSessionRequest) -> HermesSessionResponse:
+        if self._settings.hermes_api_mode == "openai_compatible":
+            prompt = "\n\n".join(
+                [
+                    f"Channel provider: {request.provider}",
+                    f"Channel: {request.channel}",
+                    f"Sender: {request.sender_id}",
+                    f"Repo: {request.repo or 'none'}",
+                    request.text,
+                ]
+            )
+            return await self._responses_create(
+                input_text=prompt,
+                instructions=_agent_instructions(),
+                failure_message="hermes ask failed",
+            )
+
         payload = {
             "provider": request.provider,
             "channel": request.channel,
@@ -40,6 +56,23 @@ class HermesAgentAdapter:
         )
 
     async def start_session(self, request: HermesStartSessionRequest) -> HermesSessionResponse:
+        if self._settings.hermes_api_mode == "openai_compatible":
+            prompt = "\n\n".join(
+                [
+                    f"Task id: {request.task_id}",
+                    f"Provider: {request.provider}",
+                    f"External thread id: {request.external_thread_id}",
+                    f"Repo: {request.repo or 'none'}",
+                    request.text,
+                ]
+            )
+            return await self._responses_create(
+                input_text=prompt,
+                instructions=_agent_instructions(),
+                conversation=f"{request.provider}:{request.external_thread_id}",
+                failure_message="hermes start_session failed",
+            )
+
         payload = {
             "task_id": request.task_id,
             "provider": request.provider,
@@ -64,6 +97,14 @@ class HermesAgentAdapter:
         text: str,
         actor: str,
     ) -> HermesSessionResponse:
+        if self._settings.hermes_api_mode == "openai_compatible":
+            return await self._responses_create(
+                input_text=f"{actor}: {text}",
+                previous_response_id=session_id,
+                instructions=_agent_instructions(),
+                failure_message="hermes resume_session failed",
+            )
+
         response = await self._post(
             path=f"/api/sessions/{session_id}/messages",
             payload={"text": text, "actor": actor, **_agent_policy_payload()},
@@ -104,6 +145,39 @@ class HermesAgentAdapter:
 
         return response.json()
 
+    async def _responses_create(
+        self,
+        *,
+        input_text: str,
+        instructions: str,
+        failure_message: str,
+        previous_response_id: str | None = None,
+        conversation: str | None = None,
+    ) -> HermesSessionResponse:
+        payload: dict[str, object] = {
+            "model": self._settings.hermes_model,
+            "input": input_text,
+            "instructions": instructions,
+            "store": True,
+        }
+        if previous_response_id:
+            payload["previous_response_id"] = previous_response_id
+        if conversation:
+            payload["conversation"] = conversation
+        response = await self._post(
+            path="/v1/responses",
+            payload=payload,
+            failure_message=failure_message,
+        )
+        response_id = response.get("id")
+        if not isinstance(response_id, str):
+            raise HermesSessionError(f"{failure_message}: response id missing")
+        return HermesSessionResponse(
+            session_id=response_id,
+            message_id=response_id,
+            answer=_extract_responses_text(response),
+        )
+
     def _session_response(
         self,
         response_payload: dict[str, object],
@@ -134,3 +208,34 @@ def _agent_policy_payload() -> dict[str, object]:
             "avoid_repeated_broad_scans_when_indexed_context_is_available": True,
         },
     }
+
+
+def _agent_instructions() -> str:
+    return (
+        "You are Hermes running as the direct agent backend for the Agentic SDLC Platform. "
+        "Use rtk for terminal commands. Prefer Graphify/repository context when supplied, "
+        "then verify narrowly against source. Do not create GitHub branches or PRs unless "
+        "the caller explicitly provides write-enabled credentials and instructions."
+    )
+
+
+def _extract_responses_text(payload: dict[str, object]) -> str | None:
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str) and output_text:
+        return output_text
+    output = payload.get("output")
+    if not isinstance(output, list):
+        return None
+    parts: list[str] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for content_item in content:
+            if isinstance(content_item, dict):
+                text = content_item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+    return "".join(parts) if parts else None

@@ -1,4 +1,4 @@
-.PHONY: sync lint test contract quality run migrate github-app-git-credential-configure compose-real-up compose-real-down compose-real-logs
+.PHONY: sync lint test contract quality run migrate github-app-git-credential-configure compose-real-up compose-real-hermes-up compose-real-down compose-real-logs
 
 sync:
 	uv sync
@@ -28,6 +28,9 @@ github-app-git-credential-configure:
 
 compose-real-up:
 	docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.real.yml up -d --build
+
+compose-real-hermes-up:
+	docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.real.yml -f docker-compose.hermes.yml up -d --build
 
 compose-real-down:
 	docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.real.yml down

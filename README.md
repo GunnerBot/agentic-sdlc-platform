@@ -71,6 +71,24 @@ The real overlay reads secrets from ignored `.env.local`, keeps Postgres inside 
 the app container at host-local services with `host.docker.internal` because `127.0.0.1` inside a
 container means the container itself.
 
+To run the platform with the official self-hosted Hermes gateway instead of the local compatibility
+service, set `ASDLC_HERMES_API_KEY` in ignored `.env.local` and start the Hermes overlay:
+
+```bash
+ASDLC_HERMES_HTTP_ENABLED=true
+ASDLC_HERMES_API_MODE=openai_compatible
+ASDLC_HERMES_API_KEY=<local_hermes_gateway_token>
+ASDLC_HERMES_MODEL=hermes-agent
+ASDLC_HERMES_INFERENCE_PROVIDER=custom
+ASDLC_HERMES_INFERENCE_MODEL=gpt-5.4-mini
+make compose-real-hermes-up
+```
+
+The Hermes overlay runs `nousresearch/hermes-agent gateway run`, enables the OpenAI-compatible API
+server on port `8642`, and wires the platform to `POST /v1/responses`. The overlay patches
+Hermes' mounted `/opt/data/config.yaml` at startup so the runtime uses the configured
+OpenAI-compatible endpoint/model through Hermes' `custom` provider.
+
 For real self-hosted Multica, configure the platform with the Multica backend URL, PAT, workspace
 ID, and preferred runtime provider:
 
