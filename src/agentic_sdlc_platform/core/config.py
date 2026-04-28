@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     channel_mapping_path: str | None = None
     channel_cost_cap_usd: float | None = None
     channel_default_request_cost_usd: float = 0.01
+    observability_chars_per_token: float = 4.0
+    observability_input_cost_per_million_usd: float = 0.75
+    observability_output_cost_per_million_usd: float = 4.50
     multica_http_enabled: bool = False
     multica_base_url: str | None = None
     multica_api_key: str | None = Field(default=None, repr=False)

@@ -131,6 +131,31 @@ class TaskArtifactResponse(BaseModel):
     metadata: dict[str, object]
 
 
+class LlmUsageRecordResponse(BaseModel):
+    source: str
+    source_id: str | None = None
+    operation: str | None = None
+    model: str | None = None
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    estimated_cost_usd: float
+    input_cost_per_million_usd: float | None = None
+    output_cost_per_million_usd: float | None = None
+    estimation_method: str | None = None
+    failed: bool = False
+
+
+class TaskLlmObservabilityResponse(BaseModel):
+    task_id: str
+    external_id: str
+    records: list[LlmUsageRecordResponse]
+    total_input_tokens: int
+    total_output_tokens: int
+    total_tokens: int
+    total_estimated_cost_usd: float
+
+
 class TaskStatusResponse(BaseModel):
     id: str
     source: str

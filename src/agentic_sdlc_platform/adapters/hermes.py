@@ -1,6 +1,10 @@
 import httpx
 
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.llm_observability import (
+    estimated_llm_usage,
+    usage_from_openai_payload,
+)
 from agentic_sdlc_platform.ports.hermes_session import (
     HermesSessionError,
     HermesSessionRequest,
@@ -32,6 +36,7 @@ class HermesAgentAdapter:
                 ]
             )
             return await self._responses_create(
+                operation="hermes.ask",
                 input_text=prompt,
                 instructions=_agent_instructions(),
                 failure_message="hermes ask failed",
@@ -67,6 +72,7 @@ class HermesAgentAdapter:
                 ]
             )
             return await self._responses_create(
+                operation="hermes.start_session",
                 input_text=prompt,
                 instructions=_agent_instructions(),
                 conversation=f"{request.provider}:{request.external_thread_id}",
@@ -99,6 +105,7 @@ class HermesAgentAdapter:
     ) -> HermesSessionResponse:
         if self._settings.hermes_api_mode == "openai_compatible":
             return await self._responses_create(
+                operation="hermes.resume_session",
                 input_text=f"{actor}: {text}",
                 previous_response_id=session_id,
                 instructions=_agent_instructions(),
@@ -148,6 +155,7 @@ class HermesAgentAdapter:
     async def _responses_create(
         self,
         *,
+        operation: str,
         input_text: str,
         instructions: str,
         failure_message: str,
@@ -164,18 +172,44 @@ class HermesAgentAdapter:
             payload["previous_response_id"] = previous_response_id
         if conversation:
             payload["conversation"] = conversation
-        response = await self._post(
-            path="/v1/responses",
-            payload=payload,
-            failure_message=failure_message,
+        request_input_text = f"{instructions}\n\n{input_text}"
+        failure_usage = estimated_llm_usage(
+            settings=self._settings,
+            model=self._settings.hermes_model,
+            operation=operation,
+            input_text=request_input_text,
+            estimation_method="chars_per_token_request",
         )
+        try:
+            response = await self._post(
+                path="/v1/responses",
+                payload=payload,
+                failure_message=failure_message,
+            )
+        except HermesSessionError as exc:
+            raise HermesSessionError(
+                str(exc),
+                usage={
+                    **failure_usage,
+                    "failed": True,
+                },
+            ) from exc
         response_id = response.get("id")
         if not isinstance(response_id, str):
             raise HermesSessionError(f"{failure_message}: response id missing")
+        answer = _extract_responses_text(response)
         return HermesSessionResponse(
             session_id=response_id,
             message_id=response_id,
-            answer=_extract_responses_text(response),
+            answer=answer,
+            usage=usage_from_openai_payload(
+                payload=response,
+                settings=self._settings,
+                model=self._settings.hermes_model,
+                operation=operation,
+                request_input_text=request_input_text,
+                response_output_text=answer,
+            ),
         )
 
     def _session_response(

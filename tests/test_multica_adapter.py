@@ -108,6 +108,12 @@ async def test_multica_adapter_creates_agent_issue_and_task_run() -> None:
 
     assert response.external_task_id == "multica-task-1"
     assert response.status == "queued"
+    assert response.metadata is not None
+    llm_observability = response.metadata.pop("llm_observability")
+    assert llm_observability["operation"] == "multica.create_task.description"
+    assert llm_observability["model"] == "hermes"
+    assert llm_observability["input_tokens"] > 0
+    assert llm_observability["estimated_cost_usd"] > 0
     assert response.metadata == {
         "multica_issue_id": "issue-1",
         "multica_issue_status": "todo",

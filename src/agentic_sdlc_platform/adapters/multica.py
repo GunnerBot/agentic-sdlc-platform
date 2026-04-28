@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 import httpx
 
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.llm_observability import estimated_llm_usage
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskCommentRequest,
     TaskCommentResponse,
@@ -34,6 +35,17 @@ class MulticaTaskOrchestrator:
         metadata = request.metadata or {}
         runtime_provider = self._runtime_provider(metadata)
         agent = await self._ensure_agent(runtime_provider)
+        description = self._issue_description(
+            request=request,
+            runtime_provider=runtime_provider,
+            agent=agent,
+        )
+        token_observability = estimated_llm_usage(
+            settings=self._settings,
+            model=runtime_provider,
+            operation="multica.create_task.description",
+            input_text=description,
+        )
 
         response = await self._request_with_retries(
             failure_message="multica create_task failed",
@@ -41,11 +53,7 @@ class MulticaTaskOrchestrator:
             path="/api/issues",
             payload={
                 "title": request.title,
-                "description": self._issue_description(
-                    request=request,
-                    runtime_provider=runtime_provider,
-                    agent=agent,
-                ),
+                "description": description,
                 "status": "todo",
                 "priority": "none",
                 "assignee_type": "agent",
@@ -73,6 +81,7 @@ class MulticaTaskOrchestrator:
             "multica_runtime_id": runtime_id,
             "multica_runtime_provider": runtime_provider,
             "multica_workspace_id": self._settings.multica_workspace_id,
+            "llm_observability": token_observability,
         }
         return TaskResponse(
             external_task_id=task_id,

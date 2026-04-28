@@ -3,7 +3,14 @@ from typing import Protocol
 
 
 class HermesSessionError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.usage = usage
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,7 @@ class HermesSessionResponse:
     session_id: str
     message_id: str
     answer: str | None = None
+    usage: dict[str, object] | None = None
 
 
 class HermesSessionPort(Protocol):

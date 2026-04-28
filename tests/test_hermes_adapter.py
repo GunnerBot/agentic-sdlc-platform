@@ -212,6 +212,7 @@ async def test_hermes_adapter_openai_compatible_starts_session() -> None:
                         "content": [{"type": "output_text", "text": "Session started."}],
                     }
                 ],
+                "usage": {"input_tokens": 120, "output_tokens": 12, "total_tokens": 132},
             },
         )
 
@@ -239,6 +240,17 @@ async def test_hermes_adapter_openai_compatible_starts_session() -> None:
     assert response.session_id == "resp-1"
     assert response.message_id == "resp-1"
     assert response.answer == "Session started."
+    assert response.usage == {
+        "operation": "hermes.start_session",
+        "model": "hermes-agent",
+        "input_tokens": 120,
+        "output_tokens": 12,
+        "total_tokens": 132,
+        "estimated_cost_usd": 0.000144,
+        "input_cost_per_million_usd": 0.75,
+        "output_cost_per_million_usd": 4.5,
+        "estimation_method": "provider_usage",
+    }
     assert captured_request is not None
     assert str(captured_request.url) == "https://hermes.local/v1/responses"
     assert captured_request.headers["authorization"] == "Bearer test-key"
@@ -279,6 +291,10 @@ async def test_hermes_adapter_openai_compatible_resumes_with_previous_response()
 
     assert response.session_id == "resp-2"
     assert response.answer == "Got the follow-up."
+    assert response.usage is not None
+    assert response.usage["operation"] == "hermes.resume_session"
+    assert response.usage["estimation_method"] == "chars_per_token"
+    assert response.usage["estimated_cost_usd"] > 0
     assert captured_request is not None
     payload = json.loads(captured_request.content)
     assert payload["previous_response_id"] == "resp-1"

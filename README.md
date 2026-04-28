@@ -90,6 +90,13 @@ server on port `8642`, and wires the platform to `POST /v1/responses`. The overl
 Hermes' mounted `/opt/data/config.yaml` at startup so the runtime uses the configured
 OpenAI-compatible endpoint/model through Hermes' `custom` provider.
 
+LLM observability is persisted in task/session metadata as `llm_observability`. Request-side token
+counts are estimated by `ASDLC_OBSERVABILITY_CHARS_PER_TOKEN`; cost estimates use
+`ASDLC_OBSERVABILITY_INPUT_COST_PER_MILLION_USD` and
+`ASDLC_OBSERVABILITY_OUTPUT_COST_PER_MILLION_USD`. Defaults track the public GPT-5.4 mini text-token
+rate at the time this was added and should be adjusted if the runtime model changes. Per-task
+totals are exposed at `GET /tasks/{task_id}/llm-observability`.
+
 For real self-hosted Multica, configure the platform with the Multica backend URL, PAT, workspace
 ID, and preferred runtime provider:
 

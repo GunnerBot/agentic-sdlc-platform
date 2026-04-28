@@ -11,6 +11,7 @@ from agentic_sdlc_platform.ports.design_context import DesignContext
 from agentic_sdlc_platform.ports.document_context import DocumentContext
 from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphQueryResult
 from agentic_sdlc_platform.ports.hermes_session import (
+    HermesSessionError,
     HermesSessionResponse,
     HermesStartSessionRequest,
 )
@@ -130,6 +131,33 @@ class FakeHermesSession:
             message_id="message-2",
             answer="I will check inventory allocation first.",
         )
+
+
+class FailingHermesSession:
+    async def start_session(self, request: HermesStartSessionRequest) -> HermesSessionResponse:
+        raise HermesSessionError(
+            "hermes start_session failed",
+            usage={
+                "operation": "hermes.start_session",
+                "model": "gpt-5.4-mini",
+                "input_tokens": 12,
+                "output_tokens": 0,
+                "total_tokens": 12,
+                "estimated_cost_usd": 0.000009,
+                "input_cost_per_million_usd": 0.75,
+                "output_cost_per_million_usd": 4.5,
+                "estimation_method": "chars_per_token_request",
+                "failed": True,
+            },
+        )
+
+    async def resume_session(
+        self,
+        session_id: str,
+        text: str,
+        actor: str,
+    ) -> HermesSessionResponse:
+        raise HermesSessionError("hermes resume_session failed")
 
 
 class FakePlanningModel:
@@ -1681,6 +1709,77 @@ async def test_linear_assigned_issue_starts_and_persists_hermes_session() -> Non
     )
     assert persisted is not None
     assert persisted.hermes_session_id == "hermes-session-1"
+
+
+async def test_linear_assigned_issue_records_hermes_start_failure_without_aborting() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=FakeTaskOrchestrator(include_multica_metadata=True),
+            hermes_session=FailingHermesSession(),
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "description": "Create the bridge.",
+                "assignee": {"id": "agent-user-1"},
+                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-session-failure-1"},
+    )
+
+    assert response.status_code == 202
+    persisted = await repository.find_agent_session(
+        provider="linear",
+        external_thread_id="issue-id-1",
+    )
+    assert persisted is not None
+    assert persisted.hermes_session_id is None
+    assert persisted.orchestrator_task_id == "multica-task-1"
+    events = await repository.list_session_events(persisted.id)
+    assert events[-1].event_type == "session_start_failed"
+    assert events[-1].metadata_json["llm_observability"] == {
+        "operation": "hermes.start_session",
+        "model": "gpt-5.4-mini",
+        "input_tokens": 12,
+        "output_tokens": 0,
+        "total_tokens": 12,
+        "estimated_cost_usd": 0.000009,
+        "input_cost_per_million_usd": 0.75,
+        "output_cost_per_million_usd": 4.5,
+        "estimation_method": "chars_per_token_request",
+        "failed": True,
+    }
+    observability_response = client.get(
+        f"/tasks/{response.json()['task_id']}/llm-observability"
+    )
+    assert observability_response.status_code == 200
+    observability = observability_response.json()
+    assert observability["total_input_tokens"] == 12
+    assert observability["total_output_tokens"] == 0
+    assert observability["total_tokens"] == 12
+    assert observability["total_estimated_cost_usd"] == 0.000009
+    assert observability["records"][0]["source"] == "session_event:session_start_failed"
 
 
 async def test_linear_issue_assigned_to_other_user_is_not_actionable() -> None:

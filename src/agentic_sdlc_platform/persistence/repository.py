@@ -105,6 +105,20 @@ class PersistenceRepository:
             await session.refresh(audit_event)
             return audit_event
 
+    async def list_audit_events_for_targets(
+        self,
+        target_ids: list[str],
+    ) -> list[AuditEvent]:
+        if not target_ids:
+            return []
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AuditEvent)
+                .where(AuditEvent.target_id.in_(target_ids))
+                .order_by(AuditEvent.created_at, AuditEvent.id)
+            )
+            return list(result.scalars().all())
+
     async def mark_task_orchestrated(
         self,
         task_id: str,

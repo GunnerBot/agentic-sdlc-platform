@@ -9,6 +9,10 @@ from agentic_sdlc_platform.glue.dag_execution import (
     create_or_start_execution,
 )
 from agentic_sdlc_platform.glue.dag_templates import build_dag_template
+from agentic_sdlc_platform.glue.llm_observability import (
+    summarize_usage_records,
+    usage_records_from_metadata,
+)
 from agentic_sdlc_platform.models.tasks import (
     AgentSessionDetailResponse,
     AgentSessionEventResponse,
@@ -18,11 +22,13 @@ from agentic_sdlc_platform.models.tasks import (
     CreateTaskDagRequest,
     DagNodeExecutionResponse,
     FailDagNodeRequest,
+    LlmUsageRecordResponse,
     TaskArtifactResponse,
     TaskDagNodeResponse,
     TaskDagResponse,
     TaskDagSummaryResponse,
     TaskDetailResponse,
+    TaskLlmObservabilityResponse,
     TaskStatusResponse,
     UpdateDagNodeExecutionRequest,
 )
@@ -90,6 +96,67 @@ async def list_task_artifacts(
         execution_id=execution_id,
     )
     return [_artifact_response(artifact) for artifact in artifacts]
+
+
+@router.get(
+    "/{task_id}/llm-observability",
+    response_model=TaskLlmObservabilityResponse,
+)
+async def get_task_llm_observability(
+    task_id: str,
+    request: Request,
+) -> TaskLlmObservabilityResponse:
+    task = await request.app.state.repository.get_task(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    records: list[dict[str, object]] = []
+    list_audit_events = getattr(
+        request.app.state.repository,
+        "list_audit_events_for_targets",
+        None,
+    )
+    audit_events = await list_audit_events([task.id]) if callable(list_audit_events) else []
+    for audit_event in audit_events:
+        records.extend(
+            usage_records_from_metadata(
+                dict(audit_event.metadata_json),
+                source=f"audit:{audit_event.action}",
+                source_id=audit_event.id,
+            )
+        )
+    for session in task.sessions:
+        for event in session.events:
+            records.extend(
+                usage_records_from_metadata(
+                    dict(event.metadata_json),
+                    source=f"session_event:{event.event_type}",
+                    source_id=event.id,
+                )
+            )
+    for dag in task.dags:
+        for node in dag.nodes:
+            records.extend(
+                usage_records_from_metadata(
+                    dict(node.metadata_json),
+                    source=f"dag_node:{node.node_key}",
+                    source_id=getattr(node, "id", None),
+                )
+            )
+
+    summary = summarize_usage_records(records)
+    return TaskLlmObservabilityResponse(
+        task_id=task.id,
+        external_id=task.external_id,
+        records=[LlmUsageRecordResponse(**record) for record in records],
+        total_input_tokens=summary["total_input_tokens"],
+        total_output_tokens=summary["total_output_tokens"],
+        total_tokens=summary["total_tokens"],
+        total_estimated_cost_usd=summary["total_estimated_cost_usd"],
+    )
 
 
 @router.post(

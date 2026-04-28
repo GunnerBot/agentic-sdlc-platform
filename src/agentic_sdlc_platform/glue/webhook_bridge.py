@@ -46,6 +46,7 @@ from agentic_sdlc_platform.ports.document_context import (
 )
 from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphStoreError, GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import (
+    HermesSessionError,
     HermesSessionPort,
     HermesStartSessionRequest,
 )
@@ -1042,6 +1043,9 @@ class WebhookBridge:
                     "provider": self._task_orchestrator.provider,
                     "external_task_id": external_task.external_task_id,
                     "status": external_task.status,
+                    "llm_observability": (external_task.metadata or {}).get(
+                        "llm_observability"
+                    ),
                 },
             )
         if (
@@ -1073,12 +1077,21 @@ class WebhookBridge:
             and task_event.issue_id
             and self._hermes_session is not None
         ):
-            await self._start_linear_agent_session(
-                task_id=task.id,
-                task_event=task_event,
-                repo=effective_repo,
-                spec_bundle=spec_bundle,
-            )
+            try:
+                await self._start_linear_agent_session(
+                    task_id=task.id,
+                    task_event=task_event,
+                    repo=effective_repo,
+                    spec_bundle=spec_bundle,
+                )
+            except HermesSessionError as exc:
+                await self._record_linear_agent_session_start_failed(
+                    task_id=task.id,
+                    task_event=task_event,
+                    repo=effective_repo,
+                    error=str(exc),
+                    usage=exc.usage,
+                )
         if source == "linear" and task_event.dag_template:
             dag_template = task_event.dag_template
             dag = await self._repository.create_task_dag(
@@ -1640,7 +1653,10 @@ class WebhookBridge:
             event_type="session_started",
             actor="system",
             message=text,
-            metadata={"message_id": response.message_id},
+            metadata={
+                "message_id": response.message_id,
+                "llm_observability": response.usage,
+            },
         )
         await self._repository.record_audit_event(
             action="agent_session.started",
@@ -1651,6 +1667,46 @@ class WebhookBridge:
                 "provider": "linear",
                 "issue_id": task_event.issue_id,
                 "hermes_session_id": response.session_id,
+                "llm_observability": response.usage,
+            },
+        )
+
+    async def _record_linear_agent_session_start_failed(
+        self,
+        task_id: str,
+        task_event: NormalizedTaskEvent,
+        repo: str | None,
+        error: str,
+        usage: dict[str, object] | None,
+    ) -> None:
+        agent_session = await self._repository.create_agent_session(
+            task_id=task_id,
+            provider="linear",
+            external_thread_id=task_event.issue_id,
+            hermes_session_id=None,
+            repo=repo,
+        )
+        await self._repository.record_session_event(
+            session_id=agent_session.id,
+            direction="outbound",
+            event_type="session_start_failed",
+            actor="system",
+            message=error,
+            metadata={
+                "provider": "hermes",
+                "llm_observability": usage,
+            },
+        )
+        await self._repository.record_audit_event(
+            action="agent_session.start_failed",
+            actor="system",
+            target_type="agent_session",
+            target_id=agent_session.id,
+            metadata={
+                "provider": "linear",
+                "issue_id": task_event.issue_id,
+                "error": error,
+                "llm_observability": usage,
             },
         )
 
