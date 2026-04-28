@@ -26,6 +26,7 @@ async def linear_webhook(
         hermes_session=request.app.state.hermes_session,
         graph_store=request.app.state.graph_store,
         agent_executor=request.app.state.agent_executor,
+        model_provider=request.app.state.model_provider,
     )
     payload = await request.body()
     return await bridge.accept_linear(
@@ -54,6 +55,7 @@ async def github_webhook(
         hermes_session=request.app.state.hermes_session,
         graph_store=request.app.state.graph_store,
         agent_executor=request.app.state.agent_executor,
+        model_provider=request.app.state.model_provider,
     )
     payload = await request.body()
     return await bridge.accept_github(

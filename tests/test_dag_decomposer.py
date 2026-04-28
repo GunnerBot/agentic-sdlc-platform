@@ -47,3 +47,9 @@ async def test_dag_decomposer_parses_model_json_subtasks() -> None:
         Subtask(id="api", title="Add API contract", repo="erp-api"),
         Subtask(id="web", title="Consume API", repo="erp-web", depends_on=("api",)),
     ]
+
+
+def test_dag_decomposer_exposes_json_parser_without_model_fallback() -> None:
+    decomposer = DagDecomposer()
+
+    assert decomposer.parse_subtasks("not json") == []

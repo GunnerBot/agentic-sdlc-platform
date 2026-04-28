@@ -35,6 +35,9 @@ class DagDecomposer:
             )
         ]
 
+    def parse_subtasks(self, content: str) -> list[Subtask]:
+        return self._parse_subtasks(content)
+
     def _parse_subtasks(self, content: str) -> list[Subtask]:
         try:
             parsed = json.loads(content)

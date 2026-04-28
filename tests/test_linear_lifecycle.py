@@ -18,6 +18,7 @@ from agentic_sdlc_platform.ports.issue_tracker import (
     IssueTrackerReply,
     IssueTrackerUpdate,
 )
+from agentic_sdlc_platform.ports.model_provider import ModelRequest, ModelResponse
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskCommentRequest,
     TaskCommentResponse,
@@ -127,6 +128,16 @@ class FakeHermesSession:
             message_id="message-2",
             answer="I will check inventory allocation first.",
         )
+
+
+class FakePlanningModel:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.requests: list[ModelRequest] = []
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        return ModelResponse(provider="fake", model="planner-test", content=self.content)
 
 
 async def build_repository() -> PersistenceRepository:
@@ -438,11 +449,227 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
                 "Repo: none.\n"
                 "Spec repo scope: multi_repo (keychain-os-erp, webapp-monorepo).\n"
                 "DAG template: linear-spec.\n"
+                "Planned nodes: 2 (scope_keychain_os_erp, scope_webapp_monorepo).\n"
                 "First DAG node queued: scope_keychain_os_erp (queued).\n"
                 "Commands: /status OS-2222, /context OS-2222, /agents OS-2222."
             ),
         )
     ]
+
+
+async def test_linear_assigned_issue_uses_model_planner_for_spec_dag() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    await repository.upsert_repo(
+        name="webapp-monorepo",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        default_branch="main",
+        metadata={},
+    )
+    graph_store = FakeGraphStore()
+    planning_model = FakePlanningModel(
+        """
+[
+  {
+    "id": "backend_contract",
+    "title": "Add dynamic title contract",
+    "repo": "keychain-os-erp"
+  },
+  {
+    "id": "backend_impl",
+    "title": "Persist and expose dynamic form title metadata",
+    "repo": "keychain-os-erp",
+    "depends_on": ["backend_contract"]
+  },
+  {
+    "id": "frontend_impl",
+    "title": "Render dynamic form titles in the web app",
+    "repo": "webapp-monorepo",
+    "depends_on": ["backend_contract"]
+  }
+]
+"""
+    )
+    task_orchestrator = FakeTaskOrchestrator(
+        task_ids=["multica-parent-task-1", "multica-contract-node"]
+    )
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                linear_spec_planner_enabled=True,
+                vendor_http_enabled=True,
+                model_provider="openai",
+                openai_api_key="test-key",
+                graphify_base_url="http://graphify.local",
+            ),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            graph_store=graph_store,
+            model_provider=planning_model,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-2444",
+                "title": "Support dynamic form titles",
+                "description": (
+                    "## Repositories\n"
+                    "- keychain-os-erp\n"
+                    "- webapp-monorepo\n\n"
+                    "## Acceptance\n"
+                    "- Backend supplies title metadata.\n"
+                    "- Webapp renders dynamic titles."
+                ),
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-model-planner-1"},
+    )
+
+    assert response.status_code == 202
+    async with repository._session_factory() as session:
+        dag = (
+            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
+        ).one()
+        planned_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "task.dag_planned")
+            )
+        ).one()
+
+    assert [node.node_key for node in dag.nodes] == [
+        "backend_contract",
+        "backend_impl",
+        "frontend_impl",
+    ]
+    assert [node.repo for node in dag.nodes] == [
+        "keychain-os-erp",
+        "keychain-os-erp",
+        "webapp-monorepo",
+    ]
+    assert dag.nodes[0].status == "queued"
+    assert dag.nodes[1].status == "blocked"
+    assert dag.nodes[2].status == "blocked"
+    assert task_orchestrator.created[1].external_id == f"{dag.id}:backend_contract"
+    assert task_orchestrator.created[1].metadata["planning_strategy"] == "model"
+    assert planned_event.metadata_json["strategy"] == "model"
+    assert planned_event.metadata_json["node_count"] == 3
+    assert [request.role for request in planning_model.requests] == ["plan_agent"]
+    assert "keychain-os-erp" in planning_model.requests[0].prompt
+    assert "webapp-monorepo" in planning_model.requests[0].prompt
+    assert [query.repo for query in graph_store.queries[:2]] == [
+        "keychain-os-erp",
+        "webapp-monorepo",
+    ]
+    assert issue_tracker.replies == [
+        IssueTrackerReply(
+            issue_id="issue-id-1",
+            body=(
+                "Accepted OS-2444.\n"
+                "Repo: none.\n"
+                "Spec repo scope: multi_repo (keychain-os-erp, webapp-monorepo).\n"
+                "DAG template: linear-spec.\n"
+                "Planned nodes: 3 (backend_contract, backend_impl, frontend_impl).\n"
+                "First DAG node queued: backend_contract (queued).\n"
+                "Commands: /status OS-2444, /context OS-2444, /agents OS-2444."
+            ),
+        )
+    ]
+
+
+async def test_linear_model_planner_falls_back_when_plan_references_unknown_repo() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    planning_model = FakePlanningModel(
+        """
+[
+  {
+    "id": "unknown_repo_impl",
+    "title": "Implement in unknown repo",
+    "repo": "missing-repo"
+  }
+]
+"""
+    )
+    task_orchestrator = FakeTaskOrchestrator(
+        task_ids=["multica-parent-task-1", "multica-fallback-node"]
+    )
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                linear_spec_planner_enabled=True,
+                vendor_http_enabled=True,
+                model_provider="openai",
+                openai_api_key="test-key",
+            ),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            model_provider=planning_model,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-2445",
+                "title": "Support dynamic form titles",
+                "description": (
+                    "## Repositories\n"
+                    "- keychain-os-erp\n\n"
+                    "## Acceptance\n"
+                    "- Backend supplies title metadata."
+                ),
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-model-planner-fallback-1"},
+    )
+
+    assert response.status_code == 202
+    async with repository._session_factory() as session:
+        dag = (
+            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
+        ).one()
+        planned_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "task.dag_planned")
+            )
+        ).one()
+
+    assert [node.node_key for node in dag.nodes] == ["scope_keychain_os_erp"]
+    assert [node.repo for node in dag.nodes] == ["keychain-os-erp"]
+    assert planned_event.metadata_json["strategy"] == "repo_fallback"
+    assert planned_event.metadata_json["fallback_reason"] == "invalid_model_plan"
+    assert task_orchestrator.created[1].metadata["planning_strategy"] == "repo_fallback"
 
 
 async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() -> None:
@@ -632,6 +859,7 @@ async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None
             "Spec repo scope: multi_repo (keychain-os-erp, webapp-monorepo).\n"
             "Design assets: 1.\n"
             "DAG template: linear-spec.\n"
+            "Planned nodes: 2 (scope_keychain_os_erp, scope_webapp_monorepo).\n"
             "First DAG node queued: scope_keychain_os_erp (queued).\n"
             "Commands: /status OS-3001, /context OS-3001, /agents OS-3001."
         ),

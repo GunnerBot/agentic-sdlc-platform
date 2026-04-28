@@ -33,6 +33,7 @@ Model-backed planning uses `ASDLC_MODEL_PROVIDER`. For OpenAI, set:
 
 ```bash
 ASDLC_VENDOR_HTTP_ENABLED=true
+ASDLC_LINEAR_SPEC_PLANNER_ENABLED=true
 ASDLC_MODEL_PROVIDER=openai
 ASDLC_OPENAI_API_KEY=<openai_api_key>
 ASDLC_OPENAI_DEFAULT_MODEL=gpt-5.5
@@ -129,6 +130,9 @@ creating Multica work:
   parsing the spec. If the repo scope is still missing or unregistered, the task is blocked and the
   bot asks for a registered repo in Linear; a follow-up comment naming one registered repo resumes
   the task.
+- When `ASDLC_LINEAR_SPEC_PLANNER_ENABLED=true`, hydrated specs are planned through the configured
+  model provider. The planner can create multiple repo-scoped DAG nodes, including multiple nodes
+  for one repo, and invalid model plans fall back to the deterministic one-node-per-repo DAG.
 
 Conversation sync can poll Multica-backed sessions and mirror new agent comments back to the
 originating channel. The real Docker overlay enables it by default:

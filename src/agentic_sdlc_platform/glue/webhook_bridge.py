@@ -1,11 +1,13 @@
 import hmac
 import json
+import re
 from dataclasses import dataclass, replace
 from hashlib import sha256
 
 from fastapi import HTTPException, status
 
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.dag_decomposer import DagDecomposer, Subtask
 from agentic_sdlc_platform.glue.dag_execution import (
     build_dag_node_execution_metadata,
     create_or_start_execution,
@@ -46,6 +48,11 @@ from agentic_sdlc_platform.ports.issue_tracker import (
     IssueTrackerReply,
     IssueTrackerUpdate,
 )
+from agentic_sdlc_platform.ports.model_provider import (
+    ModelProviderError,
+    ModelProviderPort,
+    ModelRequest,
+)
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskCommentRequest,
     TaskOrchestratorPort,
@@ -60,6 +67,17 @@ class RecordedDelivery:
     task_id: str | None = None
 
 
+@dataclass(frozen=True)
+class LinearDagPlan:
+    subtasks: list[Subtask]
+    strategy: str
+    node_keys: list[str]
+    repo_contexts: dict[str, object]
+    fallback_reason: str | None = None
+    model_provider: str | None = None
+    model: str | None = None
+
+
 class WebhookBridge:
     def __init__(
         self,
@@ -70,6 +88,7 @@ class WebhookBridge:
         hermes_session: HermesSessionPort | None = None,
         graph_store: GraphStorePort | None = None,
         agent_executor: AgentExecutorPort | None = None,
+        model_provider: ModelProviderPort | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
@@ -78,6 +97,7 @@ class WebhookBridge:
         self._hermes_session = hermes_session
         self._graph_store = graph_store
         self._agent_executor = agent_executor
+        self._model_provider = model_provider
         self._normalizer = TaskEventNormalizer(
             linear_agent_user_id=settings.linear_agent_user_id
         )
@@ -798,6 +818,7 @@ class WebhookBridge:
         dag_template: str | None = None
         first_dag_node: str | None = None
         first_dag_node_status: str | None = None
+        planned_node_keys: list[str] = []
         if source == "linear" and effective_repo:
             repo = await self._repository.get_repo_by_name(effective_repo)
             if repo is None:
@@ -953,12 +974,40 @@ class WebhookBridge:
         elif (
             source == "linear"
             and spec_bundle is not None
-            and spec_bundle.repo_scope.scope == "multi_repo"
+            and (
+                spec_bundle.repo_scope.scope == "multi_repo"
+                or (
+                    spec_bundle.repo_scope.scope == "single_repo"
+                    and self._model_planning_configured()
+                )
+            )
         ):
             dag_template = "linear-spec"
+            dag_plan = await self._plan_linear_spec_dag(
+                task_event=task_event,
+                spec_bundle=spec_bundle,
+                registered_repos=registered_repos,
+            )
             dag = await self._repository.create_task_dag(
                 task_id=task.id,
-                subtasks=spec_bundle.to_repo_subtasks(),
+                subtasks=dag_plan.subtasks,
+            )
+            planned_node_keys = [node.node_key for node in dag.nodes]
+            await self._repository.record_audit_event(
+                action="task.dag_planned",
+                actor="system",
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "template": dag_template,
+                    "strategy": dag_plan.strategy,
+                    "fallback_reason": dag_plan.fallback_reason,
+                    "node_count": len(dag.nodes),
+                    "node_keys": planned_node_keys,
+                    "repo_contexts": dag_plan.repo_contexts,
+                    "model_provider": dag_plan.model_provider,
+                    "model": dag_plan.model,
+                },
             )
             await self._repository.record_audit_event(
                 action="task.dag_template_created",
@@ -970,6 +1019,7 @@ class WebhookBridge:
                     "dag_id": dag.id,
                     "node_count": len(dag.nodes),
                     "repo_scope": spec_bundle.repo_scope.to_metadata(),
+                    "planning_strategy": dag_plan.strategy,
                 },
             )
             if self._task_orchestrator is not None:
@@ -982,7 +1032,10 @@ class WebhookBridge:
                     dag=dag,
                     task=task,
                     ready_nodes=ready_nodes,
-                    extra_metadata={"spec_ingestion": spec_bundle.to_metadata()},
+                    extra_metadata={
+                        "spec_ingestion": spec_bundle.to_metadata(),
+                        "planning_strategy": dag_plan.strategy,
+                    },
                 )
                 if queued_nodes:
                     first_dag_node = queued_nodes[0].node_key
@@ -995,6 +1048,7 @@ class WebhookBridge:
                 first_dag_node=first_dag_node,
                 first_dag_node_status=first_dag_node_status,
                 spec_bundle=spec_bundle,
+                planned_node_keys=planned_node_keys,
             )
             await self._issue_tracker.reply(
                 IssueTrackerReply(issue_id=task_event.issue_id, body=reply_body)
@@ -1063,6 +1117,118 @@ class WebhookBridge:
             },
         )
         return hydrated_payload, hydrated_event
+
+    async def _plan_linear_spec_dag(
+        self,
+        task_event: NormalizedTaskEvent,
+        spec_bundle: SpecIngestionBundle,
+        registered_repos: list[object],
+    ) -> LinearDagPlan:
+        repo_names = list(spec_bundle.selected_repos)
+        repo_contexts: dict[str, object] = {}
+        fallback_reason: str | None = None
+        model_provider: str | None = None
+        model: str | None = None
+        planned_subtasks: list[Subtask] = []
+
+        if self._model_planning_configured():
+            repo_contexts = await self._linear_planner_repo_contexts(
+                task_event=task_event,
+                spec_bundle=spec_bundle,
+                repo_names=repo_names,
+            )
+            prompt = _linear_spec_planner_prompt(
+                task_event=task_event,
+                spec_bundle=spec_bundle,
+                repo_contexts=repo_contexts,
+            )
+            try:
+                response = await self._model_provider.complete(
+                    ModelRequest(
+                        role="plan_agent",
+                        prompt=prompt,
+                        metadata={"source": "linear", "external_id": task_event.external_id},
+                    )
+                )
+                model_provider = response.provider
+                model = response.model
+                parsed_subtasks = DagDecomposer().parse_subtasks(response.content)
+                planned_subtasks = _valid_planned_subtasks(
+                    subtasks=parsed_subtasks,
+                    allowed_repos=set(repo_names),
+                )
+                if not planned_subtasks:
+                    fallback_reason = "invalid_model_plan"
+            except ModelProviderError:
+                fallback_reason = "model_provider_error"
+
+        if planned_subtasks:
+            return LinearDagPlan(
+                subtasks=planned_subtasks,
+                strategy="model",
+                node_keys=[subtask.id for subtask in planned_subtasks],
+                repo_contexts=repo_contexts,
+                model_provider=model_provider,
+                model=model,
+            )
+
+        fallback_subtasks = spec_bundle.to_repo_subtasks()
+        return LinearDagPlan(
+            subtasks=fallback_subtasks,
+            strategy="repo_fallback",
+            node_keys=[subtask.id for subtask in fallback_subtasks],
+            repo_contexts=repo_contexts,
+            fallback_reason=fallback_reason or "model_planning_unavailable",
+            model_provider=model_provider,
+            model=model,
+        )
+
+    def _model_planning_configured(self) -> bool:
+        if (
+            not self._settings.linear_spec_planner_enabled
+            or self._model_provider is None
+            or not self._settings.vendor_http_enabled
+        ):
+            return False
+        if self._settings.model_provider == "openai":
+            return bool(self._settings.openai_api_key)
+        if self._settings.model_provider == "claude":
+            return bool(self._settings.claude_api_key)
+        return True
+
+    async def _linear_planner_repo_contexts(
+        self,
+        task_event: NormalizedTaskEvent,
+        spec_bundle: SpecIngestionBundle,
+        repo_names: list[str],
+    ) -> dict[str, object]:
+        contexts: dict[str, object] = {}
+        if self._graph_store is None or not self._settings.vendor_http_enabled:
+            return contexts
+        question = _linear_spec_planning_question(task_event, spec_bundle)
+        for repo_name in repo_names:
+            try:
+                result = await self._graph_store.query(
+                    GraphQuery(
+                        repo=repo_name,
+                        question=question,
+                        metadata={
+                            "source": task_event.source,
+                            "external_id": task_event.external_id,
+                            "purpose": "linear_spec_planning",
+                        },
+                    )
+                )
+            except GraphStoreError as exc:
+                contexts[repo_name] = {"status": "unavailable", "reason": str(exc)}
+                continue
+            contexts[repo_name] = {
+                "status": "available",
+                "provider": result.provider,
+                "answer": result.answer,
+                "references": result.references,
+            }
+        return contexts
 
     async def _repo_context_for_task(
         self,
@@ -1528,6 +1694,7 @@ def _linear_assignment_reply(
     first_dag_node: str | None,
     first_dag_node_status: str | None,
     spec_bundle: SpecIngestionBundle | None = None,
+    planned_node_keys: list[str] | None = None,
 ) -> str:
     lines = [
         f"Accepted {external_id}.",
@@ -1542,6 +1709,10 @@ def _linear_assignment_reply(
         lines.append(f"DAG template: {dag_template}.")
     else:
         lines.append("DAG template: none.")
+    if planned_node_keys:
+        lines.append(
+            f"Planned nodes: {len(planned_node_keys)} ({', '.join(planned_node_keys)})."
+        )
     if first_dag_node:
         lines.append(f"First DAG node queued: {first_dag_node} ({first_dag_node_status}).")
     else:
@@ -1563,6 +1734,77 @@ def _linear_repo_clarification_reply(
     if unknown_repos:
         lines.append(f"Unregistered repo mentions: {', '.join(sorted(unknown_repos))}.")
     return "\n".join(lines)
+
+
+def _linear_spec_planner_prompt(
+    task_event: NormalizedTaskEvent,
+    spec_bundle: SpecIngestionBundle,
+    repo_contexts: dict[str, object],
+) -> str:
+    return "\n".join(
+        [
+            "Create a reviewable implementation DAG for this Linear ticket.",
+            "Return only JSON: an array of objects with id, title, repo, and depends_on.",
+            "Every id must be snake_case and unique.",
+            "Every code node must name exactly one repo from the allowed repos.",
+            "Use multiple nodes in the same repo when that makes PRs easier to review.",
+            "Use dependencies when one PR should land before another.",
+            f"Ticket: {task_event.external_id} - {task_event.title}",
+            f"Allowed repos: {', '.join(spec_bundle.selected_repos)}",
+            "Spec:",
+            _truncated_spec_text(spec_bundle),
+            "Design assets:",
+            json.dumps(spec_bundle.to_metadata()["design_assets"], sort_keys=True),
+            "GraphStore planning context:",
+            json.dumps(repo_contexts, sort_keys=True),
+        ]
+    )
+
+
+def _linear_spec_planning_question(
+    task_event: NormalizedTaskEvent,
+    spec_bundle: SpecIngestionBundle,
+) -> str:
+    return (
+        "What code areas, contracts, tests, and dependencies are relevant for planning "
+        f"this Linear task?\n\n{task_event.title}\n\n{_truncated_spec_text(spec_bundle)}"
+    )
+
+
+def _truncated_spec_text(spec_bundle: SpecIngestionBundle, limit: int = 6000) -> str:
+    text = "\n\n".join(
+        f"# {source.title}\n{source.text}"
+        for source in spec_bundle.text_sources
+    )
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}\n...[truncated]"
+
+
+def _valid_planned_subtasks(
+    subtasks: list[Subtask],
+    allowed_repos: set[str],
+) -> list[Subtask]:
+    if not subtasks:
+        return []
+    node_ids = [subtask.id for subtask in subtasks]
+    if len(set(node_ids)) != len(node_ids):
+        return []
+    if any(not _valid_node_key(subtask.id) for subtask in subtasks):
+        return []
+    if any(subtask.repo not in allowed_repos for subtask in subtasks):
+        return []
+    node_id_set = set(node_ids)
+    for subtask in subtasks:
+        if any(dependency not in node_id_set for dependency in subtask.depends_on):
+            return []
+        if subtask.id in subtask.depends_on:
+            return []
+    return subtasks
+
+
+def _valid_node_key(value: str) -> bool:
+    return re.fullmatch(r"[a-z][a-z0-9_]{1,63}", value) is not None
 
 
 def _merge_linear_issue_context(
