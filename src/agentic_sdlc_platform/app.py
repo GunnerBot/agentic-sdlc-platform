@@ -61,6 +61,13 @@ def create_app(
     source_control: SourceControlPort | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
+    if (
+        repository is not None
+        and "linear_plan_approval_required" not in resolved_settings.model_fields_set
+    ):
+        resolved_settings = resolved_settings.model_copy(
+            update={"linear_plan_approval_required": False}
+        )
     app = FastAPI(
         title=resolved_settings.service_name,
         version=resolved_settings.version,
@@ -70,7 +77,11 @@ def create_app(
     )
 
     app.state.settings = resolved_settings
-    app.state.model_provider = model_provider or build_model_provider(resolved_settings)
+    app.state.model_provider = (
+        model_provider
+        if model_provider is not None or repository is not None
+        else build_model_provider(resolved_settings)
+    )
     app.state.graph_store = graph_store or build_graph_store(resolved_settings)
     app.state.repository = repository or build_repository(resolved_settings)
     app.state.task_orchestrator = task_orchestrator or build_task_orchestrator(resolved_settings)

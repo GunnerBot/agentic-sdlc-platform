@@ -672,6 +672,122 @@ async def test_linear_model_planner_falls_back_when_plan_references_unknown_repo
     assert task_orchestrator.created[1].metadata["planning_strategy"] == "repo_fallback"
 
 
+async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    planning_model = FakePlanningModel(
+        """
+[
+  {
+    "id": "backend_contract",
+    "title": "Add dynamic title contract",
+    "repo": "keychain-os-erp"
+  }
+]
+"""
+    )
+    task_orchestrator = FakeTaskOrchestrator(
+        task_ids=["multica-parent-task-1", "multica-contract-node"]
+    )
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                linear_spec_planner_enabled=True,
+                linear_plan_approval_required=True,
+                vendor_http_enabled=True,
+                model_provider="openai",
+                openai_api_key="test-key",
+            ),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            model_provider=planning_model,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    assignment_response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-2446",
+                "title": "Support dynamic form titles",
+                "description": (
+                    "## Repositories\n"
+                    "- keychain-os-erp\n\n"
+                    "## Acceptance\n"
+                    "- Backend supplies title metadata."
+                ),
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-plan-approval-1"},
+    )
+
+    task = await repository.find_task_by_external_id("OS-2446")
+    assert assignment_response.status_code == 202
+    assert task is not None
+    assert task.status == "needs_plan_approval"
+    assert [request.external_id for request in task_orchestrator.created] == ["OS-2446"]
+    assert issue_tracker.replies[-1] == IssueTrackerReply(
+        issue_id="issue-id-1",
+        body=(
+            "Accepted OS-2446.\n"
+            "Repo: keychain-os-erp.\n"
+            "Spec repo scope: single_repo (keychain-os-erp).\n"
+            "DAG template: linear-spec.\n"
+            "Planned nodes: 1 (backend_contract).\n"
+            "Plan approval required: reply /approve-plan OS-2446 to start.\n"
+            "First DAG node queued: none.\n"
+            "Commands: /status OS-2446, /context OS-2446, /agents OS-2446."
+        ),
+    )
+
+    approval_response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-1",
+                "body": "/approve-plan OS-2446",
+                "user": {"id": "user-1"},
+                "issue": {"id": "issue-id-1", "identifier": "OS-2446"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-plan-approval-2"},
+    )
+
+    assert approval_response.status_code == 202
+    task = await repository.find_task_by_external_id("OS-2446")
+    assert task is not None
+    assert task.status == "queued"
+    assert [request.external_id for request in task_orchestrator.created] == [
+        "OS-2446",
+        f"{task.dags[0].id}:backend_contract",
+    ]
+    assert task_orchestrator.created[1].metadata["plan_approved"] is True
+    assert task_orchestrator.created[1].metadata["execution_policy"] == {
+        "terminal_command_prefix": "rtk",
+        "repo_context_policy": "graphstore_first_then_narrow_source_verification",
+        "github_write_enabled": False,
+    }
+    assert issue_tracker.replies[-1] == IssueTrackerReply(
+        issue_id="issue-id-1",
+        body="Plan approved for OS-2446. Queued nodes: backend_contract.",
+    )
+
+
 async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() -> None:
     repository = await build_repository()
     await repository.upsert_repo(

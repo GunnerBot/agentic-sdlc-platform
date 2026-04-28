@@ -52,6 +52,11 @@ class NodeOverrideResult:
     status: str
 
 
+@dataclass(frozen=True)
+class PlanApprovalCommand:
+    external_id: str
+
+
 class HumanOverrideHandler:
     def __init__(
         self,
@@ -255,3 +260,15 @@ def parse_node_override(text: str) -> NodeOverrideCommand | None:
         node_key=match.group("node_key"),
         reason=reason.strip() if reason else None,
     )
+
+
+def parse_plan_approval(text: str) -> PlanApprovalCommand | None:
+    match = re.match(
+        r"^/approve-plan\s+"
+        r"(?P<external_id>[A-Z][A-Z0-9]+-\d+)\s*$",
+        text.strip(),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return PlanApprovalCommand(external_id=match.group("external_id"))

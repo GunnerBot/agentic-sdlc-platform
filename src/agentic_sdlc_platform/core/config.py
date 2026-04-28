@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     linear_agent_user_id: str | None = None
     linear_team_id: str | None = None
     linear_spec_planner_enabled: bool = False
+    linear_plan_approval_required: bool = False
     github_webhook_secret: str | None = None
     github_app_read_only_enabled: bool = False
     github_app_id: str | None = None

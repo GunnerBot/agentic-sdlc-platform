@@ -34,6 +34,7 @@ Model-backed planning uses `ASDLC_MODEL_PROVIDER`. For OpenAI, set:
 ```bash
 ASDLC_VENDOR_HTTP_ENABLED=true
 ASDLC_LINEAR_SPEC_PLANNER_ENABLED=true
+ASDLC_LINEAR_PLAN_APPROVAL_REQUIRED=true
 ASDLC_MODEL_PROVIDER=openai
 ASDLC_OPENAI_API_KEY=<openai_api_key>
 ASDLC_OPENAI_DEFAULT_MODEL=gpt-5.5
@@ -133,6 +134,10 @@ creating Multica work:
 - When `ASDLC_LINEAR_SPEC_PLANNER_ENABLED=true`, hydrated specs are planned through the configured
   model provider. The planner can create multiple repo-scoped DAG nodes, including multiple nodes
   for one repo, and invalid model plans fall back to the deterministic one-node-per-repo DAG.
+- When `ASDLC_LINEAR_PLAN_APPROVAL_REQUIRED=true`, the platform persists the planned DAG and waits
+  for `/approve-plan <LINEAR-ID>` in the Linear thread before queueing runnable DAG nodes. Queued
+  node payloads include an RTK-only terminal policy, GraphStore-first repo-context policy, and
+  GitHub write-disabled marker until write-scoped GitHub App access is approved.
 
 Conversation sync can poll Multica-backed sessions and mirror new agent comments back to the
 originating channel. The real Docker overlay enables it by default:

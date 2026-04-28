@@ -18,6 +18,7 @@ from agentic_sdlc_platform.glue.human_override import (
     HumanOverrideHandler,
     TaskInfoCommand,
     parse_human_override,
+    parse_plan_approval,
     parse_task_info,
 )
 from agentic_sdlc_platform.glue.spec_ingestion import (
@@ -235,6 +236,17 @@ class WebhookBridge:
                 },
             )
             return agent_session.task_id
+
+        approval_command = parse_plan_approval(body)
+        if approval_command is not None:
+            return await self._handle_linear_plan_approval_command(
+                agent_session_id=agent_session.id,
+                issue_id=issue_id,
+                comment_id=comment_id,
+                body=body,
+                actor=actor,
+                external_id=approval_command.external_id,
+            )
 
         info_command = parse_task_info(body)
         if info_command is not None:
@@ -611,6 +623,86 @@ class WebhookBridge:
         )
         return task.id
 
+    async def _handle_linear_plan_approval_command(
+        self,
+        agent_session_id: str,
+        issue_id: str,
+        comment_id: str | None,
+        body: str,
+        actor: str,
+        external_id: str,
+    ) -> str | None:
+        await self._repository.record_session_event(
+            session_id=agent_session_id,
+            direction="inbound",
+            event_type="approve_plan_command",
+            actor=actor,
+            message=body,
+            metadata={"comment_id": comment_id} if comment_id else {},
+        )
+        task = await self._repository.find_task_by_external_id(external_id)
+        if task is None or not getattr(task, "dags", []):
+            reply_body = f"Task {external_id} has no plan to approve."
+            if self._issue_tracker is not None:
+                await self._issue_tracker.reply(
+                    IssueTrackerReply(issue_id=issue_id, body=reply_body)
+                )
+            return None
+
+        dag = task.dags[0]
+        ready_nodes = await self._repository.list_ready_dag_nodes_for_dag(dag.id)
+        queued_nodes = []
+        if self._task_orchestrator is not None:
+            dag = await self._repository.get_task_dag(dag.id)
+            if dag is None:
+                return task.id
+            queued_nodes = await self._enqueue_ready_dag_nodes(
+                dag=dag,
+                task=dag.task,
+                ready_nodes=ready_nodes,
+                extra_metadata={
+                    "plan_approved": True,
+                    "plan_approved_by": actor,
+                    "plan_approval_comment_id": comment_id,
+                },
+            )
+        task = await self._repository.update_task_status(task_id=task.id, status="queued")
+        queued_names = [node.node_key for node in queued_nodes]
+        reply_body = (
+            f"Plan approved for {external_id}. "
+            f"Queued nodes: {', '.join(queued_names) if queued_names else 'none'}."
+        )
+        await self._repository.record_session_event(
+            session_id=agent_session_id,
+            direction="outbound",
+            event_type="plan_approved",
+            actor="system",
+            message=reply_body,
+            metadata={
+                "comment_id": comment_id,
+                "queued_nodes": queued_names,
+                "dag_id": dag.id,
+            },
+        )
+        if self._issue_tracker is not None:
+            await self._issue_tracker.reply(
+                IssueTrackerReply(issue_id=issue_id, body=reply_body)
+            )
+        await self._repository.record_audit_event(
+            action="task.plan_approved",
+            actor=actor,
+            target_type="task",
+            target_id=task.id,
+            metadata={
+                "provider": "linear",
+                "issue_id": issue_id,
+                "comment_id": comment_id,
+                "dag_id": dag.id,
+                "queued_nodes": queued_names,
+            },
+        )
+        return task.id
+
     def _linear_status_reply(self, task) -> str:
         active_sessions = sum(1 for session in task.sessions if session.status == "active")
         session_word = "session" if active_sessions == 1 else "sessions"
@@ -819,6 +911,7 @@ class WebhookBridge:
         first_dag_node: str | None = None
         first_dag_node_status: str | None = None
         planned_node_keys: list[str] = []
+        plan_approval_required = False
         if source == "linear" and effective_repo:
             repo = await self._repository.get_repo_by_name(effective_repo)
             if repo is None:
@@ -993,6 +1086,17 @@ class WebhookBridge:
                 subtasks=dag_plan.subtasks,
             )
             planned_node_keys = [node.node_key for node in dag.nodes]
+            node_metadata = _linear_spec_node_metadata(
+                task_event=task_event,
+                spec_bundle=spec_bundle,
+                dag_plan=dag_plan,
+            )
+            for node in dag.nodes:
+                await self._repository.update_dag_node_metadata(
+                    dag_id=dag.id,
+                    node_key=node.node_key,
+                    metadata=node_metadata,
+                )
             await self._repository.record_audit_event(
                 action="task.dag_planned",
                 actor="system",
@@ -1022,7 +1126,24 @@ class WebhookBridge:
                     "planning_strategy": dag_plan.strategy,
                 },
             )
-            if self._task_orchestrator is not None:
+            plan_approval_required = self._settings.linear_plan_approval_required
+            if plan_approval_required:
+                task = await self._repository.update_task_status(
+                    task_id=task.id,
+                    status="needs_plan_approval",
+                )
+                await self._repository.record_audit_event(
+                    action="task.plan_approval_requested",
+                    actor="system",
+                    target_type="task",
+                    target_id=task.id,
+                    metadata={
+                        "template": dag_template,
+                        "dag_id": dag.id,
+                        "node_keys": planned_node_keys,
+                    },
+                )
+            elif self._task_orchestrator is not None:
                 ready_nodes = [
                     node
                     for node in dag.nodes
@@ -1032,10 +1153,7 @@ class WebhookBridge:
                     dag=dag,
                     task=task,
                     ready_nodes=ready_nodes,
-                    extra_metadata={
-                        "spec_ingestion": spec_bundle.to_metadata(),
-                        "planning_strategy": dag_plan.strategy,
-                    },
+                    extra_metadata=node_metadata,
                 )
                 if queued_nodes:
                     first_dag_node = queued_nodes[0].node_key
@@ -1049,6 +1167,7 @@ class WebhookBridge:
                 first_dag_node_status=first_dag_node_status,
                 spec_bundle=spec_bundle,
                 planned_node_keys=planned_node_keys,
+                plan_approval_required=plan_approval_required,
             )
             await self._issue_tracker.reply(
                 IssueTrackerReply(issue_id=task_event.issue_id, body=reply_body)
@@ -1302,6 +1421,9 @@ class WebhookBridge:
                 repository=self._repository,
                 graph_store=self._graph_store,
             )
+            node_metadata = dict(getattr(node, "metadata_json", {}) or {})
+            if node_metadata:
+                metadata.update(node_metadata)
             if extra_metadata:
                 metadata.update(extra_metadata)
             external_task = await self._task_orchestrator.create_task(
@@ -1695,6 +1817,7 @@ def _linear_assignment_reply(
     first_dag_node_status: str | None,
     spec_bundle: SpecIngestionBundle | None = None,
     planned_node_keys: list[str] | None = None,
+    plan_approval_required: bool = False,
 ) -> str:
     lines = [
         f"Accepted {external_id}.",
@@ -1713,6 +1836,8 @@ def _linear_assignment_reply(
         lines.append(
             f"Planned nodes: {len(planned_node_keys)} ({', '.join(planned_node_keys)})."
         )
+    if plan_approval_required:
+        lines.append(f"Plan approval required: reply /approve-plan {external_id} to start.")
     if first_dag_node:
         lines.append(f"First DAG node queued: {first_dag_node} ({first_dag_node_status}).")
     else:
@@ -1759,6 +1884,34 @@ def _linear_spec_planner_prompt(
             json.dumps(repo_contexts, sort_keys=True),
         ]
     )
+
+
+def _linear_spec_node_metadata(
+    task_event: NormalizedTaskEvent,
+    spec_bundle: SpecIngestionBundle,
+    dag_plan: LinearDagPlan,
+) -> dict[str, object]:
+    return {
+        "spec_ingestion": spec_bundle.to_metadata(),
+        "planning_strategy": dag_plan.strategy,
+        "execution_policy": {
+            "terminal_command_prefix": "rtk",
+            "repo_context_policy": "graphstore_first_then_narrow_source_verification",
+            "github_write_enabled": False,
+        },
+        "linear_task": {
+            "external_id": task_event.external_id,
+            "issue_id": task_event.issue_id,
+            "title": task_event.title,
+            "url": task_event.url,
+        },
+        "execution_contract": {
+            "one_code_pr_per_executable_node": True,
+            "branch_reference_format": "agent/dag/<dag_id>/<node_key>",
+            "pr_reference_format": "dag/<dag_id>/<node_key>",
+            "requires_human_write_enablement": True,
+        },
+    }
 
 
 def _linear_spec_planning_question(
