@@ -32,6 +32,7 @@ services:
       ASDLC_HERMES_BASE_URL: http://hermes:8642
       ASDLC_HERMES_API_KEY: ${ASDLC_HERMES_API_KEY:?Set ASDLC_HERMES_API_KEY in .env.local}
       ASDLC_HERMES_MODEL: ${ASDLC_HERMES_MODEL:-hermes-agent}
+      ASDLC_HERMES_TIMEOUT_SECONDS: ${ASDLC_HERMES_TIMEOUT_SECONDS:-120}
     depends_on:
       hermes:
         condition: service_started

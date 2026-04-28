@@ -81,6 +81,7 @@ ASDLC_HERMES_API_KEY=<local_hermes_gateway_token>
 ASDLC_HERMES_MODEL=hermes-agent
 ASDLC_HERMES_INFERENCE_PROVIDER=custom
 ASDLC_HERMES_INFERENCE_MODEL=gpt-5.4-mini
+ASDLC_HERMES_TIMEOUT_SECONDS=120
 make compose-real-hermes-up
 ```
 
