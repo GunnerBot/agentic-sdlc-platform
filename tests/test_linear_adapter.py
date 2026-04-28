@@ -155,6 +155,70 @@ async def test_linear_adapter_creates_issue() -> None:
     }
 
 
+async def test_linear_adapter_fetches_issue_context() -> None:
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(
+            status_code=200,
+            json={
+                "data": {
+                    "issue": {
+                        "id": "issue-id-1",
+                        "identifier": "OS-3001",
+                        "title": "Support dynamic form titles",
+                        "description": "## Repositories\n- webapp-monorepo",
+                        "url": "https://linear.app/keychain/issue/OS-3001",
+                        "attachments": {
+                            "nodes": [
+                                {
+                                    "id": "attachment-1",
+                                    "title": "form-title.png",
+                                    "url": "https://linear.local/form-title.png",
+                                    "metadata": {"contentType": "image/png"},
+                                }
+                            ]
+                        },
+                        "comments": {
+                            "nodes": [
+                                {
+                                    "id": "comment-1",
+                                    "body": "Use the latest Figma frame.",
+                                    "user": {"id": "user-1", "name": "A. User"},
+                                }
+                            ]
+                        },
+                    }
+                }
+            },
+        )
+
+    adapter = LinearIssueAdapter(
+        Settings(
+            linear_http_enabled=True,
+            linear_base_url="https://linear.local/graphql",
+            linear_api_key="test-key",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    context = await adapter.get_issue_context("issue-id-1")
+
+    assert captured_request is not None
+    payload = json.loads(captured_request.content)
+    assert payload["variables"] == {"issueId": "issue-id-1"}
+    assert context.issue_id == "issue-id-1"
+    assert context.identifier == "OS-3001"
+    assert context.description == "## Repositories\n- webapp-monorepo"
+    assert context.attachments is not None
+    assert context.attachments[0].title == "form-title.png"
+    assert context.attachments[0].content_type == "image/png"
+    assert context.comments is not None
+    assert context.comments[0].actor == "user-1"
+
+
 async def test_linear_adapter_raises_structured_error_for_failure() -> None:
     adapter = LinearIssueAdapter(
         Settings(

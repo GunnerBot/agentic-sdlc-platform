@@ -147,6 +147,23 @@ class PersistenceRepository:
             await session.refresh(task)
             return task
 
+    async def update_task_repo_and_status(
+        self,
+        task_id: str,
+        repo: str,
+        status: str,
+    ) -> Task:
+        async with self._session_factory() as session:
+            task = await session.get(Task, task_id)
+            if task is None:
+                raise LookupError(f"task {task_id} not found")
+            task.repo = repo
+            task.status = status
+            task.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(task)
+            return task
+
     async def upsert_repo(
         self,
         name: str,

@@ -12,7 +12,12 @@ from agentic_sdlc_platform.ports.hermes_session import (
     HermesSessionResponse,
     HermesStartSessionRequest,
 )
-from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerReply, IssueTrackerUpdate
+from agentic_sdlc_platform.ports.issue_tracker import (
+    IssueAttachment,
+    IssueContext,
+    IssueTrackerReply,
+    IssueTrackerUpdate,
+)
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskCommentRequest,
     TaskCommentResponse,
@@ -66,15 +71,21 @@ class FakeTaskOrchestrator:
 
 
 class FakeIssueTracker:
-    def __init__(self) -> None:
+    def __init__(self, hydrated_issues: dict[str, IssueContext] | None = None) -> None:
         self.updates: list[IssueTrackerUpdate] = []
         self.replies: list[IssueTrackerReply] = []
+        self.hydrated_issue_ids: list[str] = []
+        self._hydrated_issues = hydrated_issues or {}
 
     async def mark_task_queued(self, update: IssueTrackerUpdate) -> None:
         self.updates.append(update)
 
     async def reply(self, reply: IssueTrackerReply) -> None:
         self.replies.append(reply)
+
+    async def get_issue_context(self, issue_id: str) -> IssueContext:
+        self.hydrated_issue_ids.append(issue_id)
+        return self._hydrated_issues.get(issue_id, IssueContext(issue_id=issue_id))
 
 
 class FakeGraphStore:
@@ -527,6 +538,261 @@ async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() 
             ),
         )
     ]
+
+
+async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    await repository.upsert_repo(
+        name="webapp-monorepo",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        default_branch="main",
+        metadata={},
+    )
+    task_orchestrator = FakeTaskOrchestrator(
+        task_ids=["multica-parent-task-1", "multica-os-node", "multica-web-node"]
+    )
+    issue_tracker = FakeIssueTracker(
+        hydrated_issues={
+            "issue-id-1": IssueContext(
+                issue_id="issue-id-1",
+                identifier="OS-3001",
+                title="Support dynamic form titles",
+                description=(
+                    "## Repositories\n"
+                    "- keychain-os-erp\n"
+                    "- webapp-monorepo\n\n"
+                    "## Acceptance\n"
+                    "- Backend persists the title expression.\n"
+                    "- Webapp renders the resolved title."
+                ),
+                attachments=[
+                    IssueAttachment(
+                        id="attachment-1",
+                        title="form-title-flow.png",
+                        url="https://linear.local/form-title-flow.png",
+                        content_type="image/png",
+                    )
+                ],
+            )
+        }
+    )
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-3001",
+                "title": "Support dynamic form titles",
+                "description": "Assigned to agent.",
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-hydrated-spec-1"},
+    )
+
+    assert response.status_code == 202
+    assert issue_tracker.hydrated_issue_ids == ["issue-id-1"]
+    async with repository._session_factory() as session:
+        dag = (
+            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
+        ).one()
+        spec_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "task.spec_ingested")
+            )
+        ).one()
+
+    assert [node.repo for node in dag.nodes] == ["keychain-os-erp", "webapp-monorepo"]
+    assert task_orchestrator.created[0].metadata["spec_ingestion"]["asset_count"] == 1
+    assert spec_event.metadata_json["text_sources"][0]["title"] == "Linear description"
+    assert issue_tracker.replies[-1] == IssueTrackerReply(
+        issue_id="issue-id-1",
+        body=(
+            "Accepted OS-3001.\n"
+            "Repo: none.\n"
+            "Spec repo scope: multi_repo (keychain-os-erp, webapp-monorepo).\n"
+            "Design assets: 1.\n"
+            "DAG template: linear-spec.\n"
+            "First DAG node queued: scope_keychain_os_erp (queued).\n"
+            "Commands: /status OS-3001, /context OS-3001, /agents OS-3001."
+        ),
+    )
+
+
+async def test_linear_assigned_issue_blocks_and_asks_for_repo_when_spec_is_ambiguous() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    task_orchestrator = FakeTaskOrchestrator()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-3002",
+                "title": "Support dynamic form titles",
+                "description": (
+                    "## Repositories\n"
+                    "- missing-service\n\n"
+                    "## Acceptance\n"
+                    "- Implement the feature end to end."
+                ),
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-ambiguous-spec-1"},
+    )
+
+    assert response.status_code == 202
+    assert task_orchestrator.created == []
+    task = await repository.find_task_by_external_id("OS-3002")
+    assert task is not None
+    assert task.status == "blocked"
+    assert issue_tracker.updates == []
+    assert issue_tracker.replies == [
+        IssueTrackerReply(
+            issue_id="issue-id-1",
+            body=(
+                "I need a registered repository before I can start OS-3002.\n"
+                "Mention one of: keychain-os-erp.\n"
+                "Unregistered repo mentions: missing-service."
+            ),
+        )
+    ]
+
+
+async def test_linear_repo_clarification_comment_resumes_blocked_task() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    task_orchestrator = FakeTaskOrchestrator()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    assignment_response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-3003",
+                "title": "Support dynamic form titles",
+                "description": (
+                    "## Acceptance\n"
+                    "- Implement the feature end to end."
+                ),
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-clarification-resume-1"},
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-1",
+                "body": "Use keychain-os-erp for this.",
+                "user": {"id": "user-1"},
+                "issue": {"id": "issue-id-1", "identifier": "OS-3003"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-clarification-resume-2"},
+    )
+
+    assert assignment_response.status_code == 202
+    assert response.status_code == 202
+    assert response.json()["task_id"] == assignment_response.json()["task_id"]
+    task = await repository.find_task_by_external_id("OS-3003")
+    assert task is not None
+    assert task.repo == "keychain-os-erp"
+    assert task.status == "queued"
+    assert task_orchestrator.created == [
+        TaskRequest(
+            source="linear",
+            external_id="OS-3003",
+            title="Support dynamic form titles",
+            repo="keychain-os-erp",
+            metadata={
+                "repo_provider": "github",
+                "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+                "repo_default_branch": "main",
+                "repo_metadata": {},
+                "repo_context": {
+                    "status": "unavailable",
+                    "reason": "graphify CLI query requires graph_path or repo local_path metadata",
+                },
+                "repo_clarification": {
+                    "comment_id": "comment-1",
+                    "actor": "linear:user-1",
+                    "resolved_repo": "keychain-os-erp",
+                },
+            },
+        )
+    ]
+    assert issue_tracker.updates == [
+        IssueTrackerUpdate(
+            issue_id="issue-id-1",
+            external_id="OS-3003",
+            internal_task_id=response.json()["task_id"],
+            orchestrator_task_id="multica-task-1",
+        )
+    ]
+    assert issue_tracker.replies[-1] == IssueTrackerReply(
+        issue_id="issue-id-1",
+        body="Thanks, I will use keychain-os-erp and start OS-3003.",
+    )
 
 
 async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> None:

@@ -163,6 +163,11 @@ def _linear_text_sources(
         content_type = _str_value(attachment.get("contentType") or attachment.get("mimeType"))
         if text and _is_text_attachment(title, content_type):
             sources.append(TextSource(kind="attachment", title=title, text=text))
+    for comment in _linear_comments(payload):
+        text = _str_value(comment.get("body") or comment.get("text"))
+        if text:
+            title = _str_value(comment.get("id")) or "Linear comment"
+            sources.append(TextSource(kind="comment", title=title, text=text))
     return sources
 
 
@@ -244,6 +249,11 @@ def _linear_attachments(payload: dict[str, object]) -> list[dict[str, object]]:
     for candidate in candidates:
         attachments.extend(_extract_nodes(candidate))
     return attachments
+
+
+def _linear_comments(payload: dict[str, object]) -> list[dict[str, object]]:
+    data = _dict_value(payload.get("data"))
+    return _extract_nodes(data.get("comments"))
 
 
 def _extract_nodes(value: object) -> list[dict[str, object]]:

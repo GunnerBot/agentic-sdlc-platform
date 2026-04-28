@@ -1,6 +1,6 @@
 import hmac
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 
 from fastapi import HTTPException, status
@@ -40,6 +40,8 @@ from agentic_sdlc_platform.ports.hermes_session import (
     HermesStartSessionRequest,
 )
 from agentic_sdlc_platform.ports.issue_tracker import (
+    IssueContext,
+    IssueTrackerError,
     IssueTrackerPort,
     IssueTrackerReply,
     IssueTrackerUpdate,
@@ -236,6 +238,17 @@ class WebhookBridge:
                 command=command,
             )
 
+        clarified_task_id = await self._handle_linear_repo_clarification_comment(
+            agent_session_id=agent_session.id,
+            task_id=agent_session.task_id,
+            issue_id=issue_id,
+            comment_id=comment_id,
+            body=body,
+            actor=actor,
+        )
+        if clarified_task_id is not None:
+            return clarified_task_id
+
         await self._repository.record_session_event(
             session_id=agent_session.id,
             direction="inbound",
@@ -408,6 +421,176 @@ class WebhookBridge:
         )
         return task_id
 
+    async def _handle_linear_repo_clarification_comment(
+        self,
+        agent_session_id: str,
+        task_id: str,
+        issue_id: str,
+        comment_id: str | None,
+        body: str,
+        actor: str,
+    ) -> str | None:
+        task = await self._repository.get_task(task_id)
+        if (
+            task is None
+            or task.status != "blocked"
+            or task.repo is not None
+            or task.orchestrator_task_id is not None
+        ):
+            return None
+
+        registered_repos = await self._repository.list_repos(status="active")
+        clarification_event = NormalizedTaskEvent(
+            source="linear",
+            external_id=task.external_id,
+            title=task.title,
+            issue_id=issue_id,
+            body=body,
+        )
+        spec_bundle = ingest_linear_spec(
+            payload={"data": {"description": body}},
+            task_event=clarification_event,
+            registered_repos=registered_repos,
+        )
+        selected_repos = spec_bundle.selected_repos if spec_bundle else ()
+        if len(selected_repos) != 1:
+            reply_body = _linear_repo_clarification_reply(
+                external_id=task.external_id,
+                registered_repo_names=[repo.name for repo in registered_repos],
+                unknown_repos=list(spec_bundle.repo_scope.unknown_repos) if spec_bundle else [],
+            )
+            await self._repository.record_session_event(
+                session_id=agent_session_id,
+                direction="inbound",
+                event_type="repo_clarification",
+                actor=actor,
+                message=body,
+                metadata={"comment_id": comment_id} if comment_id else {},
+            )
+            await self._repository.record_session_event(
+                session_id=agent_session_id,
+                direction="outbound",
+                event_type="repo_clarification_requested",
+                actor="system",
+                message=reply_body,
+                metadata={"comment_id": comment_id} if comment_id else {},
+            )
+            if self._issue_tracker is not None:
+                await self._issue_tracker.reply(
+                    IssueTrackerReply(issue_id=issue_id, body=reply_body)
+                )
+            return task.id
+
+        repo_name = selected_repos[0]
+        repo = await self._repository.get_repo_by_name(repo_name)
+        if repo is None:
+            return None
+
+        await self._repository.record_session_event(
+            session_id=agent_session_id,
+            direction="inbound",
+            event_type="repo_clarification",
+            actor=actor,
+            message=body,
+            metadata={
+                "comment_id": comment_id,
+                "resolved_repo": repo_name,
+            } if comment_id else {"resolved_repo": repo_name},
+        )
+        task = await self._repository.update_task_repo_and_status(
+            task_id=task.id,
+            repo=repo_name,
+            status="queued",
+        )
+        task_metadata: dict[str, object] = {
+            "repo_provider": repo.provider,
+            "repo_clone_url": repo.clone_url,
+            "repo_default_branch": repo.default_branch,
+            "repo_metadata": dict(repo.metadata_json),
+            "repo_clarification": {
+                "comment_id": comment_id,
+                "actor": actor,
+                "resolved_repo": repo_name,
+            },
+        }
+        repo_context = await self._repo_context_for_task(repo.name, clarification_event)
+        if repo_context is not None:
+            task_metadata["repo_context"] = repo_context
+
+        external_task_id = task.orchestrator_task_id
+        external_status = task.orchestrator_status
+        if self._task_orchestrator is not None:
+            external_task = await self._task_orchestrator.create_task(
+                TaskRequest(
+                    source=task.source,
+                    external_id=task.external_id,
+                    title=task.title,
+                    repo=repo_name,
+                    metadata=task_metadata,
+                )
+            )
+            external_task_id = external_task.external_task_id
+            external_status = external_task.status
+            task = await self._repository.mark_task_orchestrated(
+                task_id=task.id,
+                orchestrator_task_id=external_task.external_task_id,
+                orchestrator_status=external_task.status,
+            )
+            await self._repository.create_agent_session(
+                task_id=task.id,
+                provider="linear",
+                external_thread_id=issue_id,
+                hermes_session_id=None,
+                repo=repo_name,
+                orchestrator_provider=self._task_orchestrator.provider,
+                orchestrator_issue_id=_str_value(
+                    (external_task.metadata or {}).get("multica_issue_id")
+                ),
+                orchestrator_task_id=external_task.external_task_id,
+            )
+
+        if self._issue_tracker is not None:
+            await self._issue_tracker.mark_task_queued(
+                IssueTrackerUpdate(
+                    issue_id=issue_id,
+                    external_id=task.external_id,
+                    internal_task_id=task.id,
+                    orchestrator_task_id=external_task_id,
+                )
+            )
+            reply_body = f"Thanks, I will use {repo_name} and start {task.external_id}."
+            await self._issue_tracker.reply(
+                IssueTrackerReply(issue_id=issue_id, body=reply_body)
+            )
+            await self._repository.record_session_event(
+                session_id=agent_session_id,
+                direction="outbound",
+                event_type="repo_clarification_resolved",
+                actor="system",
+                message=reply_body,
+                metadata={
+                    "comment_id": comment_id,
+                    "resolved_repo": repo_name,
+                    "orchestrator_task_id": external_task_id,
+                },
+            )
+
+        await self._repository.record_audit_event(
+            action="task.repo_clarification_resolved",
+            actor=actor,
+            target_type="task",
+            target_id=task.id,
+            metadata={
+                "provider": "linear",
+                "issue_id": issue_id,
+                "comment_id": comment_id,
+                "repo": repo_name,
+                "orchestrator_task_id": external_task_id,
+                "orchestrator_status": external_status,
+            },
+        )
+        return task.id
+
     def _linear_status_reply(self, task) -> str:
         active_sessions = sum(1 for session in task.sessions if session.status == "active")
         session_word = "session" if active_sessions == 1 else "sessions"
@@ -512,6 +695,14 @@ class WebhookBridge:
         if task_event is None:
             return None
 
+        if source == "linear" and task_event.issue_id:
+            payload, task_event = await self._hydrate_linear_task_event(
+                payload=payload,
+                task_event=task_event,
+                inbound_event_id=result.event.id,
+            )
+
+        registered_repos = []
         spec_bundle: SpecIngestionBundle | None = None
         effective_repo = task_event.repo
         if source == "linear":
@@ -555,6 +746,53 @@ class WebhookBridge:
                 target_id=task.id,
                 metadata=spec_bundle.to_metadata(),
             )
+        if (
+            source == "linear"
+            and task_event.issue_id
+            and effective_repo is None
+            and spec_bundle is not None
+            and spec_bundle.repo_scope.scope in {"needs_clarification", "unspecified"}
+        ):
+            task = await self._repository.update_task_status(
+                task_id=task.id,
+                status="blocked",
+            )
+            agent_session = await self._repository.create_agent_session(
+                task_id=task.id,
+                provider="linear",
+                external_thread_id=task_event.issue_id,
+                hermes_session_id=None,
+                repo=None,
+            )
+            reply_body = _linear_repo_clarification_reply(
+                external_id=task_event.external_id,
+                registered_repo_names=[repo.name for repo in registered_repos],
+                unknown_repos=list(spec_bundle.repo_scope.unknown_repos),
+            )
+            await self._repository.record_session_event(
+                session_id=agent_session.id,
+                direction="outbound",
+                event_type="repo_clarification_requested",
+                actor="system",
+                message=reply_body,
+                metadata={"spec_ingestion": spec_bundle.to_metadata()},
+            )
+            if self._issue_tracker is not None:
+                await self._issue_tracker.reply(
+                    IssueTrackerReply(issue_id=task_event.issue_id, body=reply_body)
+                )
+            await self._repository.record_audit_event(
+                action="task.blocked_repo_clarification",
+                actor="system",
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "provider": "linear",
+                    "external_id": task_event.external_id,
+                    "repo_scope": spec_bundle.repo_scope.to_metadata(),
+                },
+            )
+            return task.id
         task_metadata: dict[str, object] | None = None
         repo_name: str | None = None
         dag_template: str | None = None
@@ -778,6 +1016,53 @@ class WebhookBridge:
                 },
             )
         return task.id
+
+    async def _hydrate_linear_task_event(
+        self,
+        payload: dict[str, object],
+        task_event: NormalizedTaskEvent,
+        inbound_event_id: str,
+    ) -> tuple[dict[str, object], NormalizedTaskEvent]:
+        if self._issue_tracker is None or not hasattr(self._issue_tracker, "get_issue_context"):
+            return payload, task_event
+
+        try:
+            issue_context = await self._issue_tracker.get_issue_context(task_event.issue_id)
+        except (IssueTrackerError, KeyError):
+            await self._repository.record_audit_event(
+                action="linear.issue_hydration_failed",
+                actor="system",
+                target_type="inbound_event",
+                target_id=inbound_event_id,
+                metadata={
+                    "issue_id": task_event.issue_id,
+                    "external_id": task_event.external_id,
+                },
+            )
+            return payload, task_event
+
+        hydrated_payload = _merge_linear_issue_context(payload, issue_context)
+        hydrated_event = task_event
+        if issue_context.description:
+            hydrated_event = replace(hydrated_event, body=issue_context.description)
+        if issue_context.url:
+            hydrated_event = replace(hydrated_event, url=issue_context.url)
+        if issue_context.title and not hydrated_event.title:
+            hydrated_event = replace(hydrated_event, title=issue_context.title)
+        await self._repository.record_audit_event(
+            action="linear.issue_hydrated",
+            actor="system",
+            target_type="inbound_event",
+            target_id=inbound_event_id,
+            metadata={
+                "issue_id": task_event.issue_id,
+                "external_id": task_event.external_id,
+                "attachment_count": len(issue_context.attachments or []),
+                "comment_count": len(issue_context.comments or []),
+                "has_description": bool(issue_context.description),
+            },
+        )
+        return hydrated_payload, hydrated_event
 
     async def _repo_context_for_task(
         self,
@@ -1263,3 +1548,78 @@ def _linear_assignment_reply(
         lines.append("First DAG node queued: none.")
     lines.append(f"Commands: /status {external_id}, /context {external_id}, /agents {external_id}.")
     return "\n".join(lines)
+
+
+def _linear_repo_clarification_reply(
+    external_id: str,
+    registered_repo_names: list[str],
+    unknown_repos: list[str],
+) -> str:
+    lines = [f"I need a registered repository before I can start {external_id}."]
+    if registered_repo_names:
+        lines.append(f"Mention one of: {', '.join(sorted(registered_repo_names))}.")
+    else:
+        lines.append("No repositories are registered yet.")
+    if unknown_repos:
+        lines.append(f"Unregistered repo mentions: {', '.join(sorted(unknown_repos))}.")
+    return "\n".join(lines)
+
+
+def _merge_linear_issue_context(
+    payload: dict[str, object],
+    issue_context: IssueContext,
+) -> dict[str, object]:
+    merged = dict(payload)
+    data = dict(_dict_value(merged.get("data")))
+    if issue_context.title:
+        data["title"] = issue_context.title
+    if issue_context.identifier:
+        data["identifier"] = issue_context.identifier
+    if issue_context.description:
+        data["description"] = issue_context.description
+    if issue_context.url:
+        data["url"] = issue_context.url
+    if issue_context.attachments:
+        data["attachments"] = {
+            "nodes": [
+                _linear_attachment_payload(attachment)
+                for attachment in issue_context.attachments
+            ]
+        }
+    if issue_context.comments:
+        data["comments"] = {
+            "nodes": [
+                _linear_comment_payload(comment)
+                for comment in issue_context.comments
+            ]
+        }
+    merged["data"] = data
+    return merged
+
+
+def _linear_attachment_payload(attachment) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    if attachment.id:
+        payload["id"] = attachment.id
+    if attachment.title:
+        payload["title"] = attachment.title
+    if attachment.url:
+        payload["url"] = attachment.url
+    if attachment.content_type:
+        payload["contentType"] = attachment.content_type
+    if attachment.content:
+        payload["content"] = attachment.content
+    if attachment.metadata:
+        payload["metadata"] = attachment.metadata
+    return payload
+
+
+def _linear_comment_payload(comment) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    if comment.id:
+        payload["id"] = comment.id
+    if comment.body:
+        payload["body"] = comment.body
+    if comment.actor:
+        payload["user"] = {"id": comment.actor}
+    return payload

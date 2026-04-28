@@ -125,6 +125,10 @@ creating Multica work:
 - Multiple registered repos: the platform creates a `linear-spec` DAG with one ready node per repo.
 - Design inputs: image attachments and Figma links are summarized into Hermes, Multica, DAG node,
   and audit metadata. Binary/image data is not stored in the repository.
+- If the webhook payload is partial, the Linear adapter hydrates the full issue context before
+  parsing the spec. If the repo scope is still missing or unregistered, the task is blocked and the
+  bot asks for a registered repo in Linear; a follow-up comment naming one registered repo resumes
+  the task.
 
 Conversation sync can poll Multica-backed sessions and mirror new agent comments back to the
 originating channel. The real Docker overlay enables it by default:
