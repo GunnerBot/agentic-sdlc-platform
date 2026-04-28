@@ -155,6 +155,29 @@ def linear_document_urls(
     return urls
 
 
+def linear_design_urls(
+    payload: dict[str, object],
+    task_event: NormalizedTaskEvent,
+) -> list[str]:
+    seen = set()
+    urls = []
+    text_sources = _linear_text_sources(payload, task_event)
+    for source in text_sources:
+        for url in FIGMA_URL_RE.findall(source.text):
+            normalized = url.rstrip(".,")
+            if normalized not in seen:
+                seen.add(normalized)
+                urls.append(normalized)
+    for attachment in _linear_attachments(payload):
+        url = _str_value(attachment.get("url") or attachment.get("sourceUrl"))
+        if url and _is_figma_url(url):
+            normalized = url.rstrip(".,")
+            if normalized not in seen:
+                seen.add(normalized)
+                urls.append(normalized)
+    return urls
+
+
 def _linear_text_sources(
     payload: dict[str, object],
     task_event: NormalizedTaskEvent,

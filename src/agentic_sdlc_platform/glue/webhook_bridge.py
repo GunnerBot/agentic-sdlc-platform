@@ -24,6 +24,7 @@ from agentic_sdlc_platform.glue.human_override import (
 from agentic_sdlc_platform.glue.spec_ingestion import (
     SpecIngestionBundle,
     ingest_linear_spec,
+    linear_design_urls,
     linear_document_urls,
 )
 from agentic_sdlc_platform.glue.task_event_normalizer import (
@@ -38,6 +39,7 @@ from agentic_sdlc_platform.persistence.repository import (
     PersistenceRepository,
 )
 from agentic_sdlc_platform.ports.agent_executor import AgentExecutorPort
+from agentic_sdlc_platform.ports.design_context import DesignContextError, DesignContextPort
 from agentic_sdlc_platform.ports.document_context import (
     DocumentContextError,
     DocumentContextPort,
@@ -94,6 +96,7 @@ class WebhookBridge:
         hermes_session: HermesSessionPort | None = None,
         graph_store: GraphStorePort | None = None,
         document_context: DocumentContextPort | None = None,
+        design_context: DesignContextPort | None = None,
         agent_executor: AgentExecutorPort | None = None,
         model_provider: ModelProviderPort | None = None,
     ) -> None:
@@ -104,6 +107,7 @@ class WebhookBridge:
         self._hermes_session = hermes_session
         self._graph_store = graph_store
         self._document_context = document_context
+        self._design_context = design_context
         self._agent_executor = agent_executor
         self._model_provider = model_provider
         self._normalizer = TaskEventNormalizer(
@@ -825,6 +829,11 @@ class WebhookBridge:
                 task_event=task_event,
                 inbound_event_id=result.event.id,
             )
+            payload = await self._hydrate_linear_design_context(
+                payload=payload,
+                task_event=task_event,
+                inbound_event_id=result.event.id,
+            )
 
         registered_repos = []
         spec_bundle: SpecIngestionBundle | None = None
@@ -1291,6 +1300,52 @@ class WebhookBridge:
                 "document_count": len(fetched_documents),
                 "providers": [document.provider for document in fetched_documents],
                 "urls": [document.url for document in fetched_documents],
+            },
+        )
+        return merged
+
+    async def _hydrate_linear_design_context(
+        self,
+        payload: dict[str, object],
+        task_event: NormalizedTaskEvent,
+        inbound_event_id: str,
+    ) -> dict[str, object]:
+        if self._design_context is None:
+            return payload
+        fetched_designs = []
+        for url in linear_design_urls(payload, task_event):
+            try:
+                design = await self._design_context.fetch(url)
+            except DesignContextError as exc:
+                await self._repository.record_audit_event(
+                    action="linear.design_hydration_failed",
+                    actor="system",
+                    target_type="inbound_event",
+                    target_id=inbound_event_id,
+                    metadata={
+                        "url": url,
+                        "external_id": task_event.external_id,
+                        "reason": str(exc),
+                    },
+                )
+                continue
+            if design is None or not design.summary:
+                continue
+            fetched_designs.append(design)
+        if not fetched_designs:
+            return payload
+
+        merged = _merge_linear_design_context(payload, fetched_designs)
+        await self._repository.record_audit_event(
+            action="linear.designs_hydrated",
+            actor="system",
+            target_type="inbound_event",
+            target_id=inbound_event_id,
+            metadata={
+                "external_id": task_event.external_id,
+                "design_count": len(fetched_designs),
+                "providers": [design.provider for design in fetched_designs],
+                "urls": [design.url for design in fetched_designs],
             },
         )
         return merged
@@ -2067,6 +2122,23 @@ def _merge_linear_document_context(
     return merged
 
 
+def _merge_linear_design_context(
+    payload: dict[str, object],
+    designs: list[object],
+) -> dict[str, object]:
+    merged = dict(payload)
+    data = dict(_dict_value(merged.get("data")))
+    existing_documents = _extract_payload_nodes(data.get("documents"))
+    data["documents"] = {
+        "nodes": [
+            *existing_documents,
+            *[_linear_design_context_payload(design) for design in designs],
+        ]
+    }
+    merged["data"] = data
+    return merged
+
+
 def _linear_document_payload(document) -> dict[str, object]:
     return {
         "id": document.url,
@@ -2076,6 +2148,20 @@ def _linear_document_payload(document) -> dict[str, object]:
         "content": document.text,
         "provider": document.provider,
         "metadata": document.metadata or {},
+    }
+
+
+def _linear_design_context_payload(design) -> dict[str, object]:
+    return {
+        "id": design.url,
+        "title": design.title or design.url,
+        "contentType": "text/markdown",
+        "content": design.summary,
+        "provider": design.provider,
+        "metadata": {
+            "source_url": design.url,
+            **(design.metadata or {}),
+        },
     }
 
 

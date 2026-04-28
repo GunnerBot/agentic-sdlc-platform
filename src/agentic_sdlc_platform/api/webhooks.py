@@ -26,6 +26,7 @@ async def linear_webhook(
         hermes_session=request.app.state.hermes_session,
         graph_store=request.app.state.graph_store,
         document_context=request.app.state.document_context,
+        design_context=request.app.state.design_context,
         agent_executor=request.app.state.agent_executor,
         model_provider=request.app.state.model_provider,
     )
@@ -56,6 +57,7 @@ async def github_webhook(
         hermes_session=request.app.state.hermes_session,
         graph_store=request.app.state.graph_store,
         document_context=request.app.state.document_context,
+        design_context=request.app.state.design_context,
         agent_executor=request.app.state.agent_executor,
         model_provider=request.app.state.model_provider,
     )

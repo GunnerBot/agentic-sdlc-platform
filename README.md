@@ -120,6 +120,17 @@ through the text export endpoint; private docs require a bearer token with acces
 text is treated as an additional spec text source for repo detection, planning, Hermes context, and
 DAG node metadata.
 
+Linear spec ingestion can also hydrate Figma design links when configured:
+
+```bash
+ASDLC_FIGMA_HTTP_ENABLED=true
+ASDLC_FIGMA_API_KEY=<figma_personal_access_token>
+```
+
+Figma links in Linear descriptions, comments, and attachments are fetched through the Figma files
+API. The fetched file or node summary is treated as additional spec text, while the original Figma
+URL remains tracked as a design asset for audit and DAG metadata.
+
 In the real Docker overlay, host repos are mounted read-only at `/repos` and generated Graphify data
 is written to the Docker-managed `/graphify-data` volume. Example repo metadata for the local
 `keychain-os-erp` checkout:
@@ -148,6 +159,8 @@ creating Multica work:
   the task.
 - Linked Notion pages and Google Docs in the Linear description, comments, or text attachments are
   fetched as additional spec text when the matching document adapter is enabled.
+- Figma links in the Linear description, comments, or attachments are fetched as additional design
+  spec text when the Figma adapter is enabled.
 - When `ASDLC_LINEAR_SPEC_PLANNER_ENABLED=true`, hydrated specs are planned through the configured
   model provider. The planner can create multiple repo-scoped DAG nodes, including multiple nodes
   for one repo, and invalid model plans fall back to the deterministic one-node-per-repo DAG.

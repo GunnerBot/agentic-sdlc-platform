@@ -18,6 +18,7 @@ from agentic_sdlc_platform.core.dependencies import (
     build_agent_executor,
     build_channel_authorizer,
     build_channel_budget_ledger,
+    build_design_context,
     build_document_context,
     build_graph_store,
     build_hermes_session,
@@ -33,6 +34,7 @@ from agentic_sdlc_platform.glue.conversation_sync import (
 )
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.agent_executor import AgentExecutorPort
+from agentic_sdlc_platform.ports.design_context import DesignContextPort
 from agentic_sdlc_platform.ports.document_context import DocumentContextPort
 from agentic_sdlc_platform.ports.graph_store import GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort
@@ -59,6 +61,7 @@ def create_app(
     model_provider: ModelProviderPort | None = None,
     graph_store: GraphStorePort | None = None,
     document_context: DocumentContextPort | None = None,
+    design_context: DesignContextPort | None = None,
     issue_tracker: IssueTrackerPort | None = None,
     agent_executor: AgentExecutorPort | None = None,
     source_control: SourceControlPort | None = None,
@@ -87,6 +90,7 @@ def create_app(
     )
     app.state.graph_store = graph_store or build_graph_store(resolved_settings)
     app.state.document_context = document_context or build_document_context(resolved_settings)
+    app.state.design_context = design_context or build_design_context(resolved_settings)
     app.state.repository = repository or build_repository(resolved_settings)
     app.state.task_orchestrator = task_orchestrator or build_task_orchestrator(resolved_settings)
     app.state.hermes_session = hermes_session or build_hermes_session(resolved_settings)

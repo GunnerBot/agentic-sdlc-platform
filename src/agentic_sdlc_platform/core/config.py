@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     google_docs_base_url: str = "https://docs.google.com"
     google_docs_bearer_token: str | None = Field(default=None, repr=False)
     google_docs_timeout_seconds: float = 10.0
+    figma_http_enabled: bool = False
+    figma_base_url: str = "https://api.figma.com"
+    figma_api_key: str | None = Field(default=None, repr=False)
+    figma_timeout_seconds: float = 10.0
 
     hermes_http_enabled: bool = False
     hermes_base_url: str | None = None

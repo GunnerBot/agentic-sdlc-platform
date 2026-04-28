@@ -7,6 +7,7 @@ from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.persistence.models import AuditEvent, Base, TaskDag
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
+from agentic_sdlc_platform.ports.design_context import DesignContext
 from agentic_sdlc_platform.ports.document_context import DocumentContext
 from agentic_sdlc_platform.ports.graph_store import GraphQuery, GraphQueryResult
 from agentic_sdlc_platform.ports.hermes_session import (
@@ -149,6 +150,16 @@ class FakeDocumentContext:
     async def fetch(self, url: str) -> DocumentContext | None:
         self.fetched_urls.append(url)
         return self.documents.get(url)
+
+
+class FakeDesignContext:
+    def __init__(self, designs: dict[str, DesignContext]) -> None:
+        self.designs = designs
+        self.fetched_urls: list[str] = []
+
+    async def fetch(self, url: str) -> DesignContext | None:
+        self.fetched_urls.append(url)
+        return self.designs.get(url)
 
 
 async def build_repository() -> PersistenceRepository:
@@ -1070,6 +1081,95 @@ async def test_linear_assigned_issue_hydrates_notion_doc_from_description() -> N
             )
         ).one()
     assert hydrated_event.metadata_json["providers"] == ["notion"]
+
+
+async def test_linear_assigned_issue_hydrates_figma_design_from_description() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="webapp-monorepo",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        default_branch="main",
+        metadata={},
+    )
+    figma_url = "https://www.figma.com/file/abc123/form-title-flow?node-id=1%3A2"
+    design_context = FakeDesignContext(
+        {
+            figma_url: DesignContext(
+                provider="figma",
+                url=figma_url,
+                title="Form title frame",
+                summary=(
+                    "Figma file: Dynamic form titles\n"
+                    "Requested node: 1:2\n\n"
+                    "## Repositories\n"
+                    "- webapp-monorepo\n\n"
+                    "## Acceptance\n"
+                    "- Use the compact dynamic title frame."
+                ),
+                metadata={"file_key": "abc123", "node_id": "1:2"},
+            )
+        }
+    )
+    task_orchestrator = FakeTaskOrchestrator()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            design_context=design_context,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "WEB-3005",
+                "title": "Support dynamic form titles",
+                "description": f"Use this design: {figma_url}",
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-figma-design-1"},
+    )
+
+    assert response.status_code == 202
+    assert design_context.fetched_urls == [figma_url]
+    assert task_orchestrator.created[0].repo == "webapp-monorepo"
+    assert task_orchestrator.created[0].metadata["spec_ingestion"]["repo_scope"] == {
+        "scope": "single_repo",
+        "repos": [{"repo": "webapp-monorepo", "reason": "mentioned_in_spec"}],
+        "unknown_repos": [],
+    }
+    assert any(
+        source["kind"] == "attachment"
+        and source["title"] == "Form title frame"
+        and source["length"] > 0
+        for source in task_orchestrator.created[0].metadata["spec_ingestion"][
+            "text_sources"
+        ]
+    )
+    assert task_orchestrator.created[0].metadata["spec_ingestion"]["design_assets"] == [
+        {
+            "kind": "figma",
+            "title": "Figma link",
+            "url": figma_url,
+        }
+    ]
+    async with repository._session_factory() as session:
+        hydrated_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "linear.designs_hydrated")
+            )
+        ).one()
+    assert hydrated_event.metadata_json["providers"] == ["figma"]
+    assert hydrated_event.metadata_json["urls"] == [figma_url]
 
 
 async def test_linear_assigned_issue_blocks_and_asks_for_repo_when_spec_is_ambiguous() -> None:
