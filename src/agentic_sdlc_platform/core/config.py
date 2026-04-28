@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     figma_base_url: str = "https://api.figma.com"
     figma_api_key: str | None = Field(default=None, repr=False)
     figma_timeout_seconds: float = 10.0
+    design_image_hydration_enabled: bool = False
+    design_image_summary_provider: str = "openai"
+    design_image_summary_model: str | None = None
+    design_image_max_bytes: int = 5_000_000
+    design_image_fetch_timeout_seconds: float = 10.0
 
     hermes_http_enabled: bool = False
     hermes_base_url: str | None = None

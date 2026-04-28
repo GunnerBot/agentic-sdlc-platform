@@ -1,3 +1,5 @@
+import base64
+import mimetypes
 from dataclasses import dataclass
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -28,7 +30,14 @@ class FigmaDesignContextAdapter:
         self._settings = settings
         self._transport = transport
 
-    async def fetch(self, url: str) -> DesignContext | None:
+    async def fetch(
+        self,
+        url: str,
+        *,
+        title: str | None = None,
+        content_type: str | None = None,
+    ) -> DesignContext | None:
+        del title, content_type
         reference = figma_reference(url)
         if reference is None:
             return None
@@ -67,10 +76,179 @@ class FigmaDesignContextAdapter:
         )
 
 
-def build_design_context_adapter(settings: Settings) -> DesignContextPort | None:
-    if not settings.figma_http_enabled:
+class OpenAIImageDesignContextAdapter:
+    provider = "openai_vision"
+
+    def __init__(
+        self,
+        settings: Settings,
+        transport: httpx.AsyncBaseTransport | httpx.BaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+
+    async def fetch(
+        self,
+        url: str,
+        *,
+        title: str | None = None,
+        content_type: str | None = None,
+    ) -> DesignContext | None:
+        if not self._is_image_reference(url=url, title=title, content_type=content_type):
+            return None
+        if not self._settings.design_image_hydration_enabled:
+            return None
+        if self._settings.design_image_summary_provider != "openai":
+            raise DesignContextError("unsupported image summary provider")
+        if not self._settings.vendor_http_enabled:
+            raise DesignContextError("vendor HTTP is disabled")
+        if not self._settings.openai_api_key:
+            raise DesignContextError("openai API key is not configured")
+
+        image_bytes, resolved_content_type = await self._fetch_image(url, content_type)
+        model = (
+            self._settings.design_image_summary_model
+            or self._settings.openai_fallback_model
+            or self._settings.openai_default_model
+        )
+        summary = await self._summarize_image(
+            image_bytes=image_bytes,
+            content_type=resolved_content_type,
+            model=model,
+            title=title,
+            url=url,
+        )
+        return DesignContext(
+            provider=self.provider,
+            url=url,
+            title=title or _filename_from_url(url) or "Design image",
+            summary=summary,
+            metadata={
+                "source_content_type": resolved_content_type,
+                "byte_count": len(image_bytes),
+                "summary_provider": "openai",
+                "summary_model": model,
+            },
+        )
+
+    async def _fetch_image(
+        self,
+        url: str,
+        provided_content_type: str | None,
+    ) -> tuple[bytes, str]:
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._settings.design_image_fetch_timeout_seconds,
+                transport=self._transport,
+            ) as client:
+                response = await client.get(url, headers=_image_fetch_headers(url, self._settings))
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise DesignContextError("image design fetch failed") from exc
+
+        image_bytes = response.content
+        if len(image_bytes) > self._settings.design_image_max_bytes:
+            raise DesignContextError("image design exceeds configured size limit")
+        content_type = _response_content_type(response) or provided_content_type
+        if not content_type or not content_type.lower().startswith("image/"):
+            raise DesignContextError("image design response was not an image")
+        return image_bytes, content_type
+
+    async def _summarize_image(
+        self,
+        *,
+        image_bytes: bytes,
+        content_type: str,
+        model: str,
+        title: str | None,
+        url: str,
+    ) -> str:
+        image_url = (
+            f"data:{content_type};base64,"
+            f"{base64.b64encode(image_bytes).decode('ascii')}"
+        )
+        prompt = "\n".join(
+            [
+                "Summarize this Linear design/image attachment for an engineering agent.",
+                (
+                    "Focus on visible UI requirements, states, labels, layout, errors, "
+                    "and acceptance-relevant details."
+                ),
+                "If repository names or implementation hints are visible, include them exactly.",
+                f"Attachment title: {title or 'unknown'}",
+                f"Source URL: {url}",
+            ]
+        )
+        payload: dict[str, object] = {
+            "model": model,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompt},
+                        {"type": "input_image", "image_url": image_url},
+                    ],
+                }
+            ],
+        }
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.openai_base_url,
+                timeout=self._settings.openai_timeout_seconds,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(
+                    "/responses",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self._settings.openai_api_key}"},
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise DesignContextError("image design summarization failed") from exc
+        return _extract_openai_text(response.json())
+
+    def _is_image_reference(
+        self,
+        *,
+        url: str,
+        title: str | None,
+        content_type: str | None,
+    ) -> bool:
+        if content_type and content_type.lower().startswith("image/"):
+            return True
+        guessed_type = mimetypes.guess_type(title or url)[0]
+        return bool(guessed_type and guessed_type.startswith("image/"))
+
+
+class CompositeDesignContextAdapter:
+    def __init__(self, adapters: list[DesignContextPort]) -> None:
+        self._adapters = adapters
+
+    async def fetch(
+        self,
+        url: str,
+        *,
+        title: str | None = None,
+        content_type: str | None = None,
+    ) -> DesignContext | None:
+        for adapter in self._adapters:
+            context = await adapter.fetch(url, title=title, content_type=content_type)
+            if context is not None:
+                return context
         return None
-    return FigmaDesignContextAdapter(settings)
+
+
+def build_design_context_adapter(settings: Settings) -> DesignContextPort | None:
+    adapters: list[DesignContextPort] = []
+    if settings.figma_http_enabled:
+        adapters.append(FigmaDesignContextAdapter(settings))
+    if settings.design_image_hydration_enabled:
+        adapters.append(OpenAIImageDesignContextAdapter(settings))
+    if not adapters:
+        return None
+    if len(adapters) == 1:
+        return adapters[0]
+    return CompositeDesignContextAdapter(adapters)
 
 
 def figma_reference(url: str) -> FigmaReference | None:
@@ -146,6 +324,51 @@ def _node_summary(node: dict[str, object]) -> str:
     children = node.get("children")
     child_count = len(children) if isinstance(children, list) else 0
     return f"{name} ({node_type}, children={child_count})"
+
+
+def _image_fetch_headers(url: str, settings: Settings) -> dict[str, str]:
+    parsed = urlparse(url)
+    if settings.linear_api_key and parsed.netloc.lower().endswith("linear.app"):
+        return {"Authorization": f"Bearer {settings.linear_api_key}"}
+    return {}
+
+
+def _response_content_type(response: httpx.Response) -> str | None:
+    content_type = response.headers.get("content-type")
+    if not content_type:
+        return None
+    return content_type.split(";", 1)[0].strip().lower()
+
+
+def _filename_from_url(url: str) -> str | None:
+    path = urlparse(url).path.rstrip("/")
+    if not path:
+        return None
+    filename = path.rsplit("/", 1)[-1]
+    return unquote(filename) if filename else None
+
+
+def _extract_openai_text(payload: object) -> str:
+    if not isinstance(payload, dict):
+        raise DesignContextError("openai response was not an object")
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str) and output_text:
+        return output_text
+    output = payload.get("output")
+    if isinstance(output, list):
+        parts: list[str] = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if not isinstance(content, list):
+                continue
+            for content_item in content:
+                if isinstance(content_item, dict) and isinstance(content_item.get("text"), str):
+                    parts.append(content_item["text"])
+        if parts:
+            return "".join(parts)
+    raise DesignContextError("openai response did not include output text")
 
 
 def _dict_value(value: object) -> dict[str, object]:

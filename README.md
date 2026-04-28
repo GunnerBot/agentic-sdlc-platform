@@ -131,6 +131,19 @@ Figma links in Linear descriptions, comments, and attachments are fetched throug
 API. The fetched file or node summary is treated as additional spec text, while the original Figma
 URL remains tracked as a design asset for audit and DAG metadata.
 
+Linear image attachments can be hydrated through an explicit OpenAI vision summarization path:
+
+```bash
+ASDLC_DESIGN_IMAGE_HYDRATION_ENABLED=true
+ASDLC_DESIGN_IMAGE_SUMMARY_PROVIDER=openai
+ASDLC_DESIGN_IMAGE_SUMMARY_MODEL=gpt-5.4-mini
+ASDLC_DESIGN_IMAGE_MAX_BYTES=5000000
+```
+
+When enabled, image bytes are fetched only long enough to summarize them and are not persisted. The
+stored context contains the generated summary plus metadata such as content type, byte count, and
+summary model.
+
 In the real Docker overlay, host repos are mounted read-only at `/repos` and generated Graphify data
 is written to the Docker-managed `/graphify-data` volume. Example repo metadata for the local
 `keychain-os-erp` checkout:
@@ -152,7 +165,7 @@ creating Multica work:
 - Single registered repo: the task is bound to that repo even without a `repo:*` label.
 - Multiple registered repos: the platform creates a `linear-spec` DAG with one ready node per repo.
 - Design inputs: image attachments and Figma links are summarized into Hermes, Multica, DAG node,
-  and audit metadata. Binary/image data is not stored in the repository.
+  and audit metadata. Binary/image data is not persisted or stored in the repository.
 - If the webhook payload is partial, the Linear adapter hydrates the full issue context before
   parsing the spec. If the repo scope is still missing or unregistered, the task is blocked and the
   bot asks for a registered repo in Linear; a follow-up comment naming one registered repo resumes
@@ -161,6 +174,8 @@ creating Multica work:
   fetched as additional spec text when the matching document adapter is enabled.
 - Figma links in the Linear description, comments, or attachments are fetched as additional design
   spec text when the Figma adapter is enabled.
+- Linear image attachments are fetched and summarized as additional design spec text when image
+  hydration is enabled.
 - When `ASDLC_LINEAR_SPEC_PLANNER_ENABLED=true`, hydrated specs are planned through the configured
   model provider. The planner can create multiple repo-scoped DAG nodes, including multiple nodes
   for one repo, and invalid model plans fall back to the deterministic one-node-per-repo DAG.

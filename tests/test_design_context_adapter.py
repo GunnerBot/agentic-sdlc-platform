@@ -2,6 +2,7 @@ import httpx
 
 from agentic_sdlc_platform.adapters.design_context import (
     FigmaDesignContextAdapter,
+    OpenAIImageDesignContextAdapter,
     figma_reference,
 )
 from agentic_sdlc_platform.core.config import Settings
@@ -69,3 +70,61 @@ async def test_figma_adapter_fetches_file_metadata() -> None:
     assert captured_request.url.path == "/v1/files/abc123"
     assert captured_request.url.params["ids"] == "1:2"
     assert captured_request.headers["x-figma-token"] == "figma-token"
+
+
+async def test_openai_image_adapter_fetches_and_summarizes_attachment() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.host == "linear.app":
+            return httpx.Response(
+                status_code=200,
+                headers={"content-type": "image/png"},
+                content=b"fake-png-bytes",
+            )
+        return httpx.Response(
+            status_code=200,
+            json={
+                "id": "resp-1",
+                "output_text": (
+                    "Image shows a compact dynamic form title above the fields. "
+                    "Repository: webapp-monorepo."
+                ),
+            },
+        )
+
+    adapter = OpenAIImageDesignContextAdapter(
+        Settings(
+            vendor_http_enabled=True,
+            openai_api_key="openai-token",
+            linear_api_key="linear-token",
+            design_image_hydration_enabled=True,
+            design_image_summary_model="gpt-5.4-mini",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    context = await adapter.fetch(
+        "https://linear.app/attachments/form-title.png",
+        title="form-title.png",
+        content_type="image/png",
+    )
+
+    assert context is not None
+    assert context.provider == "openai_vision"
+    assert context.title == "form-title.png"
+    assert "Repository: webapp-monorepo" in context.summary
+    assert context.metadata == {
+        "source_content_type": "image/png",
+        "byte_count": len(b"fake-png-bytes"),
+        "summary_provider": "openai",
+        "summary_model": "gpt-5.4-mini",
+    }
+    assert requests[0].url == "https://linear.app/attachments/form-title.png"
+    assert requests[0].headers["authorization"] == "Bearer linear-token"
+    assert requests[1].url.path.endswith("/responses")
+    assert requests[1].headers["authorization"] == "Bearer openai-token"
+    payload = requests[1].read()
+    assert b"fake-png-bytes" not in payload
+    assert b"data:image/png;base64" in payload

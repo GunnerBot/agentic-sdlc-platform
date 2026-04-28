@@ -46,6 +46,14 @@ class DesignAsset:
 
 
 @dataclass(frozen=True)
+class DesignReference:
+    kind: str
+    title: str
+    url: str
+    content_type: str | None = None
+
+
+@dataclass(frozen=True)
 class RepoMatch:
     repo: str
     reason: str
@@ -159,23 +167,53 @@ def linear_design_urls(
     payload: dict[str, object],
     task_event: NormalizedTaskEvent,
 ) -> list[str]:
+    return [reference.url for reference in linear_design_references(payload, task_event)]
+
+
+def linear_design_references(
+    payload: dict[str, object],
+    task_event: NormalizedTaskEvent,
+) -> list[DesignReference]:
     seen = set()
-    urls = []
+    references = []
     text_sources = _linear_text_sources(payload, task_event)
     for source in text_sources:
         for url in FIGMA_URL_RE.findall(source.text):
             normalized = url.rstrip(".,")
             if normalized not in seen:
                 seen.add(normalized)
-                urls.append(normalized)
+                references.append(
+                    DesignReference(kind="figma", title="Figma link", url=normalized)
+                )
     for attachment in _linear_attachments(payload):
+        title = _attachment_title(attachment)
         url = _str_value(attachment.get("url") or attachment.get("sourceUrl"))
-        if url and _is_figma_url(url):
-            normalized = url.rstrip(".,")
+        content_type = _str_value(attachment.get("contentType") or attachment.get("mimeType"))
+        if not url:
+            continue
+        normalized = url.rstrip(".,")
+        if _is_figma_url(normalized):
             if normalized not in seen:
                 seen.add(normalized)
-                urls.append(normalized)
-    return urls
+                references.append(
+                    DesignReference(
+                        kind="figma",
+                        title=title,
+                        url=normalized,
+                        content_type=content_type,
+                    )
+                )
+        elif _is_image_attachment(title, content_type) and normalized not in seen:
+            seen.add(normalized)
+            references.append(
+                DesignReference(
+                    kind="image",
+                    title=title,
+                    url=normalized,
+                    content_type=content_type,
+                )
+            )
+    return references
 
 
 def _linear_text_sources(
@@ -217,6 +255,8 @@ def _linear_design_assets(
     assets: list[DesignAsset] = []
     seen: set[tuple[str, str | None]] = set()
     for attachment in _linear_attachments(payload):
+        if _bool_value(_dict_value(attachment.get("metadata")).get("hydrated_design_context")):
+            continue
         title = _attachment_title(attachment)
         url = _str_value(attachment.get("url") or attachment.get("sourceUrl"))
         content_type = _str_value(attachment.get("contentType") or attachment.get("mimeType"))
@@ -415,6 +455,10 @@ def _node_key(repo: str) -> str:
 
 def _dict_value(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
+
+
+def _bool_value(value: object) -> bool:
+    return value if isinstance(value, bool) else False
 
 
 def _str_value(value: object) -> str | None:

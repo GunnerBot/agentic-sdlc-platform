@@ -16,5 +16,11 @@ class DesignContext:
 
 
 class DesignContextPort(Protocol):
-    async def fetch(self, url: str) -> DesignContext | None:
+    async def fetch(
+        self,
+        url: str,
+        *,
+        title: str | None = None,
+        content_type: str | None = None,
+    ) -> DesignContext | None:
         raise NotImplementedError

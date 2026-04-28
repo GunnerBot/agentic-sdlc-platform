@@ -24,7 +24,7 @@ from agentic_sdlc_platform.glue.human_override import (
 from agentic_sdlc_platform.glue.spec_ingestion import (
     SpecIngestionBundle,
     ingest_linear_spec,
-    linear_design_urls,
+    linear_design_references,
     linear_document_urls,
 )
 from agentic_sdlc_platform.glue.task_event_normalizer import (
@@ -1313,9 +1313,13 @@ class WebhookBridge:
         if self._design_context is None:
             return payload
         fetched_designs = []
-        for url in linear_design_urls(payload, task_event):
+        for reference in linear_design_references(payload, task_event):
             try:
-                design = await self._design_context.fetch(url)
+                design = await self._design_context.fetch(
+                    reference.url,
+                    title=reference.title,
+                    content_type=reference.content_type,
+                )
             except DesignContextError as exc:
                 await self._repository.record_audit_event(
                     action="linear.design_hydration_failed",
@@ -1323,7 +1327,8 @@ class WebhookBridge:
                     target_type="inbound_event",
                     target_id=inbound_event_id,
                     metadata={
-                        "url": url,
+                        "url": reference.url,
+                        "kind": reference.kind,
                         "external_id": task_event.external_id,
                         "reason": str(exc),
                     },
@@ -2159,6 +2164,7 @@ def _linear_design_context_payload(design) -> dict[str, object]:
         "content": design.summary,
         "provider": design.provider,
         "metadata": {
+            "hydrated_design_context": True,
             "source_url": design.url,
             **(design.metadata or {}),
         },

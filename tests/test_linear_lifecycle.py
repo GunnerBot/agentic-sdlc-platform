@@ -155,10 +155,22 @@ class FakeDocumentContext:
 class FakeDesignContext:
     def __init__(self, designs: dict[str, DesignContext]) -> None:
         self.designs = designs
-        self.fetched_urls: list[str] = []
+        self.fetched: list[dict[str, str | None]] = []
 
-    async def fetch(self, url: str) -> DesignContext | None:
-        self.fetched_urls.append(url)
+    async def fetch(
+        self,
+        url: str,
+        *,
+        title: str | None = None,
+        content_type: str | None = None,
+    ) -> DesignContext | None:
+        self.fetched.append(
+            {
+                "url": url,
+                "title": title,
+                "content_type": content_type,
+            }
+        )
         return self.designs.get(url)
 
 
@@ -1140,7 +1152,13 @@ async def test_linear_assigned_issue_hydrates_figma_design_from_description() ->
     )
 
     assert response.status_code == 202
-    assert design_context.fetched_urls == [figma_url]
+    assert design_context.fetched == [
+        {
+            "url": figma_url,
+            "title": "Figma link",
+            "content_type": None,
+        }
+    ]
     assert task_orchestrator.created[0].repo == "webapp-monorepo"
     assert task_orchestrator.created[0].metadata["spec_ingestion"]["repo_scope"] == {
         "scope": "single_repo",
@@ -1170,6 +1188,109 @@ async def test_linear_assigned_issue_hydrates_figma_design_from_description() ->
         ).one()
     assert hydrated_event.metadata_json["providers"] == ["figma"]
     assert hydrated_event.metadata_json["urls"] == [figma_url]
+
+
+async def test_linear_assigned_issue_hydrates_image_attachment_summary() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="webapp-monorepo",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        default_branch="main",
+        metadata={},
+    )
+    image_url = "https://linear.app/attachments/form-title.png"
+    design_context = FakeDesignContext(
+        {
+            image_url: DesignContext(
+                provider="openai_vision",
+                url=image_url,
+                title="form-title.png",
+                summary=(
+                    "Image attachment: form-title.png\n\n"
+                    "## Repositories\n"
+                    "- webapp-monorepo\n\n"
+                    "## Acceptance\n"
+                    "- The dynamic form title appears above the first editable field."
+                ),
+                metadata={
+                    "source_content_type": "image/png",
+                    "byte_count": 1024,
+                    "summary_provider": "openai",
+                },
+            )
+        }
+    )
+    task_orchestrator = FakeTaskOrchestrator()
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(linear_agent_user_id="agent-user-1"),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            design_context=design_context,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "WEB-3006",
+                "title": "Support dynamic form title image spec",
+                "description": "Please implement the attached design.",
+                "assignee": {"id": "agent-user-1"},
+                "attachments": {
+                    "nodes": [
+                        {
+                            "id": "attachment-1",
+                            "title": "form-title.png",
+                            "url": image_url,
+                            "contentType": "image/png",
+                        }
+                    ]
+                },
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-image-design-1"},
+    )
+
+    assert response.status_code == 202
+    assert design_context.fetched == [
+        {
+            "url": image_url,
+            "title": "form-title.png",
+            "content_type": "image/png",
+        }
+    ]
+    assert task_orchestrator.created[0].repo == "webapp-monorepo"
+    spec_ingestion = task_orchestrator.created[0].metadata["spec_ingestion"]
+    assert any(
+        source["kind"] == "attachment"
+        and source["title"] == "form-title.png"
+        and source["length"] > 0
+        for source in spec_ingestion["text_sources"]
+    )
+    assert spec_ingestion["design_assets"] == [
+        {
+            "kind": "image",
+            "title": "form-title.png",
+            "url": image_url,
+            "content_type": "image/png",
+        }
+    ]
+    async with repository._session_factory() as session:
+        hydrated_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "linear.designs_hydrated")
+            )
+        ).one()
+    assert hydrated_event.metadata_json["providers"] == ["openai_vision"]
+    assert hydrated_event.metadata_json["urls"] == [image_url]
 
 
 async def test_linear_assigned_issue_blocks_and_asks_for_repo_when_spec_is_ambiguous() -> None:
