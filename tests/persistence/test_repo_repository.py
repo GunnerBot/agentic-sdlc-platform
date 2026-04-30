@@ -57,3 +57,41 @@ async def test_list_repos_filters_by_provider_and_status() -> None:
     repos = await repository.list_repos(provider="github", status="active")
 
     assert [repo.name for repo in repos] == ["keychain-os-erp"]
+
+
+async def test_upsert_and_list_github_installations_by_workspace() -> None:
+    repository = await build_repository()
+
+    created = await repository.upsert_github_installation(
+        workspace_id="workspace-1",
+        installation_id="installation-1",
+        account="atlas-tech-inc",
+        repository_selection="selected",
+        permissions={"contents": "write", "pull_requests": "write"},
+        metadata={"repo_count": 2},
+    )
+    updated = await repository.upsert_github_installation(
+        workspace_id="workspace-1",
+        installation_id="installation-1",
+        account="atlas-tech-inc",
+        repository_selection="selected",
+        permissions={"contents": "write"},
+        metadata={"repo_count": 3},
+    )
+    await repository.upsert_github_installation(
+        workspace_id="workspace-2",
+        installation_id="installation-2",
+        account="other-org",
+        repository_selection="selected",
+        permissions={},
+        metadata={},
+    )
+
+    installations = await repository.list_github_installations(workspace_id="workspace-1")
+
+    assert updated.id == created.id
+    assert [installation.installation_id for installation in installations] == [
+        "installation-1"
+    ]
+    assert installations[0].permissions_json == {"contents": "write"}
+    assert installations[0].metadata_json == {"repo_count": 3}

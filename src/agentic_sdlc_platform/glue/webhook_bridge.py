@@ -13,6 +13,13 @@ from agentic_sdlc_platform.glue.dag_execution import (
     create_or_start_execution,
 )
 from agentic_sdlc_platform.glue.dag_templates import build_dag_template
+from agentic_sdlc_platform.glue.execution_policy import (
+    WRITE_PR,
+    bounded_graph_context,
+    execution_policy_metadata,
+    normalize_execution_mode,
+    sanitize_write_metadata,
+)
 from agentic_sdlc_platform.glue.human_override import (
     HumanOverrideCommand,
     HumanOverrideHandler,
@@ -21,6 +28,7 @@ from agentic_sdlc_platform.glue.human_override import (
     parse_plan_approval,
     parse_task_info,
 )
+from agentic_sdlc_platform.glue.llm_observability import record_llm_cost_ledger
 from agentic_sdlc_platform.glue.spec_ingestion import (
     SpecIngestionBundle,
     ingest_linear_spec,
@@ -112,7 +120,8 @@ class WebhookBridge:
         self._agent_executor = agent_executor
         self._model_provider = model_provider
         self._normalizer = TaskEventNormalizer(
-            linear_agent_user_id=settings.linear_agent_user_id
+            linear_agent_user_id=settings.linear_agent_user_id,
+            default_execution_mode=settings.agent_default_execution_mode,
         )
 
     async def accept_linear(
@@ -212,10 +221,7 @@ class WebhookBridge:
         result: InboundEventWriteResult,
         payload: dict[str, object],
     ) -> str | None:
-        if (
-            not result.created
-            or self._issue_tracker is None
-        ):
+        if not result.created:
             return None
 
         data = _dict_value(payload.get("data"))
@@ -673,6 +679,7 @@ class WebhookBridge:
                 task=dag.task,
                 ready_nodes=ready_nodes,
                 extra_metadata={
+                    "execution_mode": WRITE_PR,
                     "plan_approved": True,
                     "plan_approved_by": actor,
                     "plan_approval_comment_id": comment_id,
@@ -714,92 +721,6 @@ class WebhookBridge:
             },
         )
         return task.id
-
-    def _linear_status_reply(self, task) -> str:
-        active_sessions = sum(1 for session in task.sessions if session.status == "active")
-        session_word = "session" if active_sessions == 1 else "sessions"
-        return (
-            f"Task {task.external_id} status: {task.status}. "
-            f"Orchestrator: {_orchestrator_summary(task)}. "
-            f"Repo: {task.repo or 'none'}. "
-            f"Sessions: {active_sessions} active {session_word}. "
-            f"{_dag_progress_summary(task)}"
-        )
-
-    async def _linear_context_reply(self, task) -> str:
-        repo_summary = "none"
-        if task.repo:
-            repo = await self._repository.get_repo_by_name(task.repo)
-            if repo is None:
-                repo_summary = f"{task.repo} (unregistered)"
-            else:
-                repo_summary = f"{repo.name} ({repo.provider}, {repo.default_branch})"
-
-        events = [
-            event
-            for session in task.sessions
-            for event in sorted(session.events, key=lambda item: (item.created_at, item.id))
-            if not event.event_type.endswith("_command")
-        ]
-        recent_events = events[-3:]
-        event_lines = [
-            f"- {event.actor} {event.event_type}: {_single_line(event.message)}"
-            for event in recent_events
-        ]
-        if not event_lines:
-            event_lines = ["- none"]
-        return "\n".join(
-            [
-                f"Task {task.external_id} context:",
-                f"Repo: {repo_summary}",
-                "Recent events:",
-                *event_lines,
-            ]
-        )
-
-    def _linear_agents_reply(self, task) -> str:
-        session_lines = []
-        for session in task.sessions:
-            session_lines.append(
-                "- "
-                f"{session.provider} session {session.id}: "
-                f"status {session.status}, "
-                f"repo {session.repo or 'none'}, "
-                f"hermes {session.hermes_session_id or 'none'}, "
-                f"events {len(session.events)}"
-            )
-        if not session_lines:
-            session_lines = ["- none"]
-        return "\n".join(
-            [
-                f"Task {task.external_id} agents:",
-                f"Orchestrator: {_orchestrator_summary(task)}",
-                *session_lines,
-            ]
-        )
-
-    def _linear_nodes_reply(self, task) -> str:
-        dags = getattr(task, "dags", [])
-        if not dags:
-            return f"Task {task.external_id} nodes:\n- none"
-        dag = dags[0]
-        node_lines = []
-        for node in dag.nodes:
-            depends_on = ",".join(node.depends_on) if node.depends_on else "none"
-            orchestrator = node.orchestrator_task_id or "none"
-            node_lines.append(
-                "- "
-                f"{node.node_key}: {node.status}; "
-                f"repo {node.repo or 'none'}; "
-                f"depends_on {depends_on}; "
-                f"orchestrator {orchestrator}"
-            )
-        return "\n".join(
-            [
-                f"Task {task.external_id} nodes:",
-                *node_lines,
-            ]
-        )
 
     async def _normalize_task(
         self,
@@ -870,6 +791,7 @@ class WebhookBridge:
                 "source": task_event.source,
                 "external_id": task_event.external_id,
                 "repo": effective_repo,
+                "execution_mode": task_event.execution_mode,
             },
         )
         hydrated_spec_artifact_id: str | None = None
@@ -942,7 +864,10 @@ class WebhookBridge:
                 },
             )
             return task.id
-        task_metadata: dict[str, object] | None = None
+        task_metadata: dict[str, object] = _task_execution_metadata(
+            task_event=task_event,
+            default_execution_mode=self._settings.agent_default_execution_mode,
+        )
         repo_name: str | None = None
         dag_template: str | None = None
         first_dag_node: str | None = None
@@ -979,12 +904,12 @@ class WebhookBridge:
                     )
                 return task.id
 
-            task_metadata = {
+            task_metadata.update({
                 "repo_provider": repo.provider,
                 "repo_clone_url": repo.clone_url,
                 "repo_default_branch": repo.default_branch,
                 "repo_metadata": dict(repo.metadata_json),
-            }
+            })
             repo_context = await self._repo_context_for_task(repo.name, task_event)
             if repo_context is not None:
                 task_metadata["repo_context"] = repo_context
@@ -1001,11 +926,22 @@ class WebhookBridge:
             )
             repo_name = repo.name
         if spec_bundle is not None:
-            if task_metadata is None:
-                task_metadata = {}
             task_metadata["spec_ingestion"] = spec_bundle.to_metadata()
             task_metadata["hydrated_spec_artifact_id"] = hydrated_spec_artifact_id
-        if self._task_orchestrator is not None:
+        parent_orchestration_deferred = self._defer_parent_orchestration_for_dag(
+            source=source,
+            task_event=task_event,
+            spec_bundle=spec_bundle,
+        )
+        if source == "linear" and task_event.issue_id:
+            await self._repository.create_agent_session(
+                task_id=task.id,
+                provider="linear",
+                external_thread_id=task_event.issue_id,
+                hermes_session_id=None,
+                repo=effective_repo,
+            )
+        if self._task_orchestrator is not None and not parent_orchestration_deferred:
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
                     source=task_event.source,
@@ -1020,6 +956,17 @@ class WebhookBridge:
                 task_id=task.id,
                 orchestrator_task_id=external_task.external_task_id,
                 orchestrator_status=external_task.status,
+            )
+            await record_llm_cost_ledger(
+                repository=self._repository,
+                task_id=task.id,
+                usage=(external_task.metadata or {}).get("llm_observability"),
+                source="task_orchestrator.create_task",
+                source_id=external_task.external_task_id,
+                metadata={
+                    "provider": self._task_orchestrator.provider,
+                    "external_id": task_event.external_id,
+                },
             )
             if source == "linear" and task_event.issue_id:
                 await self._repository.create_agent_session(
@@ -1045,6 +992,26 @@ class WebhookBridge:
                     "status": external_task.status,
                     "llm_observability": (external_task.metadata or {}).get(
                         "llm_observability"
+                    ),
+                },
+            )
+        elif parent_orchestration_deferred:
+            await self._repository.record_audit_event(
+                action="task.parent_orchestration_deferred",
+                actor="system",
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "provider": (
+                        self._task_orchestrator.provider
+                        if self._task_orchestrator is not None
+                        else None
+                    ),
+                    "external_id": task_event.external_id,
+                    "reason": "dag_node_execution_boundary",
+                    "dag_template": task_event.dag_template,
+                    "spec_repo_scope": (
+                        spec_bundle.repo_scope.scope if spec_bundle is not None else None
                     ),
                 },
             )
@@ -1113,20 +1080,16 @@ class WebhookBridge:
                 first_dag_node, first_dag_node_status = await self._enqueue_first_ready_dag_node(
                     dag=dag,
                     task=task,
+                    extra_metadata=task_metadata,
                 )
         elif (
             source == "linear"
             and spec_bundle is not None
-            and (
-                spec_bundle.repo_scope.scope == "multi_repo"
-                or (
-                    spec_bundle.repo_scope.scope == "single_repo"
-                    and self._model_planning_configured()
-                )
-            )
+            and self._linear_spec_dag_requested(spec_bundle)
         ):
             dag_template = "linear-spec"
             dag_plan = await self._plan_linear_spec_dag(
+                task_id=task.id,
                 task_event=task_event,
                 spec_bundle=spec_bundle,
                 registered_repos=registered_repos,
@@ -1387,6 +1350,7 @@ class WebhookBridge:
 
     async def _plan_linear_spec_dag(
         self,
+        task_id: str,
         task_event: NormalizedTaskEvent,
         spec_bundle: SpecIngestionBundle,
         registered_repos: list[object],
@@ -1419,6 +1383,18 @@ class WebhookBridge:
                 )
                 model_provider = response.provider
                 model = response.model
+                await record_llm_cost_ledger(
+                    repository=self._repository,
+                    task_id=task_id,
+                    usage=response.usage,
+                    source="model_provider.plan_agent",
+                    source_id=response.request_id,
+                    metadata={
+                        "provider": response.provider,
+                        "model": response.model,
+                        "external_id": task_event.external_id,
+                    },
+                )
                 parsed_subtasks = DagDecomposer().parse_subtasks(response.content)
                 planned_subtasks = _valid_planned_subtasks(
                     subtasks=parsed_subtasks,
@@ -1463,6 +1439,25 @@ class WebhookBridge:
             return bool(self._settings.claude_api_key)
         return True
 
+    def _linear_spec_dag_requested(self, spec_bundle: SpecIngestionBundle) -> bool:
+        return spec_bundle.repo_scope.scope == "multi_repo" or (
+            spec_bundle.repo_scope.scope == "single_repo"
+            and self._model_planning_configured()
+        )
+
+    def _defer_parent_orchestration_for_dag(
+        self,
+        *,
+        source: str,
+        task_event: NormalizedTaskEvent,
+        spec_bundle: SpecIngestionBundle | None,
+    ) -> bool:
+        if source != "linear":
+            return False
+        if task_event.dag_template:
+            return True
+        return spec_bundle is not None and self._linear_spec_dag_requested(spec_bundle)
+
     async def _linear_planner_repo_contexts(
         self,
         task_event: NormalizedTaskEvent,
@@ -1487,14 +1482,19 @@ class WebhookBridge:
                     )
                 )
             except GraphStoreError as exc:
-                contexts[repo_name] = {"status": "unavailable", "reason": str(exc)}
+                contexts[repo_name] = bounded_graph_context(
+                    status="unavailable",
+                    reason=str(exc),
+                )
                 continue
-            contexts[repo_name] = {
-                "status": "available",
-                "provider": result.provider,
-                "answer": result.answer,
-                "references": result.references,
-            }
+            contexts[repo_name] = bounded_graph_context(
+                status="available",
+                provider=result.provider,
+                answer=result.answer,
+                references=result.references,
+                max_chars=self._settings.graphify_context_max_chars,
+                max_references=self._settings.graphify_context_max_references,
+            )
         return contexts
 
     async def _repo_context_for_task(
@@ -1522,18 +1522,21 @@ class WebhookBridge:
                 )
             )
         except GraphStoreError as exc:
-            return {"status": "unavailable", "reason": str(exc)}
-        return {
-            "status": "available",
-            "provider": result.provider,
-            "answer": result.answer,
-            "references": result.references,
-        }
+            return bounded_graph_context(status="unavailable", reason=str(exc))
+        return bounded_graph_context(
+            status="available",
+            provider=result.provider,
+            answer=result.answer,
+            references=result.references,
+            max_chars=self._settings.graphify_context_max_chars,
+            max_references=self._settings.graphify_context_max_references,
+        )
 
     async def _enqueue_first_ready_dag_node(
         self,
         dag,
         task,
+        extra_metadata: dict[str, object] | None = None,
     ) -> tuple[str, str] | tuple[None, None]:
         ready_nodes = [
             node
@@ -1547,6 +1550,7 @@ class WebhookBridge:
             dag=dag,
             task=task,
             ready_nodes=[node],
+            extra_metadata=extra_metadata,
         )
         queued_node = queued_nodes[0]
         return queued_node.node_key, queued_node.status
@@ -1562,18 +1566,40 @@ class WebhookBridge:
         if self._task_orchestrator is None:
             return queued_nodes
         for node in ready_nodes:
+            if node.orchestrator_task_id:
+                queued_nodes.append(node)
+                continue
             metadata = await build_dag_node_execution_metadata(
                 dag=dag,
                 task=task,
                 node=node,
                 repository=self._repository,
                 graph_store=self._graph_store,
+                settings=self._settings,
             )
             node_metadata = dict(getattr(node, "metadata_json", {}) or {})
             if node_metadata:
                 metadata.update(node_metadata)
             if extra_metadata:
                 metadata.update(extra_metadata)
+            metadata["execution_policy"] = execution_policy_metadata(
+                normalize_execution_mode(
+                    metadata.get("execution_mode"),
+                    default=self._settings.agent_default_execution_mode,
+                )
+            )
+            metadata["orchestrator_idempotency_key"] = _dag_node_idempotency_key(
+                dag_id=dag.id,
+                node_key=node.node_key,
+                metadata=metadata,
+            )
+            metadata = sanitize_write_metadata(
+                metadata,
+                execution_mode=normalize_execution_mode(
+                    metadata.get("execution_mode"),
+                    default=self._settings.agent_default_execution_mode,
+                ),
+            )
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
                     source="dag",
@@ -1593,6 +1619,19 @@ class WebhookBridge:
                 orchestrator_task_id=external_task.external_task_id,
                 orchestrator_status=external_task.status,
                 metadata=persisted_metadata,
+            )
+            await record_llm_cost_ledger(
+                repository=self._repository,
+                task_id=task.id,
+                usage=(external_task.metadata or {}).get("llm_observability"),
+                source="task_orchestrator.create_dag_node",
+                source_id=external_task.external_task_id,
+                dag_id=dag.id,
+                node_key=node.node_key,
+                metadata={
+                    "provider": self._task_orchestrator.provider,
+                    "external_id": task.external_id,
+                },
             )
             queued_nodes.append(queued_node)
             await create_or_start_execution(
@@ -1670,6 +1709,17 @@ class WebhookBridge:
                 "llm_observability": response.usage,
             },
         )
+        await record_llm_cost_ledger(
+            repository=self._repository,
+            task_id=task_id,
+            usage=response.usage,
+            source="hermes_session.start",
+            source_id=response.session_id,
+            metadata={
+                "provider": "linear",
+                "issue_id": task_event.issue_id,
+            },
+        )
 
     async def _record_linear_agent_session_start_failed(
         self,
@@ -1707,6 +1757,18 @@ class WebhookBridge:
                 "issue_id": task_event.issue_id,
                 "error": error,
                 "llm_observability": usage,
+            },
+        )
+        await record_llm_cost_ledger(
+            repository=self._repository,
+            task_id=task_id,
+            usage=usage,
+            source="hermes_session.start_failed",
+            source_id=agent_session.id,
+            metadata={
+                "provider": "linear",
+                "issue_id": task_event.issue_id,
+                "error": error,
             },
         )
 
@@ -1903,6 +1965,11 @@ class WebhookBridge:
         prefix: str | None,
     ) -> None:
         if not secret:
+            if not _allow_unsigned_webhooks(self._settings):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Webhook signing secret is not configured",
+                )
             return
 
         if not signature:
@@ -1948,38 +2015,6 @@ def _str_or_none(value: object) -> str | None:
 
 def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
-
-
-def _single_line(value: str | None) -> str:
-    if not value:
-        return ""
-    return " ".join(value.split())
-
-
-def _orchestrator_summary(task) -> str:
-    if not task.orchestrator_task_id:
-        return "none"
-    status = task.orchestrator_status or "unknown"
-    return f"{task.orchestrator_task_id} ({status})"
-
-
-def _dag_progress_summary(task) -> str:
-    dags = getattr(task, "dags", [])
-    if not dags:
-        return "DAG: none."
-    dag = dags[0]
-    completed = {node.node_key for node in dag.nodes if node.status == "completed"}
-    ready_nodes = [
-        node
-        for node in dag.nodes
-        if node.status != "completed"
-        and all(dependency in completed for dependency in node.depends_on)
-    ]
-    next_node = ready_nodes[0].node_key if ready_nodes else "none"
-    return (
-        f"DAG: {dag.status}, {len(completed)}/{len(dag.nodes)} completed, "
-        f"{len(ready_nodes)} ready, next: {next_node}."
-    )
 
 
 def _pr_node_metadata(task_update: NormalizedTaskUpdate) -> dict[str, object]:
@@ -2037,6 +2072,33 @@ def _linear_assignment_reply(
     return "\n".join(lines)
 
 
+def _task_execution_metadata(
+    *,
+    task_event: NormalizedTaskEvent,
+    default_execution_mode: str,
+) -> dict[str, object]:
+    execution_mode = normalize_execution_mode(
+        task_event.execution_mode,
+        default=default_execution_mode,
+    )
+    return {
+        "execution_mode": execution_mode,
+        "execution_policy": execution_policy_metadata(execution_mode),
+        "user_intent": _user_intent_metadata(task_event),
+    }
+
+
+def _user_intent_metadata(task_event: NormalizedTaskEvent) -> dict[str, object]:
+    return {
+        "source": task_event.source,
+        "external_id": task_event.external_id,
+        "issue_id": task_event.issue_id,
+        "title": task_event.title,
+        "body": task_event.body,
+        "url": task_event.url,
+    }
+
+
 def _linear_repo_clarification_reply(
     external_id: str,
     registered_repo_names: list[str],
@@ -2083,26 +2145,26 @@ def _linear_spec_node_metadata(
     dag_plan: LinearDagPlan,
     hydrated_spec_artifact_id: str | None = None,
 ) -> dict[str, object]:
+    execution_mode = normalize_execution_mode(task_event.execution_mode)
     return {
         "spec_ingestion": spec_bundle.to_metadata(),
         "hydrated_spec_artifact_id": hydrated_spec_artifact_id,
         "planning_strategy": dag_plan.strategy,
-        "execution_policy": {
-            "terminal_command_prefix": "rtk",
-            "repo_context_policy": "graphstore_first_then_narrow_source_verification",
-            "github_write_enabled": False,
-        },
+        "execution_mode": execution_mode,
+        "user_intent": _user_intent_metadata(task_event),
+        "execution_policy": execution_policy_metadata(execution_mode),
         "linear_task": {
             "external_id": task_event.external_id,
             "issue_id": task_event.issue_id,
             "title": task_event.title,
             "url": task_event.url,
+            "body": task_event.body,
         },
         "execution_contract": {
             "one_code_pr_per_executable_node": True,
             "branch_reference_format": "agent/dag/<dag_id>/<node_key>",
             "pr_reference_format": "dag/<dag_id>/<node_key>",
-            "requires_human_write_enablement": True,
+            "requires_write_execution_mode": True,
         },
     }
 
@@ -2146,11 +2208,54 @@ def _valid_planned_subtasks(
             return []
         if subtask.id in subtask.depends_on:
             return []
+    if _has_dependency_cycle(subtasks):
+        return []
     return subtasks
 
 
 def _valid_node_key(value: str) -> bool:
     return re.fullmatch(r"[a-z][a-z0-9_]{1,63}", value) is not None
+
+
+def _dag_node_idempotency_key(
+    *,
+    dag_id: str,
+    node_key: str,
+    metadata: dict[str, object],
+) -> str:
+    retry_count = metadata.get("retry_count")
+    attempt = retry_count if isinstance(retry_count, int) else 0
+    return f"{dag_id}:{node_key}:{attempt}"
+
+
+def _has_dependency_cycle(subtasks: list[Subtask]) -> bool:
+    dependencies = {subtask.id: set(subtask.depends_on) for subtask in subtasks}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node_id: str) -> bool:
+        if node_id in visited:
+            return False
+        if node_id in visiting:
+            return True
+        visiting.add(node_id)
+        for dependency in dependencies[node_id]:
+            if visit(dependency):
+                return True
+        visiting.remove(node_id)
+        visited.add(node_id)
+        return False
+
+    return any(visit(node_id) for node_id in dependencies)
+
+
+def _allow_unsigned_webhooks(settings: Settings) -> bool:
+    return bool(settings.allow_unsigned_webhooks) or settings.environment in {
+        "local",
+        "dev",
+        "development",
+        "test",
+    }
 
 
 def _merge_linear_issue_context(

@@ -26,7 +26,11 @@ async def test_dag_decomposer_uses_model_provider_port_when_available() -> None:
     subtasks = await decomposer.decompose("# Feature")
 
     assert [request.role for request in provider.requests] == ["plan_agent"]
-    assert [subtask.id for subtask in subtasks] == ["scaffold"]
+    assert [subtask.id for subtask in subtasks] == ["implementation"]
+    assert subtasks[0].acceptance_criteria == (
+        "Requested behavior is implemented end to end.",
+        "Relevant tests or documented verification are included in the same PR.",
+    )
 
 
 async def test_dag_decomposer_parses_model_json_subtasks() -> None:

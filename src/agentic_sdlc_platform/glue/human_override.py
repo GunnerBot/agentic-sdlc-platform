@@ -265,7 +265,7 @@ def parse_node_override(text: str) -> NodeOverrideCommand | None:
 def parse_plan_approval(text: str) -> PlanApprovalCommand | None:
     match = re.match(
         r"^/approve-plan\s+"
-        r"(?P<external_id>[A-Z][A-Z0-9]+-\d+)\s*$",
+        r"(?P<external_id>[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+)\s*$",
         text.strip(),
         flags=re.IGNORECASE,
     )

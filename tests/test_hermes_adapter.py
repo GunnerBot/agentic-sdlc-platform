@@ -246,9 +246,9 @@ async def test_hermes_adapter_openai_compatible_starts_session() -> None:
         "input_tokens": 120,
         "output_tokens": 12,
         "total_tokens": 132,
-        "estimated_cost_usd": 0.000144,
-        "input_cost_per_million_usd": 0.75,
-        "output_cost_per_million_usd": 4.5,
+        "estimated_cost_usd": 0.000054,
+        "input_cost_per_million_usd": 0.25,
+        "output_cost_per_million_usd": 2.0,
         "estimation_method": "provider_usage",
     }
     assert captured_request is not None

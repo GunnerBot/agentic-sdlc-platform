@@ -5,7 +5,7 @@ services:
       - /bin/bash
       - -lc
       - |
-        /opt/hermes/.venv/bin/python3 -c 'import os, yaml; path="/opt/data/config.yaml"; data=yaml.safe_load(open(path)) or {}; model=data.setdefault("model", {}); model["default"]=os.getenv("HERMES_MODEL", "gpt-5.4-mini"); model["provider"]=os.getenv("HERMES_INFERENCE_PROVIDER", "custom"); model["base_url"]=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"); yaml.safe_dump(data, open(path, "w"), sort_keys=False)'
+        /opt/hermes/.venv/bin/python3 -c 'import os, yaml; path="/opt/data/config.yaml"; data=yaml.safe_load(open(path)) or {}; model=data.setdefault("model", {}); model["default"]=os.getenv("HERMES_MODEL", "gpt-5-mini"); model["provider"]=os.getenv("HERMES_INFERENCE_PROVIDER", "custom"); model["base_url"]=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"); yaml.safe_dump(data, open(path, "w"), sort_keys=False)'
         exec /opt/hermes/.venv/bin/hermes gateway run
     restart: unless-stopped
     environment:
@@ -15,7 +15,7 @@ services:
       API_SERVER_KEY: ${ASDLC_HERMES_API_KEY:?Set ASDLC_HERMES_API_KEY in .env.local}
       API_SERVER_MODEL_NAME: ${ASDLC_HERMES_MODEL:-hermes-agent}
       HERMES_INFERENCE_PROVIDER: ${ASDLC_HERMES_INFERENCE_PROVIDER:-custom}
-      HERMES_MODEL: ${ASDLC_HERMES_INFERENCE_MODEL:-gpt-5.4-mini}
+      HERMES_MODEL: ${ASDLC_HERMES_INFERENCE_MODEL:-gpt-5-mini}
       OPENAI_API_KEY: ${ASDLC_OPENAI_API_KEY:?Set ASDLC_OPENAI_API_KEY in .env.local}
       OPENAI_BASE_URL: ${ASDLC_OPENAI_BASE_URL:-https://api.openai.com/v1}
       HERMES_EXEC_ASK: ${ASDLC_HERMES_EXEC_ASK:-false}

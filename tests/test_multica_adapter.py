@@ -137,7 +137,41 @@ async def test_multica_adapter_creates_agent_issue_and_task_run() -> None:
     assert issue_payload["assignee_type"] == "agent"
     assert issue_payload["assignee_id"] == "agent-hermes"
     assert issue_payload["title"] == "Build webhook bridge"
-    assert "agent/dag/dag-1/design" in issue_payload["description"]
+    assert "Execution mode: dry_run" in issue_payload["description"]
+    assert "GitHub write enabled: false" in issue_payload["description"]
+    assert "Max model retries: 0" in issue_payload["description"]
+    assert "agent/dag/dag-1/design" not in issue_payload["description"]
+
+
+def test_multica_description_keeps_branch_reference_only_in_write_mode() -> None:
+    orchestrator = MulticaTaskOrchestrator(multica_settings())
+    description = orchestrator._issue_description(
+        request=TaskRequest(
+            source="dag",
+            external_id="dag-1:design",
+            title="Design webhook bridge",
+            repo="keychain-os-erp",
+            metadata={
+                "execution_mode": "write_pr",
+                "expected_branch": "agent/dag/dag-1/design",
+                "expected_pr_reference": "dag/dag-1/design",
+                "user_intent": {
+                    "title": "Build webhook bridge",
+                    "body": "Preserve the full Linear request body.",
+                },
+            },
+        ),
+        runtime_provider="hermes",
+        agent={"id": "agent-hermes", "name": "agentic-sdlc-hermes"},
+    )
+
+    assert "Execution mode: write_pr" in description
+    assert "GitHub write enabled: true" in description
+    assert "Max model retries: 1" in description
+    assert "Use trunk-based development" in description
+    assert "feature flag or equivalent compatibility gate" in description
+    assert "agent/dag/dag-1/design" in description
+    assert "Preserve the full Linear request body." in description
 
 
 async def test_multica_adapter_reuses_existing_agent_for_provider_runtime() -> None:
@@ -235,6 +269,69 @@ async def test_multica_adapter_reads_task_from_issue_task_runs() -> None:
         "multica_agent_id": "agent-codex",
         "multica_runtime_id": "runtime-codex",
         "multica_attempt": 2,
+    }
+
+
+async def test_multica_adapter_extracts_pr_url_from_completed_task_output() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/issues/issue-1/task-runs"
+        return httpx.Response(
+            status_code=200,
+            json=[
+                {
+                    "id": "multica-task-1",
+                    "status": "completed",
+                    "agent_id": "agent-hermes",
+                    "runtime_id": "runtime-hermes",
+                    "issue_id": "issue-1",
+                    "result": {
+                        "output": (
+                            "Completed. PR opened:\n\n"
+                            "https://github.com/atlas-tech-inc/keychain-os-erp/pull/1318"
+                        ),
+                        "pr_url": "",
+                        "usage": {
+                            "model": "gpt-5-mini",
+                            "input_tokens": 1200,
+                            "output_tokens": 80,
+                            "total_tokens": 1280,
+                            "estimated_cost_usd": 0.00046,
+                            "response_ids": ["resp-1"],
+                        },
+                    },
+                }
+            ],
+        )
+
+    orchestrator = MulticaTaskOrchestrator(
+        multica_settings(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = await orchestrator.read_task(
+        TaskReadRequest(
+            external_task_id="multica-task-1",
+            metadata={"multica_issue_id": "issue-1"},
+        )
+    )
+
+    assert response.metadata["pr_url"] == (
+        "https://github.com/atlas-tech-inc/keychain-os-erp/pull/1318"
+    )
+    assert response.metadata["pr_number"] == 1318
+    assert response.metadata["llm_observability"] == {
+        "operation": "hermes.multica_task_execution",
+        "model": "gpt-5-mini",
+        "input_tokens": 1200,
+        "output_tokens": 80,
+        "total_tokens": 1280,
+        "estimated_cost_usd": 0.00046,
+        "input_cost_per_million_usd": 0.25,
+        "output_cost_per_million_usd": 2.0,
+        "estimation_method": "provider_usage",
+        "cost_source": "provider",
+        "provider_reported_cost": True,
+        "response_ids": ["resp-1"],
     }
 
 

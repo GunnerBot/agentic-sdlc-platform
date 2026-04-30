@@ -3,14 +3,29 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from agentic_sdlc_platform.glue.conversation_sync import ConversationSyncService
+from agentic_sdlc_platform.glue.dag_completion_verifier import (
+    CompletionVerification,
+    verify_node_completion,
+)
 from agentic_sdlc_platform.glue.dag_decomposer import DagDecomposer
 from agentic_sdlc_platform.glue.dag_execution import (
     build_dag_node_execution_metadata,
     create_or_start_execution,
 )
 from agentic_sdlc_platform.glue.dag_templates import build_dag_template
+from agentic_sdlc_platform.glue.execution_policy import (
+    DRY_RUN,
+    WRITE_PR,
+    execution_policy_metadata,
+    normalize_execution_mode,
+    sanitize_write_metadata,
+)
 from agentic_sdlc_platform.glue.llm_observability import (
+    LLM_COST_LEDGER_ARTIFACT_KIND,
+    enrich_usage_records,
+    record_llm_cost_ledger,
     summarize_usage_records,
+    usage_records_from_ledger_artifacts,
     usage_records_from_metadata,
 )
 from agentic_sdlc_platform.models.tasks import (
@@ -113,7 +128,29 @@ async def get_task_llm_observability(
             detail="Task not found",
         )
 
-    records: list[dict[str, object]] = []
+    ledger_artifacts = await request.app.state.repository.list_task_artifacts(
+        task_id=task.id,
+        kind=LLM_COST_LEDGER_ARTIFACT_KIND,
+    )
+    records: list[dict[str, object]] = usage_records_from_ledger_artifacts(
+        ledger_artifacts
+    )
+    if records:
+        summary = summarize_usage_records(records)
+        response_records = enrich_usage_records(records)
+        return TaskLlmObservabilityResponse(
+            task_id=task.id,
+            external_id=task.external_id,
+            records=[LlmUsageRecordResponse(**record) for record in response_records],
+            total_input_tokens=summary["total_input_tokens"],
+            total_output_tokens=summary["total_output_tokens"],
+            total_tokens=summary["total_tokens"],
+            total_estimated_cost_usd=summary["total_estimated_cost_usd"],
+            exact_token_record_count=summary["exact_token_record_count"],
+            estimated_token_record_count=summary["estimated_token_record_count"],
+            provider_cost_record_count=summary["provider_cost_record_count"],
+        )
+
     list_audit_events = getattr(
         request.app.state.repository,
         "list_audit_events_for_targets",
@@ -148,14 +185,18 @@ async def get_task_llm_observability(
             )
 
     summary = summarize_usage_records(records)
+    response_records = enrich_usage_records(records)
     return TaskLlmObservabilityResponse(
         task_id=task.id,
         external_id=task.external_id,
-        records=[LlmUsageRecordResponse(**record) for record in records],
+        records=[LlmUsageRecordResponse(**record) for record in response_records],
         total_input_tokens=summary["total_input_tokens"],
         total_output_tokens=summary["total_output_tokens"],
         total_tokens=summary["total_tokens"],
         total_estimated_cost_usd=summary["total_estimated_cost_usd"],
+        exact_token_record_count=summary["exact_token_record_count"],
+        estimated_token_record_count=summary["estimated_token_record_count"],
+        provider_cost_record_count=summary["provider_cost_record_count"],
     )
 
 
@@ -200,6 +241,28 @@ async def sync_session_orchestrator_comments(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+    read_task = getattr(request.app.state.task_orchestrator, "read_task", None)
+    if callable(read_task):
+        external_task = await read_task(
+            TaskReadRequest(
+                external_task_id=session.orchestrator_task_id,
+                metadata={
+                    "multica_issue_id": session.orchestrator_issue_id,
+                    "orchestrator_issue_id": session.orchestrator_issue_id,
+                },
+            )
+        )
+        await request.app.state.repository.update_task_status(
+            task_id=task.id,
+            status=_node_status_from_orchestrator(external_task.status),
+        )
+        await _record_synced_task_usage(
+            request=request,
+            task_id=task.id,
+            dag_id=None,
+            node_key=None,
+            external_task=external_task,
+        )
 
     refreshed = await request.app.state.repository.get_task(task_id)
     if refreshed is None:
@@ -236,8 +299,13 @@ async def create_task_dag(
     if body.template:
         subtasks = build_dag_template(body.template, task)
     else:
+        spec_markdown = await _hydrated_spec_markdown(
+            request=request,
+            task=task,
+            spec_markdown=body.spec_markdown,
+        )
         subtasks = await DagDecomposer(model_provider=request.app.state.model_provider).decompose(
-            body.spec_markdown
+            spec_markdown
         )
     dag = await request.app.state.repository.create_task_dag(
         task_id=task_id,
@@ -395,13 +463,48 @@ async def sync_dag_node_orchestrator_state(
             metadata=dict(node.metadata_json),
         )
     )
+    status_from_orchestrator = _node_status_from_orchestrator(external_task.status)
+    metadata = external_task.metadata
+    verification: CompletionVerification | None = None
+    if status_from_orchestrator == "completed":
+        verification = verify_node_completion(
+            node_key=node.node_key,
+            node_title=node.title,
+            repo=node.repo,
+            metadata=dict(node.metadata_json),
+            external_metadata=metadata or {},
+        )
+        metadata = {
+            **(metadata or {}),
+            "completion_verification": {
+                "status": verification.status,
+                "missing": list(verification.missing),
+                "follow_up_nodes": [followup.id for followup in verification.followups],
+                "evidence": verification.evidence,
+            },
+        }
     synced_node = await request.app.state.repository.update_dag_node_status(
         dag_id=dag_id,
         node_key=node_key,
-        status=_node_status_from_orchestrator(external_task.status),
+        status=(
+            "needs_changes"
+            if verification is not None
+            and not verification.satisfied
+            and not verification.followups
+            else status_from_orchestrator
+        ),
         orchestrator_status=external_task.status,
-        metadata=external_task.metadata,
+        metadata=metadata,
     )
+    await _record_synced_task_usage(
+        request=request,
+        task_id=task_id,
+        dag_id=dag_id,
+        node_key=node_key,
+        external_task=external_task,
+    )
+    if synced_node.status in {"completed", "failed", "skipped"}:
+        await request.app.state.repository.refresh_dag_completion_status(dag_id)
     return _node_response(synced_node)
 
 
@@ -426,7 +529,15 @@ async def create_dag_node_execution(
         node=node,
         repository=request.app.state.repository,
         graph_store=request.app.state.graph_store,
+        settings=request.app.state.settings,
     )
+    execution_mode = normalize_execution_mode(body.execution_mode, default=DRY_RUN)
+    if execution_mode == WRITE_PR and not body.confirm_write_pr:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="write_pr execution requires confirm_write_pr=true",
+        )
+    metadata["execution_mode"] = execution_mode
     execution = await create_or_start_execution(
         repository=request.app.state.repository,
         agent_executor=request.app.state.agent_executor if body.start else None,
@@ -500,12 +611,31 @@ async def _enqueue_ready_nodes(
 ):
     queued_nodes = []
     for node in ready_nodes:
+        if node.orchestrator_task_id:
+            queued_nodes.append(node)
+            continue
         metadata = await build_dag_node_execution_metadata(
             dag=dag,
             task=task,
             node=node,
             repository=request.app.state.repository,
             graph_store=request.app.state.graph_store,
+            settings=request.app.state.settings,
+        )
+        execution_mode = normalize_execution_mode(
+            metadata.get("execution_mode"),
+            default=request.app.state.settings.agent_default_execution_mode,
+        )
+        metadata["execution_mode"] = execution_mode
+        metadata["execution_policy"] = execution_policy_metadata(execution_mode)
+        metadata["orchestrator_idempotency_key"] = _dag_node_idempotency_key(
+            dag_id=dag.id,
+            node_key=node.node_key,
+            metadata=metadata,
+        )
+        task_metadata = sanitize_write_metadata(
+            metadata,
+            execution_mode=execution_mode,
         )
         external_task = await request.app.state.task_orchestrator.create_task(
             TaskRequest(
@@ -513,11 +643,11 @@ async def _enqueue_ready_nodes(
                 external_id=f"{dag.id}:{node.node_key}",
                 title=node.title,
                 repo=node.repo,
-                metadata=metadata,
+                metadata=task_metadata,
             )
         )
         persisted_metadata = {
-            **metadata,
+            **task_metadata,
             **(external_task.metadata or {}),
         }
         queued_nodes.append(
@@ -538,6 +668,124 @@ async def _enqueue_ready_nodes(
             metadata=persisted_metadata,
         )
     return queued_nodes
+
+
+def _dag_node_idempotency_key(
+    *,
+    dag_id: str,
+    node_key: str,
+    metadata: dict[str, object],
+) -> str:
+    retry_count = metadata.get("retry_count")
+    attempt = retry_count if isinstance(retry_count, int) else 0
+    return f"{dag_id}:{node_key}:{attempt}"
+
+
+async def _record_synced_task_usage(
+    *,
+    request: Request,
+    task_id: str,
+    dag_id: str | None,
+    node_key: str | None,
+    external_task,
+) -> None:
+    usage = (external_task.metadata or {}).get("llm_observability")
+    if not isinstance(usage, dict):
+        return
+    source = "task_orchestrator.read_dag_node"
+    source_id = external_task.external_task_id
+    existing_artifacts = await request.app.state.repository.list_task_artifacts(
+        task_id=task_id,
+        kind=LLM_COST_LEDGER_ARTIFACT_KIND,
+        dag_id=dag_id,
+        node_key=node_key,
+    )
+    for artifact in existing_artifacts:
+        content = getattr(artifact, "content_json", None)
+        if not isinstance(content, dict):
+            continue
+        if content.get("source") == source and content.get("source_id") == source_id:
+            return
+    await record_llm_cost_ledger(
+        repository=request.app.state.repository,
+        task_id=task_id,
+        usage=usage,
+        source=source,
+        source_id=source_id,
+        dag_id=dag_id,
+        node_key=node_key,
+        metadata={
+            "provider": getattr(request.app.state.task_orchestrator, "provider", None),
+        },
+    )
+
+
+async def _hydrated_spec_markdown(
+    *,
+    request: Request,
+    task: Task,
+    spec_markdown: str,
+) -> str:
+    issue_tracker = getattr(request.app.state, "issue_tracker", None)
+    get_issue_context = getattr(issue_tracker, "get_issue_context", None)
+    if task.source != "linear" or not callable(get_issue_context):
+        return spec_markdown
+
+    try:
+        issue_context = await get_issue_context(task.external_id)
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        await request.app.state.repository.create_task_artifact(
+            task_id=task.id,
+            kind="hydrated_spec",
+            name=f"{task.external_id}:hydration-failed",
+            content={
+                "provided_spec_markdown": spec_markdown,
+                "error": str(exc),
+            },
+            metadata={"provider": "linear", "status": "failed"},
+        )
+        return spec_markdown
+
+    sections = [spec_markdown.strip()]
+    if issue_context.title:
+        sections.append(f"# Linear title\n{issue_context.title}")
+    if issue_context.description:
+        sections.append(f"# Linear description\n{issue_context.description}")
+    if issue_context.url:
+        sections.append(f"# Linear URL\n{issue_context.url}")
+    for attachment in issue_context.attachments or []:
+        attachment_text = attachment.content or attachment.url
+        if attachment_text:
+            sections.append(
+                f"# Linear attachment: {attachment.title or attachment.id or 'attachment'}\n"
+                f"{attachment_text}"
+            )
+    for comment in issue_context.comments or []:
+        if comment.body:
+            sections.append(
+                f"# Linear comment: {comment.id or comment.actor or 'comment'}\n"
+                f"{comment.body}"
+            )
+    hydrated = "\n\n".join(section for section in sections if section)
+    await request.app.state.repository.create_task_artifact(
+        task_id=task.id,
+        kind="hydrated_spec",
+        name=f"{task.external_id}:dag-planning-spec",
+        content={
+            "provided_spec_markdown": spec_markdown,
+            "hydrated_spec_markdown": hydrated,
+            "linear": {
+                "issue_id": issue_context.issue_id,
+                "identifier": issue_context.identifier,
+                "title": issue_context.title,
+                "url": issue_context.url,
+                "attachment_count": len(issue_context.attachments or []),
+                "comment_count": len(issue_context.comments or []),
+            },
+        },
+        metadata={"provider": "linear", "status": "hydrated"},
+    )
+    return hydrated
 
 
 async def _require_task_dag(request: Request, task_id: str, dag_id: str):
@@ -571,6 +819,10 @@ def _dag_response(dag: TaskDag) -> TaskDagResponse:
 
 def _node_response(node, status_override: str | None = None) -> TaskDagNodeResponse:
     metadata = dict(getattr(node, "metadata_json", {}) or {})
+    completion_verification = metadata.get("completion_verification")
+    completion_verification = (
+        completion_verification if isinstance(completion_verification, dict) else {}
+    )
     return TaskDagNodeResponse(
         node_key=node.node_key,
         title=node.title,
@@ -591,6 +843,10 @@ def _node_response(node, status_override: str | None = None) -> TaskDagNodeRespo
         multica_runtime_provider=_str_or_none(metadata.get("multica_runtime_provider")),
         failure_error=_str_or_none(metadata.get("failure_error")),
         retry_count=_int_or_none(metadata.get("retry_count")) or 0,
+        acceptance_criteria=_string_list(metadata.get("acceptance_criteria")),
+        verification_status=_str_or_none(completion_verification.get("status")),
+        verification_missing=_string_list(completion_verification.get("missing")),
+        follow_up_nodes=_string_list(completion_verification.get("follow_up_nodes")),
         executions=[
             _execution_response(execution)
             for execution in node.__dict__.get("executions", [])
@@ -654,7 +910,7 @@ def _dag_summary_response(dag: TaskDag) -> TaskDagSummaryResponse:
     ready_nodes = [
         node
         for node in dag.nodes
-        if node.status not in {"completed", "skipped", "failed"}
+        if node.status in {"ready", "blocked"}
         and all(dependency in completed_or_skipped_node_keys for dependency in node.depends_on)
     ]
     return TaskDagSummaryResponse(
@@ -695,6 +951,12 @@ def _session_detail_response(session: AgentSession) -> AgentSessionDetailRespons
 
 def _str_or_none(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
 
 
 def _int_or_none(value: object) -> int | None:

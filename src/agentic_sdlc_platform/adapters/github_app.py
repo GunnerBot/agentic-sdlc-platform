@@ -26,8 +26,14 @@ class GitHubAppSourceControl:
         self._settings = settings
         self._transport = transport
 
-    async def list_installation_repositories(self) -> SourceInstallation:
-        token = await self._installation_token()
+    async def list_installation_repositories(
+        self,
+        installation_id: str | None = None,
+    ) -> SourceInstallation:
+        resolved_installation_id = _required(
+            installation_id or self._settings.github_app_installation_id
+        )
+        token = await self._installation_token(resolved_installation_id)
         repositories: list[object] = []
         try:
             async with httpx.AsyncClient(
@@ -63,7 +69,7 @@ class GitHubAppSourceControl:
 
         return SourceInstallation(
             provider=self.provider,
-            installation_id=_required(self._settings.github_app_installation_id),
+            installation_id=resolved_installation_id,
             account=_account_login(repositories),
             repositories=[
                 _source_repository(repository)
@@ -72,8 +78,10 @@ class GitHubAppSourceControl:
             ],
         )
 
-    async def installation_token(self) -> str:
-        installation_id = _required(self._settings.github_app_installation_id)
+    async def installation_token(self, installation_id: str | None = None) -> str:
+        resolved_installation_id = _required(
+            installation_id or self._settings.github_app_installation_id
+        )
         jwt = _github_app_jwt(
             app_id=_required(self._settings.github_app_id),
             private_key_pem=self._private_key_pem(),
@@ -85,7 +93,7 @@ class GitHubAppSourceControl:
                 transport=self._transport,
             ) as client:
                 response = await client.post(
-                    f"/app/installations/{installation_id}/access_tokens",
+                    f"/app/installations/{resolved_installation_id}/access_tokens",
                     headers={
                         "Accept": "application/vnd.github+json",
                         "Authorization": f"Bearer {jwt}",
@@ -102,8 +110,8 @@ class GitHubAppSourceControl:
             raise SourceControlError("github app installation token response missing token")
         return token
 
-    async def _installation_token(self) -> str:
-        return await self.installation_token()
+    async def _installation_token(self, installation_id: str) -> str:
+        return await self.installation_token(installation_id)
 
     def _private_key_pem(self) -> str:
         if self._settings.github_app_private_key:

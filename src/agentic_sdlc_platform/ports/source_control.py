@@ -28,5 +28,8 @@ class SourceInstallation:
 class SourceControlPort(Protocol):
     provider: str
 
-    async def list_installation_repositories(self) -> SourceInstallation:
+    async def list_installation_repositories(
+        self,
+        installation_id: str | None = None,
+    ) -> SourceInstallation:
         raise NotImplementedError

@@ -1,8 +1,11 @@
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from agentic_sdlc_platform.models.repos import (
+    GitHubAppImportRequest,
     GitHubAppImportResponse,
+    GitHubAppInstallationRecordResponse,
     GitHubAppInstallationResponse,
+    GitHubAppInstallUrlResponse,
     GitHubAppRepositoryResponse,
     RepoIndexAllResponse,
     RepoIndexJobResponse,
@@ -66,12 +69,44 @@ async def index_all_repos(request: Request) -> RepoIndexAllResponse:
 
 
 @router.get(
+    "/github-app/install-url",
+    response_model=GitHubAppInstallUrlResponse,
+    responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "GitHub App unavailable"}},
+)
+async def get_github_app_install_url(
+    request: Request,
+    workspace_id: str = Query(default="default", min_length=1),
+) -> GitHubAppInstallUrlResponse:
+    app_slug = request.app.state.settings.github_app_slug
+    if not app_slug:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GitHub App slug is not configured",
+        )
+    return GitHubAppInstallUrlResponse(
+        workspace_id=workspace_id,
+        app_slug=app_slug,
+        install_url=f"https://github.com/apps/{app_slug}/installations/new",
+        instructions=(
+            "Install the GitHub App, choose the account or organization, and select "
+            "the repositories this workspace may read and write."
+        ),
+    )
+
+
+@router.get(
     "/github-app/installation",
     response_model=GitHubAppInstallationResponse,
     responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "GitHub App unavailable"}},
 )
-async def get_github_app_installation(request: Request) -> GitHubAppInstallationResponse:
-    installation = await _github_app_installation(request)
+async def get_github_app_installation(
+    request: Request,
+    installation_id: str | None = Query(default=None, min_length=1),
+) -> GitHubAppInstallationResponse:
+    installation = await _github_app_installation(
+        request,
+        installation_id=installation_id,
+    )
     return _github_app_installation_response(installation)
 
 
@@ -82,9 +117,55 @@ async def get_github_app_installation(request: Request) -> GitHubAppInstallation
     responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "GitHub App unavailable"}},
 )
 async def import_github_app_repositories(request: Request) -> GitHubAppImportResponse:
-    installation = await _github_app_installation(request)
+    return await _import_github_app_repositories(
+        request=request,
+        body=GitHubAppImportRequest(),
+    )
+
+
+@router.post(
+    "/github-app/sync",
+    response_model=GitHubAppImportResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Malformed request body"},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "GitHub App unavailable"},
+    },
+)
+async def sync_github_app_repositories(
+    body: GitHubAppImportRequest,
+    request: Request,
+) -> GitHubAppImportResponse:
+    return await _import_github_app_repositories(request=request, body=body)
+
+
+async def _import_github_app_repositories(
+    *,
+    request: Request,
+    body: GitHubAppImportRequest,
+) -> GitHubAppImportResponse:
+    installation = await _github_app_installation(
+        request,
+        installation_id=body.installation_id,
+    )
+    installation_record = await request.app.state.repository.upsert_github_installation(
+        workspace_id=body.workspace_id,
+        installation_id=installation.installation_id,
+        account=installation.account,
+        repository_selection="selected",
+        permissions=_installation_permissions(installation),
+        status="active",
+        metadata={
+            "repo_count": len(installation.repositories),
+            "single_app_read_write": True,
+        },
+    )
     imported = []
     for repo in installation.repositories:
+        write_enabled = _repo_write_enabled(
+            repo.permissions,
+            request.app.state.settings.github_app_write_enabled_default,
+        )
         imported.append(
             await request.app.state.repository.upsert_repo(
                 name=repo.full_name,
@@ -98,16 +179,17 @@ async def import_github_app_repositories(request: Request) -> GitHubAppImportRes
                     "github_html_url": repo.html_url,
                     "github_private": repo.private,
                     "github_permissions": repo.permissions,
-                    "write_enabled": False,
-                    "write_enablement_todo": (
-                        "Enable GitHub App write scopes before automatic branch push "
-                        "and PR creation."
-                    ),
+                    "workspace_id": body.workspace_id,
+                    "read_enabled": True,
+                    "write_enabled": write_enabled,
+                    "allowed_branch_prefix": "agent/dag/",
+                    "write_policy": _repo_write_policy(write_enabled),
                 },
             )
         )
     return GitHubAppImportResponse(
         imported=len(imported),
+        installation=_github_app_installation_record_response(installation_record),
         repositories=[_repo_response(repo) for repo in imported],
     )
 
@@ -209,7 +291,10 @@ def _repo_response(repo: RepositoryRecord) -> RepoResponse:
     )
 
 
-async def _github_app_installation(request: Request) -> SourceInstallation:
+async def _github_app_installation(
+    request: Request,
+    installation_id: str | None = None,
+) -> SourceInstallation:
     source_control = request.app.state.source_control
     if source_control is None:
         raise HTTPException(
@@ -217,7 +302,9 @@ async def _github_app_installation(request: Request) -> SourceInstallation:
             detail="GitHub App read-only integration is not configured",
         )
     try:
-        return await source_control.list_installation_repositories()
+        return await source_control.list_installation_repositories(
+            installation_id=installation_id,
+        )
     except SourceControlError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -245,6 +332,59 @@ def _github_app_installation_response(
             for repo in installation.repositories
         ],
     )
+
+
+def _github_app_installation_record_response(
+    installation,
+) -> GitHubAppInstallationRecordResponse:
+    return GitHubAppInstallationRecordResponse(
+        id=installation.id,
+        workspace_id=installation.workspace_id,
+        provider=installation.provider,
+        installation_id=installation.installation_id,
+        account=installation.account,
+        repository_selection=installation.repository_selection,
+        status=installation.status,
+        permissions=installation.permissions_json,
+        metadata=installation.metadata_json,
+    )
+
+
+def _installation_permissions(installation: SourceInstallation) -> dict[str, object]:
+    permission_names: dict[str, object] = {}
+    for repo in installation.repositories:
+        for key, value in repo.permissions.items():
+            if value:
+                permission_names[key] = True
+            elif key not in permission_names:
+                permission_names[key] = False
+    return permission_names
+
+
+def _repo_write_enabled(
+    permissions: dict[str, bool],
+    default_write_enabled: bool,
+) -> bool:
+    if permissions.get("push") is False:
+        return False
+    if permissions.get("contents_write") is True:
+        return True
+    if permissions.get("pull_requests_write") is True:
+        return True
+    if permissions.get("contents") is False or permissions.get("pull_requests") is False:
+        return False
+    return default_write_enabled
+
+
+def _repo_write_policy(write_enabled: bool) -> dict[str, object]:
+    return {
+        "enabled": write_enabled,
+        "branch_prefix": "agent/dag/",
+        "direct_default_branch_push": False,
+        "requires_plan_approval": True,
+        "auto_merge_enabled": False,
+        "requires_pr_body_reference": "dag/<dag_id>/<node_key>",
+    }
 
 
 async def _index_repo_record(repo: RepositoryRecord, request: Request) -> RepoIndexJob:

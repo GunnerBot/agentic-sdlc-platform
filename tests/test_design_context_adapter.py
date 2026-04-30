@@ -100,7 +100,7 @@ async def test_openai_image_adapter_fetches_and_summarizes_attachment() -> None:
             openai_api_key="openai-token",
             linear_api_key="linear-token",
             design_image_hydration_enabled=True,
-            design_image_summary_model="gpt-5.4-mini",
+            design_image_summary_model="gpt-5",
         ),
         transport=httpx.MockTransport(handler),
     )
@@ -119,7 +119,7 @@ async def test_openai_image_adapter_fetches_and_summarizes_attachment() -> None:
         "source_content_type": "image/png",
         "byte_count": len(b"fake-png-bytes"),
         "summary_provider": "openai",
-        "summary_model": "gpt-5.4-mini",
+        "summary_model": "gpt-5",
     }
     assert requests[0].url == "https://linear.app/attachments/form-title.png"
     assert requests[0].headers["authorization"] == "Bearer linear-token"

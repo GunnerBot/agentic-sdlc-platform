@@ -11,7 +11,7 @@ from agentic_sdlc_platform.ports.agent_executor import (
     AgentExecutionRequest,
     AgentExecutionResponse,
 )
-from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerReply
+from agentic_sdlc_platform.ports.issue_tracker import IssueContext, IssueTrackerReply
 from agentic_sdlc_platform.ports.model_provider import ModelRequest, ModelResponse
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskConversationMessage,
@@ -42,9 +42,19 @@ class FakePlannerModel:
 class FakeTaskOrchestrator:
     provider = "multica"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        read_status: str = "running",
+        read_metadata: dict[str, object] | None = None,
+    ) -> None:
         self.requests: list[TaskRequest] = []
         self.read_requests: list[TaskReadRequest] = []
+        self.read_status = read_status
+        self.read_metadata = read_metadata or {
+            "multica_task_status": read_status,
+            "multica_runtime_provider": "codex",
+        }
         self.comments = [
             TaskConversationMessage(
                 id="multica-comment-1",
@@ -65,11 +75,8 @@ class FakeTaskOrchestrator:
         self.read_requests.append(request)
         return TaskResponse(
             external_task_id=request.external_task_id,
-            status="running",
-            metadata={
-                "multica_task_status": "running",
-                "multica_runtime_provider": "codex",
-            },
+            status=self.read_status,
+            metadata=self.read_metadata,
         )
 
     async def list_comments(self, external_task_id: str, metadata=None):
@@ -79,9 +86,24 @@ class FakeTaskOrchestrator:
 class FakeIssueTracker:
     def __init__(self) -> None:
         self.replies: list[IssueTrackerReply] = []
+        self.context_requests: list[str] = []
 
     async def reply(self, reply: IssueTrackerReply) -> None:
         self.replies.append(reply)
+
+    async def get_issue_context(self, issue_id: str) -> IssueContext:
+        self.context_requests.append(issue_id)
+        return IssueContext(
+            issue_id="linear-issue-id-1",
+            identifier=issue_id,
+            title="BE: Add customer PO number to SO",
+            description=(
+                "Need a Customer PO# alphanumeric field on SO. "
+                "It is non-mandatory and used across invoices and BOL. "
+                "Repo: keychain-os-erp."
+            ),
+            url=f"https://linear.app/keychain/issue/{issue_id.lower()}",
+        )
 
 
 class FakeAgentExecutor:
@@ -224,6 +246,53 @@ async def test_create_task_dag_endpoint_uses_builtin_feature_template() -> None:
             "status": "blocked",
         },
     ]
+
+
+async def test_create_task_dag_hydrates_linear_context_and_uses_generic_fallback() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(multica_http_enabled=False),
+            repository=repository,
+            issue_tracker=issue_tracker,
+        )
+    )
+
+    response = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "Please plan this Linear issue."},
+    )
+    artifacts = client.get(f"/tasks/{task_id}/artifacts", params={"kind": "hydrated_spec"})
+
+    assert response.status_code == 201
+    assert issue_tracker.context_requests == ["OS-1284"]
+    assert [node["node_key"] for node in response.json()["nodes"]] == [
+        "backend_data_model_api",
+    ]
+    assert response.json()["nodes"][0]["repo"] == "keychain-os-erp"
+    assert response.json()["nodes"][0]["depends_on"] == []
+    assert response.json()["nodes"][0]["acceptance_criteria"] == [
+        (
+            "Database or schema migration applies required persistence changes "
+            "with the established repo pattern."
+        ),
+        (
+            "Backend contract, domain model, persistence, and service logic "
+            "implement the requested behavior."
+        ),
+        (
+            "Create, update, read, and list paths preserve the requested behavior "
+            "where applicable."
+        ),
+        "Relevant automated tests are included in the same PR.",
+    ]
+    assert artifacts.status_code == 200
+    assert artifacts.json()[0]["metadata"] == {
+        "provider": "linear",
+        "status": "hydrated",
+    }
 
 
 async def test_list_tasks_endpoint_returns_task_and_session_status() -> None:
@@ -436,14 +505,35 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
         "parent_external_id": "OS-1284",
         "dag_id": dag_id,
         "node_key": "web",
+        "acceptance_criteria": [],
         "dependency_node_keys": ["api"],
         "dependencies_completed": ["api"],
         "context_session_id": None,
         "hermes_session_id": None,
-        "expected_pr_reference": f"dag/{dag_id}/web",
-        "expected_branch": f"agent/dag/{dag_id}/web",
-        "expected_pr_body_marker": f"dag/{dag_id}/web",
+        "orchestrator_idempotency_key": f"{dag_id}:web:0",
+        "execution_mode": "dry_run",
+        "execution_policy": {
+            "terminal_command_prefix": "rtk",
+            "repo_context_policy": "graphstore_first_then_narrow_source_verification",
+            "github_write_enabled": False,
+        },
+        "code_generation_policy": task_orchestrator.requests[0].metadata[
+            "code_generation_policy"
+        ],
+        "pr_plan": {
+            "planned_pr_count": 2,
+            "current_pr_index": 2,
+            "current_node_key": "web",
+            "ordered_node_keys": ["api", "web"],
+            "depends_on_prs": ["api"],
+            "unlocks_prs": [],
+            "ordering_strategy": "DAG dependency order, then planner order",
+            "branch_pattern": "agent/dag/<dag_id>/<node_key>",
+            "body_reference_pattern": "dag/<dag_id>/<node_key>",
+        },
     }
+    assert "expected_branch" not in task_orchestrator.requests[0].metadata
+    assert "expected_pr_reference" not in task_orchestrator.requests[0].metadata
 
 
 async def test_complete_dag_node_endpoint_can_skip_auto_enqueue() -> None:
@@ -552,9 +642,135 @@ async def test_sync_dag_node_orchestrator_state_polls_task_run() -> None:
     assert task_orchestrator.read_requests == [
         TaskReadRequest(
             external_task_id="multica-task-1",
-            metadata={"multica_issue_id": "issue-1"},
+            metadata={"acceptance_criteria": [], "multica_issue_id": "issue-1"},
         )
     ]
+
+
+async def test_sync_dag_node_orchestrator_state_records_runtime_usage_once() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    task_orchestrator = FakeTaskOrchestrator(
+        read_status="completed",
+        read_metadata={
+            "multica_task_status": "completed",
+            "multica_runtime_provider": "hermes",
+            "llm_observability": {
+                "operation": "hermes.multica_task_execution",
+                "model": "gpt-5-mini",
+                "input_tokens": 1200,
+                "output_tokens": 80,
+                "total_tokens": 1280,
+                "estimated_cost_usd": 0.00046,
+                "input_cost_per_million_usd": 0.25,
+                "output_cost_per_million_usd": 2.0,
+                "estimation_method": "provider_usage",
+            },
+        },
+    )
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+            task_orchestrator=task_orchestrator,
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag_id,
+        node_key="api",
+        orchestrator_task_id="multica-task-1",
+        orchestrator_status="queued",
+        metadata={"multica_issue_id": "issue-1"},
+    )
+
+    first = client.post(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/sync-orchestrator")
+    second = client.post(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/sync-orchestrator")
+    usage = client.get(f"/tasks/{task_id}/llm-observability")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert usage.json()["total_tokens"] == 1280
+    assert usage.json()["total_estimated_cost_usd"] == 0.00046
+    assert usage.json()["exact_token_record_count"] == 1
+    assert usage.json()["estimated_token_record_count"] == 0
+    assert usage.json()["provider_cost_record_count"] == 0
+    assert len(usage.json()["records"]) == 1
+    assert usage.json()["records"][0]["source"] == "task_orchestrator.read_dag_node"
+    assert usage.json()["records"][0]["token_count_source"] == "provider"
+    assert usage.json()["records"][0]["cost_source"] == "configured_rate_estimate"
+    assert usage.json()["records"][0]["cost_exact"] is False
+
+
+async def test_sync_completed_node_requires_same_pr_rework_when_incomplete() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    task_orchestrator = FakeTaskOrchestrator(
+        read_status="completed",
+        read_metadata={
+            "multica_task_status": "completed",
+            "multica_runtime_provider": "hermes",
+            "pr_url": "https://github.com/acme/keychain-os-erp/pull/1320",
+            "pr_number": 1320,
+            "result_output": (
+                "Done. Opened PR https://github.com/acme/keychain-os-erp/pull/1320\n\n"
+                "Next steps you may want me to take\n"
+                "- Add a Liquibase changeset file for sales_orders and sales_orders_audit.\n"
+                "- Add focused unit/integration tests for create/update/get/list round trips.\n"
+            ),
+        },
+    )
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+            task_orchestrator=task_orchestrator,
+        )
+    )
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask(
+                "backend_customer_po_number",
+                "Implement backend customer PO number on Sales Orders",
+                repo="keychain-os-erp",
+                acceptance_criteria=(
+                    "Liquibase migration adds nullable customer_po_number to sales_orders.",
+                    "Focused tests prove create/update/get/list round trips.",
+                ),
+            )
+        ],
+    )
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag.id,
+        node_key="backend_customer_po_number",
+        orchestrator_task_id="multica-task-1",
+        orchestrator_status="queued",
+        metadata={"multica_issue_id": "issue-1", "plan_approved": True},
+    )
+
+    response = client.post(
+        f"/tasks/{task_id}/dag/{dag.id}/nodes/backend_customer_po_number/sync-orchestrator",
+    )
+    task = client.get(f"/tasks/{task_id}")
+    task_list = client.get("/tasks")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "needs_changes"
+    assert response.json()["verification_status"] == "rework_required"
+    assert response.json()["follow_up_nodes"] == []
+    nodes = {node["node_key"]: node for node in task.json()["dags"][0]["nodes"]}
+    assert nodes["backend_customer_po_number"]["pr_number"] == 1320
+    assert len(nodes) == 1
+    assert task_list.json()[0]["dags"][0]["ready_count"] == 0
+    assert task_list.json()[0]["dags"][0]["first_ready_node"] is None
+    assert task_orchestrator.requests == []
 
 
 async def test_get_task_detail_returns_rich_dag_node_metadata() -> None:
@@ -620,7 +836,7 @@ async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> No
 
     created_execution = client.post(
         f"/tasks/{task_id}/dag/{dag_id}/nodes/api/executions",
-        json={"start": True},
+        json={"start": True, "execution_mode": "write_pr", "confirm_write_pr": True},
     )
     execution_id = created_execution.json()["id"]
     listed = client.get(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/executions")
@@ -640,6 +856,32 @@ async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> No
     assert created_execution.json()["external_execution_id"] == "exec-api"
     assert agent_executor.requests[0].branch_name == f"agent/dag/{dag_id}/api"
     assert agent_executor.requests[0].pr_reference == f"dag/{dag_id}/api"
+    assert agent_executor.requests[0].metadata["code_generation_policy"] == {
+        "branching_model": "trunk_based_development",
+        "base_branch": "trunk_or_default_branch",
+        "pr_size": "small_ordered_prs",
+        "common_code_change_policy": (
+            "Changes to shared/common/existing behavior must be guarded by a "
+            "feature flag or equivalent compatibility gate unless the task "
+            "explicitly states that a breaking global change is intended."
+        ),
+        "feature_flag_required_for_common_code": True,
+        "tests_policy": "implementation_and_relevant_tests_same_pr",
+        "merge_order_policy": (
+            "merge PRs in DAG dependency order; do not merge a dependent PR first"
+        ),
+    }
+    assert agent_executor.requests[0].metadata["pr_plan"] == {
+        "planned_pr_count": 2,
+        "current_pr_index": 1,
+        "current_node_key": "api",
+        "ordered_node_keys": ["api", "web"],
+        "depends_on_prs": [],
+        "unlocks_prs": ["web"],
+        "ordering_strategy": "DAG dependency order, then planner order",
+        "branch_pattern": "agent/dag/<dag_id>/<node_key>",
+        "body_reference_pattern": "dag/<dag_id>/<node_key>",
+    }
     assert listed.status_code == 200
     assert listed.json()[0]["id"] == execution_id
     assert updated.status_code == 200
@@ -664,5 +906,62 @@ async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> No
     )
     assert input_artifact["execution_id"] == execution_id
     assert input_artifact["content"]["pr_reference"] == f"dag/{dag_id}/api"
+    assert input_artifact["content"]["metadata"]["pr_plan"]["planned_pr_count"] == 2
     assert result_artifact["execution_id"] == execution_id
     assert result_artifact["content"]["pr_url"] == "https://github.com/acme/erp-api/pull/17"
+
+
+async def test_dag_node_execution_api_defaults_to_non_write_dry_run() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    agent_executor = FakeAgentExecutor()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+            agent_executor=agent_executor,
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+
+    created_execution = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/executions",
+        json={},
+    )
+
+    assert created_execution.status_code == 201
+    assert created_execution.json()["status"] == "queued"
+    assert created_execution.json()["branch_name"] is None
+    assert created_execution.json()["metadata"]["execution_mode"] == "dry_run"
+    assert agent_executor.requests == []
+
+
+async def test_dag_node_execution_api_requires_write_confirmation() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+            agent_executor=FakeAgentExecutor(),
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+
+    response = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/executions",
+        json={"start": True, "execution_mode": "write_pr"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "write_pr execution requires confirm_write_pr=true"

@@ -60,6 +60,19 @@ def test_linear_webhook_accepts_payload_when_secret_not_configured() -> None:
     }
 
 
+def test_linear_webhook_requires_secret_in_production_when_unsigned_not_allowed() -> None:
+    client = build_client(Settings(environment="production"))
+
+    response = client.post(
+        "/webhooks/linear",
+        content=b'{"type":"Issue"}',
+        headers={"Linear-Delivery": "delivery-1"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Webhook signing secret is not configured"
+
+
 def test_github_webhook_schema_requires_event_header() -> None:
     client = build_client()
 

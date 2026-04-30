@@ -4,6 +4,8 @@ from collections.abc import Awaitable, Callable
 import httpx
 
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.cost_router import CostRouter
+from agentic_sdlc_platform.glue.llm_observability import usage_from_openai_payload
 from agentic_sdlc_platform.ports.model_provider import (
     ModelProviderError,
     ModelRequest,
@@ -30,7 +32,7 @@ class OpenAIModelProvider:
         if not self._settings.openai_api_key:
             raise ModelProviderError("openai API key is not configured")
 
-        model = request.metadata.get("model") or self._settings.openai_default_model
+        model = request.metadata.get("model") or self._model_for_role(request.role)
         response = await self._request_with_retries(
             {
                 "model": model,
@@ -47,11 +49,20 @@ class OpenAIModelProvider:
             }
         )
         payload = response.json()
+        content = _extract_text(payload)
         return ModelResponse(
             provider=self.provider,
             model=model,
-            content=_extract_text(payload),
+            content=content,
             request_id=_str(payload.get("id")) or request.task_id,
+            usage=usage_from_openai_payload(
+                payload=payload,
+                settings=self._settings,
+                model=model,
+                operation=request.role,
+                request_input_text=request.prompt,
+                response_output_text=content,
+            ),
         )
 
     async def _request_with_retries(self, payload: dict[str, object]) -> httpx.Response:
@@ -77,6 +88,9 @@ class OpenAIModelProvider:
         except httpx.HTTPError as exc:
             raise ModelProviderError("openai completion failed") from exc
         raise ModelProviderError("openai completion failed")
+
+    def _model_for_role(self, role: str) -> str:
+        return CostRouter(self._settings).route(role).model
 
 
 def _extract_text(payload: object) -> str:

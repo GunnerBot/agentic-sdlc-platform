@@ -29,6 +29,10 @@ class TaskDagNodeResponse(BaseModel):
     multica_runtime_provider: str | None = None
     failure_error: str | None = None
     retry_count: int = 0
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    verification_status: str | None = None
+    verification_missing: list[str] = Field(default_factory=list)
+    follow_up_nodes: list[str] = Field(default_factory=list)
     executions: list["DagNodeExecutionResponse"] = Field(default_factory=list)
 
 
@@ -60,7 +64,12 @@ class FailDagNodeRequest(BaseModel):
 
 
 class CreateDagNodeExecutionRequest(BaseModel):
-    start: bool = True
+    start: bool = False
+    execution_mode: str = Field(
+        default="dry_run",
+        pattern="^(read_only_question|planning_only|dry_run|write_pr)$",
+    )
+    confirm_write_pr: bool = False
 
 
 class UpdateDagNodeExecutionRequest(BaseModel):
@@ -143,6 +152,9 @@ class LlmUsageRecordResponse(BaseModel):
     input_cost_per_million_usd: float | None = None
     output_cost_per_million_usd: float | None = None
     estimation_method: str | None = None
+    token_count_source: str | None = None
+    cost_source: str | None = None
+    cost_exact: bool = False
     failed: bool = False
 
 
@@ -154,6 +166,9 @@ class TaskLlmObservabilityResponse(BaseModel):
     total_output_tokens: int
     total_tokens: int
     total_estimated_cost_usd: float
+    exact_token_record_count: int = 0
+    estimated_token_record_count: int = 0
+    provider_cost_record_count: int = 0
 
 
 class TaskStatusResponse(BaseModel):

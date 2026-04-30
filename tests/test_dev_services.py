@@ -70,3 +70,54 @@ def test_local_dev_multica_contract_creates_and_updates_tasks() -> None:
     assert update_response.json()["id"] == task_id
     assert update_response.json()["status"] == "completed"
     assert update_response.json()["metadata"] == {"pr": 12}
+
+
+def test_local_dev_multica_compatible_issue_agent_task_flow() -> None:
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer local-dev-multica-key"}
+
+    runtimes_response = client.get("/api/runtimes", headers=headers)
+    assert runtimes_response.status_code == 200
+    runtime_id = runtimes_response.json()[0]["id"]
+
+    agent_response = client.post(
+        "/api/agents",
+        headers=headers,
+        json={
+            "name": "agentic-sdlc-codex",
+            "runtime_id": runtime_id,
+        },
+    )
+    assert agent_response.status_code == 201
+    agent_id = agent_response.json()["id"]
+
+    issue_response = client.post(
+        "/api/issues",
+        headers=headers,
+        json={
+            "title": "Implement DAG node",
+            "description": "Execute this node.",
+            "assignee_type": "agent",
+            "assignee_id": agent_id,
+        },
+    )
+    assert issue_response.status_code == 201
+    issue_id = issue_response.json()["id"]
+
+    task_runs_response = client.get(
+        f"/api/issues/{issue_id}/task-runs",
+        headers=headers,
+    )
+    assert task_runs_response.status_code == 200
+    assert task_runs_response.json()[0]["agent_id"] == agent_id
+
+    comment_response = client.post(
+        f"/api/issues/{issue_id}/comments",
+        headers=headers,
+        json={"content": "queued"},
+    )
+    assert comment_response.status_code == 201
+
+    comments_response = client.get(f"/api/issues/{issue_id}/comments", headers=headers)
+    assert comments_response.status_code == 200
+    assert comments_response.json()[0]["content"] == "queued"

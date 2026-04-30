@@ -19,7 +19,7 @@ async def test_claude_provider_requires_api_key_when_enabled() -> None:
         await provider.complete(ModelRequest(role="critic_agent", prompt="review"))
 
 
-async def test_claude_provider_returns_internal_response_shape_when_configured() -> None:
+async def test_claude_provider_is_explicitly_unimplemented_when_configured() -> None:
     provider = ClaudeModelProvider(
         Settings(
             vendor_http_enabled=True,
@@ -28,10 +28,7 @@ async def test_claude_provider_returns_internal_response_shape_when_configured()
         )
     )
 
-    response = await provider.complete(
-        ModelRequest(role="critic_agent", prompt="review", task_id="task-1")
-    )
-
-    assert response.provider == "claude"
-    assert response.model == "claude-test"
-    assert response.request_id == "task-1"
+    with pytest.raises(ModelProviderError, match="not implemented"):
+        await provider.complete(
+            ModelRequest(role="critic_agent", prompt="review", task_id="task-1")
+        )

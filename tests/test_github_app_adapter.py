@@ -96,6 +96,34 @@ async def test_github_app_paginates_installation_repositories() -> None:
     assert installation.repositories[-1].full_name == "GunnerBot/repo-101"
 
 
+async def test_github_app_can_list_runtime_installation_id() -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/app/installations/runtime-installation/access_tokens":
+            return httpx.Response(status_code=201, json={"token": "installation-token"})
+        if request.url.path == "/installation/repositories":
+            return httpx.Response(status_code=200, json={"repositories": []})
+        return httpx.Response(status_code=404)
+
+    installation = await GitHubAppSourceControl(
+        Settings(
+            github_app_id="123456",
+            github_app_installation_id="configured-installation",
+            github_app_private_key=_private_key_pem(),
+            github_app_api_base_url="https://github.local",
+        ),
+        transport=httpx.MockTransport(handler),
+    ).list_installation_repositories(installation_id="runtime-installation")
+
+    assert installation.installation_id == "runtime-installation"
+    assert paths == [
+        "/app/installations/runtime-installation/access_tokens",
+        "/installation/repositories",
+    ]
+
+
 def _repository_payload(index: int) -> dict[str, object]:
     return {
         "name": f"repo-{index}",

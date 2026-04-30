@@ -723,7 +723,7 @@ def test_slack_app_mention_task_nodes_command_returns_task_info() -> None:
     assert response.json()["task_id"] == "task-1"
     assert response.json()["answer"] == (
         "Task OS-1284 nodes:\n"
-        "Next runnable: design\n"
+        "Next runnable: none\n"
         "- design: queued; repo keychain-os-erp; depends_on none; "
         "orchestrator multica-node-1; pr none; failure none"
     )

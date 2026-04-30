@@ -60,11 +60,11 @@ async def slack_events(
     request: Request,
     slack_timestamp: Annotated[
         str | None,
-        Header(alias="X-Slack-Request-Timestamp", pattern=r"^[ -~]{1,128}$"),
+        Header(alias="X-Slack-Request-Timestamp", pattern=r"^(?:[0-9]{1,32}|null)$"),
     ] = None,
     slack_signature: Annotated[
         str | None,
-        Header(alias="X-Slack-Signature", pattern=r"^[ -~]{1,512}$"),
+        Header(alias="X-Slack-Signature", pattern=r"^[!-~]{1,512}$"),
     ] = None,
 ) -> dict[str, object]:
     body = await request.body()
@@ -74,6 +74,7 @@ async def slack_events(
         signature=slack_signature,
         secret=request.app.state.settings.slack_signing_secret,
         tolerance_seconds=request.app.state.settings.slack_signature_tolerance_seconds,
+        allow_unsigned=_allow_unsigned_webhooks(request.app.state.settings),
     )
     payload = _parse_payload(body)
 
@@ -363,8 +364,14 @@ def _verify_slack_signature(
     signature: str | None,
     secret: str | None,
     tolerance_seconds: int,
+    allow_unsigned: bool,
 ) -> None:
     if not secret:
+        if not allow_unsigned:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Slack signing secret is not configured",
+            )
         return
     if not timestamp or not signature:
         raise HTTPException(
@@ -391,6 +398,15 @@ def _verify_slack_signature(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Slack signature",
         )
+
+
+def _allow_unsigned_webhooks(settings) -> bool:
+    return bool(settings.allow_unsigned_webhooks) or settings.environment in {
+        "local",
+        "dev",
+        "development",
+        "test",
+    }
 
 
 def _parse_payload(body: bytes) -> dict[str, object]:

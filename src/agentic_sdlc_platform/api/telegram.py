@@ -76,6 +76,7 @@ async def telegram_webhook(
         payload=payload.model_dump(by_alias=True, exclude_none=True),
         configured_secret=request.app.state.settings.telegram_secret_token,
         provided_secret=telegram_secret,
+        allow_unsigned=_allow_unsigned_webhooks(request.app.state.settings),
         hermes_session=request.app.state.hermes_session,
         channel_authorizer=request.app.state.channel_authorizer,
         repository=request.app.state.repository,
@@ -90,6 +91,7 @@ async def handle_telegram_update(
     payload: dict[str, object],
     configured_secret: str | None,
     provided_secret: str | None,
+    allow_unsigned: bool,
     hermes_session: HermesSessionPort | None,
     channel_authorizer,
     repository: PersistenceRepository,
@@ -98,7 +100,7 @@ async def handle_telegram_update(
     task_orchestrator: TaskOrchestratorPort | None,
     channel_budget_ledger,
 ) -> dict[str, object]:
-    _verify_telegram_secret(configured_secret, provided_secret)
+    _verify_telegram_secret(configured_secret, provided_secret, allow_unsigned)
     message = _object(payload.get("message") or payload.get("edited_message"))
     if not message:
         return {"ok": True, "route": None, "session_id": None, "message_id": None}
@@ -230,14 +232,32 @@ async def handle_telegram_update(
     }
 
 
-def _verify_telegram_secret(configured_secret: str | None, provided_secret: str | None) -> None:
+def _verify_telegram_secret(
+    configured_secret: str | None,
+    provided_secret: str | None,
+    allow_unsigned: bool,
+) -> None:
     if not configured_secret:
+        if not allow_unsigned:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Telegram secret token is not configured",
+            )
         return
     if not provided_secret or not hmac.compare_digest(configured_secret, provided_secret):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Telegram secret token",
         )
+
+
+def _allow_unsigned_webhooks(settings) -> bool:
+    return bool(settings.allow_unsigned_webhooks) or settings.environment in {
+        "local",
+        "dev",
+        "development",
+        "test",
+    }
 
 
 def _object(value: object) -> dict[str, object]:

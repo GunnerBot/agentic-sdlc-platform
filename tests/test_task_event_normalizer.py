@@ -32,6 +32,46 @@ def test_normalizes_linear_issue_payload_to_task_event() -> None:
     assert task_event.repo == "keychain-os-erp"
     assert task_event.dag_template == "feature"
     assert task_event.url == "https://linear.app/keychain/issue/OS-1284"
+    assert task_event.execution_mode == "dry_run"
+
+
+def test_linear_execution_mode_labels_are_not_external_write_controls() -> None:
+    task_event = TaskEventNormalizer().normalize(
+        source="linear",
+        event_type="Issue",
+        payload={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "labels": {"nodes": [{"name": "mode:write_pr"}]},
+            },
+        },
+    )
+
+    assert task_event is not None
+    assert task_event.execution_mode == "dry_run"
+
+
+def test_normalizes_linear_execution_mode_from_configured_default() -> None:
+    task_event = TaskEventNormalizer(default_execution_mode="planning_only").normalize(
+        source="linear",
+        event_type="Issue",
+        payload={
+            "type": "Issue",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-1284",
+                "title": "Build webhook bridge",
+                "labels": {"nodes": []},
+            },
+        },
+    )
+
+    assert task_event is not None
+    assert task_event.execution_mode == "planning_only"
 
 
 def test_linear_assignment_filter_requires_configured_agent_assignee() -> None:

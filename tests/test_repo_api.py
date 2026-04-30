@@ -49,10 +49,17 @@ class DisabledGraphStore(FakeGraphStore):
 class FakeSourceControl:
     provider = "github"
 
-    async def list_installation_repositories(self) -> SourceInstallation:
+    def __init__(self) -> None:
+        self.installation_ids: list[str | None] = []
+
+    async def list_installation_repositories(
+        self,
+        installation_id: str | None = None,
+    ) -> SourceInstallation:
+        self.installation_ids.append(installation_id)
         return SourceInstallation(
             provider="github",
-            installation_id="installation-1",
+            installation_id=installation_id or "installation-1",
             account="GunnerBot",
             repositories=[
                 SourceRepository(
@@ -62,7 +69,12 @@ class FakeSourceControl:
                     html_url="https://github.com/GunnerBot/agentic-sdlc-platform",
                     default_branch="main",
                     private=True,
-                    permissions={"contents": True, "pull_requests": False},
+                    permissions={
+                        "pull": True,
+                        "push": True,
+                        "contents": True,
+                        "pull_requests": True,
+                    },
                 )
             ],
         )
@@ -291,7 +303,36 @@ async def test_index_all_repos_records_failed_jobs_when_graph_store_is_disabled(
     assert response.json()["jobs"][0]["error"] == "vendor HTTP is disabled"
 
 
-async def test_github_app_installation_endpoint_lists_read_only_repositories() -> None:
+async def test_github_app_install_url_endpoint_returns_github_install_screen() -> None:
+    client = TestClient(create_app(Settings(github_app_slug="agentic-sdlc")))
+
+    response = client.get(
+        "/repos/github-app/install-url",
+        params={"workspace_id": "workspace-1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "workspace_id": "workspace-1",
+        "app_slug": "agentic-sdlc",
+        "install_url": "https://github.com/apps/agentic-sdlc/installations/new",
+        "instructions": (
+            "Install the GitHub App, choose the account or organization, and select "
+            "the repositories this workspace may read and write."
+        ),
+    }
+
+
+async def test_github_app_install_url_endpoint_requires_slug() -> None:
+    client = TestClient(create_app(Settings()))
+
+    response = client.get("/repos/github-app/install-url")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "GitHub App slug is not configured"
+
+
+async def test_github_app_installation_endpoint_lists_read_write_repositories() -> None:
     client = TestClient(create_app(Settings(), source_control=FakeSourceControl()))
 
     response = client.get("/repos/github-app/installation")
@@ -309,31 +350,73 @@ async def test_github_app_installation_endpoint_lists_read_only_repositories() -
                 "html_url": "https://github.com/GunnerBot/agentic-sdlc-platform",
                 "default_branch": "main",
                 "private": True,
-                "permissions": {"contents": True, "pull_requests": False},
+                "permissions": {
+                    "contents": True,
+                    "pull": True,
+                    "pull_requests": True,
+                    "push": True,
+                },
             }
         ],
     }
 
 
-async def test_github_app_import_endpoint_registers_repositories_without_write_enabled() -> None:
+async def test_github_app_sync_registers_workspace_repositories_with_write() -> None:
     repository = await build_repository()
+    source_control = FakeSourceControl()
     client = TestClient(
         create_app(
             Settings(),
             repository=repository,
-            source_control=FakeSourceControl(),
+            source_control=source_control,
         )
     )
 
-    response = client.post("/repos/github-app/import")
+    response = client.post(
+        "/repos/github-app/sync",
+        json={"workspace_id": "workspace-1", "installation_id": "installation-2"},
+    )
 
     assert response.status_code == 201
+    assert source_control.installation_ids == ["installation-2"]
     assert response.json()["imported"] == 1
+    assert response.json()["installation"] == {
+        "id": response.json()["installation"]["id"],
+        "workspace_id": "workspace-1",
+        "provider": "github",
+        "installation_id": "installation-2",
+        "account": "GunnerBot",
+        "repository_selection": "selected",
+        "status": "active",
+        "permissions": {
+            "contents": True,
+            "pull": True,
+            "pull_requests": True,
+            "push": True,
+        },
+        "metadata": {
+            "repo_count": 1,
+            "single_app_read_write": True,
+        },
+    }
     assert response.json()["repositories"][0]["name"] == "GunnerBot/agentic-sdlc-platform"
-    assert response.json()["repositories"][0]["metadata"]["write_enabled"] is False
+    assert response.json()["repositories"][0]["metadata"]["workspace_id"] == "workspace-1"
+    assert response.json()["repositories"][0]["metadata"]["read_enabled"] is True
+    assert response.json()["repositories"][0]["metadata"]["write_enabled"] is True
+    assert response.json()["repositories"][0]["metadata"]["allowed_branch_prefix"] == "agent/dag/"
+    assert response.json()["repositories"][0]["metadata"]["write_policy"] == {
+        "enabled": True,
+        "branch_prefix": "agent/dag/",
+        "direct_default_branch_push": False,
+        "requires_plan_approval": True,
+        "auto_merge_enabled": False,
+        "requires_pr_body_reference": "dag/<dag_id>/<node_key>",
+    }
     assert response.json()["repositories"][0]["metadata"]["github_permissions"] == {
         "contents": True,
-        "pull_requests": False,
+        "pull": True,
+        "pull_requests": True,
+        "push": True,
     }
 
 

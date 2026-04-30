@@ -1,8 +1,10 @@
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from agentic_sdlc_platform.adapters.slack import SlackClient
 from agentic_sdlc_platform.adapters.telegram import TelegramClient
@@ -67,13 +69,6 @@ def create_app(
     source_control: SourceControlPort | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
-    if (
-        repository is not None
-        and "linear_plan_approval_required" not in resolved_settings.model_fields_set
-    ):
-        resolved_settings = resolved_settings.model_copy(
-            update={"linear_plan_approval_required": False}
-        )
     app = FastAPI(
         title=resolved_settings.service_name,
         version=resolved_settings.version,
@@ -86,7 +81,11 @@ def create_app(
     app.state.model_provider = (
         model_provider
         if model_provider is not None or repository is not None
-        else build_model_provider(resolved_settings)
+        else (
+            build_model_provider(resolved_settings)
+            if resolved_settings.vendor_http_enabled
+            else None
+        )
     )
     app.state.graph_store = graph_store or build_graph_store(resolved_settings)
     app.state.document_context = document_context or build_document_context(resolved_settings)
@@ -107,7 +106,9 @@ def create_app(
     app.state.telegram_client = TelegramClient(resolved_settings)
     app.state.conversation_sync_stop_event = None
     app.state.conversation_sync_task = None
+    app.state.rate_limit_windows = {}
 
+    _install_api_auth_and_rate_limit_middleware(app)
     app.include_router(health_router)
     app.include_router(channel_router, prefix="/channels")
     app.include_router(repo_router, prefix="/repos")
@@ -116,6 +117,84 @@ def create_app(
     app.include_router(task_router, prefix="/tasks")
     app.include_router(webhook_router, prefix="/webhooks")
     return app
+
+
+def _install_api_auth_and_rate_limit_middleware(app: FastAPI) -> None:
+    @app.middleware("http")
+    async def api_auth_and_rate_limit(request: Request, call_next):
+        settings = request.app.state.settings
+        path = request.url.path
+        if settings.api_auth_enabled and not _path_is_exempt(
+            path,
+            settings.api_auth_exempt_path_prefixes,
+        ):
+            configured_keys = _csv_values(settings.api_auth_keys)
+            if not configured_keys:
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "API auth is enabled but no API keys are configured"},
+                )
+            provided_key = _request_api_key(request)
+            if provided_key not in configured_keys:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Invalid API key"},
+                )
+
+        if settings.api_rate_limit_enabled and not _path_is_exempt(
+            path,
+            settings.api_rate_limit_exempt_path_prefixes,
+        ):
+            retry_after = _rate_limit_retry_after(request)
+            if retry_after is not None:
+                return JSONResponse(
+                    status_code=429,
+                    headers={"Retry-After": str(retry_after)},
+                    content={"detail": "Rate limit exceeded"},
+                )
+        return await call_next(request)
+
+
+def _request_api_key(request: Request) -> str | None:
+    header_key = request.headers.get("x-api-key")
+    if header_key:
+        return header_key
+    authorization = request.headers.get("authorization")
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    return token
+
+
+def _rate_limit_retry_after(request: Request) -> int | None:
+    settings = request.app.state.settings
+    limit = max(settings.api_rate_limit_requests_per_minute, 1)
+    now = time.monotonic()
+    window_seconds = 60.0
+    client_host = request.client.host if request.client else "unknown"
+    key = f"{client_host}:{request.url.path}"
+    windows = request.app.state.rate_limit_windows
+    window_start, count = windows.get(key, (now, 0))
+    if now - window_start >= window_seconds:
+        windows[key] = (now, 1)
+        return None
+    if count >= limit:
+        return max(1, int(window_seconds - (now - window_start)))
+    windows[key] = (window_start, count + 1)
+    return None
+
+
+def _path_is_exempt(path: str, prefixes_csv: str) -> bool:
+    return any(
+        path == prefix or path.startswith(f"{prefix}/")
+        for prefix in _csv_values(prefixes_csv)
+    )
+
+
+def _csv_values(value: str) -> set[str]:
+    return {item.strip() for item in value.split(",") if item.strip()}
 
 
 async def _start_conversation_sync_loop(app: FastAPI) -> None:

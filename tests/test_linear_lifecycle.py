@@ -74,6 +74,32 @@ class FakeTaskOrchestrator:
         )
 
 
+def dry_run_metadata(
+    *,
+    external_id: str,
+    issue_id: str,
+    title: str,
+    body: str | None = None,
+    url: str | None = None,
+) -> dict[str, object]:
+    return {
+        "execution_mode": "dry_run",
+        "execution_policy": {
+            "terminal_command_prefix": "rtk",
+            "repo_context_policy": "graphstore_first_then_narrow_source_verification",
+            "github_write_enabled": False,
+        },
+        "user_intent": {
+            "source": "linear",
+            "external_id": external_id,
+            "issue_id": issue_id,
+            "title": title,
+            "body": body,
+            "url": url,
+        },
+    }
+
+
 class FakeIssueTracker:
     def __init__(self, hydrated_issues: dict[str, IssueContext] | None = None) -> None:
         self.updates: list[IssueTrackerUpdate] = []
@@ -139,7 +165,7 @@ class FailingHermesSession:
             "hermes start_session failed",
             usage={
                 "operation": "hermes.start_session",
-                "model": "gpt-5.4-mini",
+                "model": "gpt-5",
                 "input_tokens": 12,
                 "output_tokens": 0,
                 "total_tokens": 12,
@@ -221,7 +247,10 @@ async def test_linear_assigned_issue_comments_when_agent_task_is_queued() -> Non
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                linear_plan_approval_required=False,
+            ),
             repository=repository,
             task_orchestrator=FakeTaskOrchestrator(),
             issue_tracker=issue_tracker,
@@ -309,13 +338,18 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
         TaskRequest(
             source="linear",
             external_id="OS-1284",
-            title="Build webhook bridge",
-            repo="keychain-os-erp",
-            inbound_event_id=task_orchestrator.created[0].inbound_event_id,
-            metadata={
-                "repo_provider": "github",
-                "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
-                "repo_default_branch": "develop",
+                title="Build webhook bridge",
+                repo="keychain-os-erp",
+                inbound_event_id=task_orchestrator.created[0].inbound_event_id,
+                metadata={
+                    **dry_run_metadata(
+                        external_id="OS-1284",
+                        issue_id="issue-id-1",
+                        title="Build webhook bridge",
+                    ),
+                    "repo_provider": "github",
+                    "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+                    "repo_default_branch": "develop",
                 "repo_metadata": {"linear_team_key": "OS"},
                 "repo_context": {
                     "status": "unavailable",
@@ -353,6 +387,7 @@ async def test_linear_assigned_issue_includes_graphify_repo_context_when_availab
         create_app(
             Settings(
                 linear_agent_user_id="agent-user-1",
+                linear_plan_approval_required=False,
                 vendor_http_enabled=True,
                 graphify_base_url="http://graphify.local",
             ),
@@ -392,6 +427,12 @@ async def test_linear_assigned_issue_includes_graphify_repo_context_when_availab
         )
     ]
     assert task_orchestrator.created[0].metadata == {
+        **dry_run_metadata(
+            external_id="OS-1284",
+            issue_id="issue-id-1",
+            title="Explain foo DAFET validation dry run behaviour",
+            body="How does it work on form submission?",
+        ),
         "repo_provider": "github",
         "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
         "repo_default_branch": "develop",
@@ -401,6 +442,11 @@ async def test_linear_assigned_issue_includes_graphify_repo_context_when_availab
             "provider": "graphify",
             "answer": "Foo DAFET dry-run validation is resolved from indexed repo context.",
             "references": ["apps/foo/dafet/form.ts:42"],
+            "answer_chars": 67,
+            "original_answer_chars": 67,
+            "truncated": False,
+            "reference_count": 1,
+            "references_truncated": False,
         },
     }
 
@@ -423,13 +469,14 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
     )
     graph_store = FakeGraphStore()
     task_orchestrator = FakeTaskOrchestrator(
-        task_ids=["multica-parent-task-1", "multica-os-node", "multica-web-node"]
+        task_ids=["multica-os-node", "multica-web-node"]
     )
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
             Settings(
                 linear_agent_user_id="agent-user-1",
+                linear_plan_approval_required=False,
                 vendor_http_enabled=True,
                 graphify_base_url="http://graphify.local",
             ),
@@ -480,7 +527,6 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
     ]
     assert [node.repo for node in dag.nodes] == ["keychain-os-erp", "webapp-monorepo"]
     assert [request.repo for request in task_orchestrator.created] == [
-        None,
         "keychain-os-erp",
         "webapp-monorepo",
     ]
@@ -493,9 +539,6 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
         "unknown_repos": [],
     }
     assert task_orchestrator.created[1].metadata["spec_ingestion"]["repo_scope"][
-        "scope"
-    ] == "multi_repo"
-    assert task_orchestrator.created[2].metadata["spec_ingestion"]["repo_scope"][
         "scope"
     ] == "multi_repo"
     assert [query.repo for query in graph_store.queries] == [
@@ -559,15 +602,14 @@ async def test_linear_assigned_issue_uses_model_planner_for_spec_dag() -> None:
 ]
 """
     )
-    task_orchestrator = FakeTaskOrchestrator(
-        task_ids=["multica-parent-task-1", "multica-contract-node"]
-    )
+    task_orchestrator = FakeTaskOrchestrator(task_ids=["multica-contract-node"])
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
             Settings(
                 linear_agent_user_id="agent-user-1",
                 linear_spec_planner_enabled=True,
+                linear_plan_approval_required=False,
                 vendor_http_enabled=True,
                 model_provider="openai",
                 openai_api_key="test-key",
@@ -628,8 +670,8 @@ async def test_linear_assigned_issue_uses_model_planner_for_spec_dag() -> None:
     assert dag.nodes[0].status == "queued"
     assert dag.nodes[1].status == "blocked"
     assert dag.nodes[2].status == "blocked"
-    assert task_orchestrator.created[1].external_id == f"{dag.id}:backend_contract"
-    assert task_orchestrator.created[1].metadata["planning_strategy"] == "model"
+    assert task_orchestrator.created[0].external_id == f"{dag.id}:backend_contract"
+    assert task_orchestrator.created[0].metadata["planning_strategy"] == "model"
     assert planned_event.metadata_json["strategy"] == "model"
     assert planned_event.metadata_json["node_count"] == 3
     assert [request.role for request in planning_model.requests] == ["plan_agent"]
@@ -675,15 +717,14 @@ async def test_linear_model_planner_falls_back_when_plan_references_unknown_repo
 ]
 """
     )
-    task_orchestrator = FakeTaskOrchestrator(
-        task_ids=["multica-parent-task-1", "multica-fallback-node"]
-    )
+    task_orchestrator = FakeTaskOrchestrator(task_ids=["multica-fallback-node"])
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
             Settings(
                 linear_agent_user_id="agent-user-1",
                 linear_spec_planner_enabled=True,
+                linear_plan_approval_required=False,
                 vendor_http_enabled=True,
                 model_provider="openai",
                 openai_api_key="test-key",
@@ -731,7 +772,90 @@ async def test_linear_model_planner_falls_back_when_plan_references_unknown_repo
     assert [node.repo for node in dag.nodes] == ["keychain-os-erp"]
     assert planned_event.metadata_json["strategy"] == "repo_fallback"
     assert planned_event.metadata_json["fallback_reason"] == "invalid_model_plan"
-    assert task_orchestrator.created[1].metadata["planning_strategy"] == "repo_fallback"
+    assert task_orchestrator.created[0].metadata["planning_strategy"] == "repo_fallback"
+
+
+async def test_linear_model_planner_falls_back_when_plan_has_dependency_cycle() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="keychain-os-erp",
+        provider="github",
+        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        default_branch="main",
+        metadata={},
+    )
+    planning_model = FakePlanningModel(
+        """
+[
+  {
+    "id": "api_contract",
+    "title": "Define API contract",
+    "repo": "keychain-os-erp",
+    "depends_on": ["api_impl"]
+  },
+  {
+    "id": "api_impl",
+    "title": "Implement API",
+    "repo": "keychain-os-erp",
+    "depends_on": ["api_contract"]
+  }
+]
+"""
+    )
+    task_orchestrator = FakeTaskOrchestrator(task_ids=["multica-fallback-node"])
+    client = TestClient(
+        create_app(
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                linear_spec_planner_enabled=True,
+                linear_plan_approval_required=False,
+                vendor_http_enabled=True,
+                model_provider="openai",
+                openai_api_key="test-key",
+            ),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            model_provider=planning_model,
+            issue_tracker=FakeIssueTracker(),
+        )
+    )
+
+    response = client.post(
+        "/webhooks/linear",
+        json={
+            "type": "Issue",
+            "action": "update",
+            "data": {
+                "id": "issue-id-1",
+                "identifier": "OS-2447",
+                "title": "Support dynamic form titles",
+                "description": (
+                    "## Repositories\n"
+                    "- keychain-os-erp\n\n"
+                    "## Acceptance\n"
+                    "- Backend supplies title metadata."
+                ),
+                "assignee": {"id": "agent-user-1"},
+            },
+        },
+        headers={"Linear-Delivery": "delivery-linear-model-planner-cycle-1"},
+    )
+
+    assert response.status_code == 202
+    async with repository._session_factory() as session:
+        dag = (
+            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
+        ).one()
+        planned_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "task.dag_planned")
+            )
+        ).one()
+
+    assert [node.node_key for node in dag.nodes] == ["scope_keychain_os_erp"]
+    assert planned_event.metadata_json["strategy"] == "repo_fallback"
+    assert planned_event.metadata_json["fallback_reason"] == "invalid_model_plan"
+    assert task_orchestrator.created[0].metadata["planning_strategy"] == "repo_fallback"
 
 
 async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> None:
@@ -754,9 +878,7 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
 ]
 """
     )
-    task_orchestrator = FakeTaskOrchestrator(
-        task_ids=["multica-parent-task-1", "multica-contract-node"]
-    )
+    task_orchestrator = FakeTaskOrchestrator(task_ids=["multica-contract-node"])
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
@@ -800,7 +922,7 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
     assert assignment_response.status_code == 202
     assert task is not None
     assert task.status == "needs_plan_approval"
-    assert [request.external_id for request in task_orchestrator.created] == ["OS-2446"]
+    assert task_orchestrator.created == []
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
         body=(
@@ -835,14 +957,20 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
     assert task is not None
     assert task.status == "queued"
     assert [request.external_id for request in task_orchestrator.created] == [
-        "OS-2446",
         f"{task.dags[0].id}:backend_contract",
     ]
-    assert task_orchestrator.created[1].metadata["plan_approved"] is True
-    assert task_orchestrator.created[1].metadata["execution_policy"] == {
+    assert task_orchestrator.created[0].metadata["plan_approved"] is True
+    assert task_orchestrator.created[0].metadata["execution_mode"] == "write_pr"
+    assert task_orchestrator.created[0].metadata["expected_branch"] == (
+        f"agent/dag/{task.dags[0].id}/backend_contract"
+    )
+    assert task_orchestrator.created[0].metadata["expected_pr_reference"] == (
+        f"dag/{task.dags[0].id}/backend_contract"
+    )
+    assert task_orchestrator.created[0].metadata["execution_policy"] == {
         "terminal_command_prefix": "rtk",
         "repo_context_policy": "graphstore_first_then_narrow_source_verification",
-        "github_write_enabled": False,
+        "github_write_enabled": True,
     }
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
@@ -864,7 +992,10 @@ async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() 
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                linear_plan_approval_required=False,
+            ),
             repository=repository,
             task_orchestrator=task_orchestrator,
             hermes_session=hermes_session,
@@ -962,7 +1093,7 @@ async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None
         metadata={},
     )
     task_orchestrator = FakeTaskOrchestrator(
-        task_ids=["multica-parent-task-1", "multica-os-node", "multica-web-node"]
+        task_ids=["multica-os-node", "multica-web-node"]
     )
     issue_tracker = FakeIssueTracker(
         hydrated_issues={
@@ -991,7 +1122,10 @@ async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None
     )
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                linear_plan_approval_required=False,
+            ),
             repository=repository,
             task_orchestrator=task_orchestrator,
             issue_tracker=issue_tracker,
@@ -1077,7 +1211,10 @@ async def test_linear_assigned_issue_hydrates_notion_doc_from_description() -> N
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                linear_plan_approval_required=False,
+            ),
             repository=repository,
             task_orchestrator=task_orchestrator,
             document_context=document_context,
@@ -1155,7 +1292,10 @@ async def test_linear_assigned_issue_hydrates_figma_design_from_description() ->
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                linear_plan_approval_required=False,
+            ),
             repository=repository,
             task_orchestrator=task_orchestrator,
             design_context=design_context,
@@ -1503,9 +1643,7 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
         default_branch="main",
         metadata={},
     )
-    task_orchestrator = FakeTaskOrchestrator(
-        task_ids=["multica-parent-task-1", "multica-dag-node-1"]
-    )
+    task_orchestrator = FakeTaskOrchestrator(task_ids=["multica-dag-node-1"])
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
@@ -1558,38 +1696,46 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
         assert dag.nodes[0].status == "queued"
         assert dag.nodes[0].orchestrator_task_id == "multica-dag-node-1"
         assert dag.nodes[1].status == "blocked"
-    assert task_orchestrator.created[0] == TaskRequest(
-        source="linear",
-        external_id="OS-1284",
-        title="Build webhook bridge",
-        repo="keychain-os-erp",
-        inbound_event_id=task_orchestrator.created[0].inbound_event_id,
-        metadata={
-            "repo_provider": "github",
-            "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
-            "repo_default_branch": "main",
-            "repo_metadata": {},
-            "repo_context": {
-                "status": "unavailable",
-                "reason": "graphify CLI query requires graph_path or repo local_path metadata",
-            },
-        },
-    )
-    assert task_orchestrator.created[1].source == "dag"
-    assert task_orchestrator.created[1].external_id == f"{dag.id}:reproduce"
-    assert task_orchestrator.created[1].metadata == {
+    assert task_orchestrator.created[0].source == "dag"
+    assert task_orchestrator.created[0].external_id == f"{dag.id}:reproduce"
+    assert task_orchestrator.created[0].metadata == {
         "parent_task_id": response.json()["task_id"],
         "parent_external_id": "OS-1284",
         "dag_id": dag.id,
         "node_key": "reproduce",
+        "acceptance_criteria": [],
         "dependency_node_keys": [],
         "dependencies_completed": [],
         "context_session_id": None,
         "hermes_session_id": None,
-        "expected_pr_reference": f"dag/{dag.id}/reproduce",
-        "expected_branch": f"agent/dag/{dag.id}/reproduce",
-        "expected_pr_body_marker": f"dag/{dag.id}/reproduce",
-        "repo_context": {"status": "unavailable"},
+        "orchestrator_idempotency_key": f"{dag.id}:reproduce:0",
+        "code_generation_policy": task_orchestrator.created[0].metadata[
+            "code_generation_policy"
+        ],
+        "pr_plan": {
+            "planned_pr_count": 4,
+            "current_pr_index": 1,
+            "current_node_key": "reproduce",
+            "ordered_node_keys": ["reproduce", "fix", "test", "review"],
+            "depends_on_prs": [],
+            "unlocks_prs": ["fix"],
+            "ordering_strategy": "DAG dependency order, then planner order",
+            "branch_pattern": "agent/dag/<dag_id>/<node_key>",
+            "body_reference_pattern": "dag/<dag_id>/<node_key>",
+        },
+        "repo_context": {
+            "status": "unavailable",
+            "reason": "graphify CLI query requires graph_path or repo local_path metadata",
+        },
+        **dry_run_metadata(
+            external_id="OS-1284",
+            issue_id="issue-id-1",
+            title="Build webhook bridge",
+        ),
+        "repo_provider": "github",
+        "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        "repo_default_branch": "main",
+        "repo_metadata": {},
     }
     assert dag_created_event.metadata_json["template"] == "bugfix"
     assert dag_created_event.metadata_json["node_count"] == 4
@@ -1760,7 +1906,7 @@ async def test_linear_assigned_issue_records_hermes_start_failure_without_aborti
     assert events[-1].event_type == "session_start_failed"
     assert events[-1].metadata_json["llm_observability"] == {
         "operation": "hermes.start_session",
-        "model": "gpt-5.4-mini",
+        "model": "gpt-5",
         "input_tokens": 12,
         "output_tokens": 0,
         "total_tokens": 12,
@@ -1779,7 +1925,13 @@ async def test_linear_assigned_issue_records_hermes_start_failure_without_aborti
     assert observability["total_output_tokens"] == 0
     assert observability["total_tokens"] == 12
     assert observability["total_estimated_cost_usd"] == 0.000009
-    assert observability["records"][0]["source"] == "session_event:session_start_failed"
+    assert observability["exact_token_record_count"] == 0
+    assert observability["estimated_token_record_count"] == 1
+    assert observability["provider_cost_record_count"] == 0
+    assert observability["records"][0]["source"] == "hermes_session.start_failed"
+    assert observability["records"][0]["token_count_source"] == "estimated"
+    assert observability["records"][0]["cost_source"] == "configured_rate_estimate"
+    assert observability["records"][0]["cost_exact"] is False
 
 
 async def test_linear_issue_assigned_to_other_user_is_not_actionable() -> None:
@@ -2218,12 +2370,12 @@ async def test_linear_status_comment_replies_with_dag_progress() -> None:
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
         body=(
-                "Task OS-1284 status: queued. "
-                "Orchestrator: multica-task-1 (queued). "
-                "Repo: keychain-os-erp. Sessions: 1 active session. "
-                "DAG: planned, 0/5 completed, 0 skipped, 0 failed, 1 ready, next: design."
-            ),
-        )
+            "Task OS-1284 status: queued. "
+            "Orchestrator: none. "
+            "Repo: keychain-os-erp. Sessions: 1 active session. "
+            "DAG: planned, 0/5 completed, 0 skipped, 0 failed, 0 ready, next: none."
+        ),
+    )
 
 
 async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
@@ -2238,7 +2390,10 @@ async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(
+                linear_agent_user_id="agent-user-1",
+                linear_plan_approval_required=False,
+            ),
             repository=repository,
             task_orchestrator=FakeTaskOrchestrator(),
             hermes_session=FakeHermesSession(),
@@ -2286,21 +2441,21 @@ async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
     assert response.json()["task_id"] == assignment_response.json()["task_id"]
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
-            body=(
-                "Task OS-1284 nodes:\n"
-                "Next runnable: design\n"
-                "- design: queued; repo keychain-os-erp; depends_on none; "
-                "orchestrator multica-task-2; pr none; failure none\n"
-                "- contract: blocked; repo keychain-os-erp; depends_on design; "
-                "orchestrator none; pr none; failure none\n"
-                "- implement: blocked; repo keychain-os-erp; depends_on contract; "
-                "orchestrator none; pr none; failure none\n"
-                "- verify: blocked; repo keychain-os-erp; depends_on implement; "
-                "orchestrator none; pr none; failure none\n"
-                "- review: blocked; repo keychain-os-erp; depends_on verify; "
-                "orchestrator none; pr none; failure none"
-            ),
-        )
+        body=(
+            "Task OS-1284 nodes:\n"
+            "Next runnable: none\n"
+            "- design: queued; repo keychain-os-erp; depends_on none; "
+            "orchestrator multica-task-1; pr none; failure none\n"
+            "- contract: blocked; repo keychain-os-erp; depends_on design; "
+            "orchestrator none; pr none; failure none\n"
+            "- implement: blocked; repo keychain-os-erp; depends_on contract; "
+            "orchestrator none; pr none; failure none\n"
+            "- verify: blocked; repo keychain-os-erp; depends_on implement; "
+            "orchestrator none; pr none; failure none\n"
+            "- review: blocked; repo keychain-os-erp; depends_on verify; "
+            "orchestrator none; pr none; failure none"
+        ),
+    )
 
 
 async def test_linear_context_comment_replies_with_repo_and_recent_events() -> None:

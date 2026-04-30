@@ -109,6 +109,20 @@ class FakeRepository:
     async def upsert_repo(self, **kwargs):
         return FakeRepo()
 
+    async def upsert_github_installation(self, **kwargs):
+        class Installation:
+            id = "github-installation-1"
+            workspace_id = kwargs.get("workspace_id", "default")
+            provider = "github"
+            installation_id = kwargs.get("installation_id", "installation-1")
+            account = kwargs.get("account")
+            repository_selection = kwargs.get("repository_selection", "selected")
+            status = kwargs.get("status", "active")
+            permissions_json = kwargs.get("permissions", {})
+            metadata_json = kwargs.get("metadata", {})
+
+        return Installation()
+
     async def list_repos(self, **kwargs):
         return [FakeRepo()]
 
@@ -210,10 +224,10 @@ class FakeGraphStore:
 
 
 class FakeSourceControl:
-    async def list_installation_repositories(self):
+    async def list_installation_repositories(self, installation_id=None):
         return SourceInstallation(
             provider="github",
-            installation_id="installation-1",
+            installation_id=installation_id or "installation-1",
             account="GunnerBot",
             repositories=[
                 SourceRepository(
@@ -223,7 +237,7 @@ class FakeSourceControl:
                     html_url="https://github.com/GunnerBot/agentic-sdlc-platform",
                     default_branch="main",
                     private=True,
-                    permissions={"contents": True, "pull_requests": False},
+                    permissions={"contents": True, "pull_requests": True, "push": True},
                 )
             ],
         )
@@ -232,7 +246,7 @@ class FakeSourceControl:
 schema = schemathesis.openapi.from_asgi(
     "/openapi.json",
     create_app(
-        Settings(),
+        Settings(github_app_slug="agentic-sdlc"),
         repository=FakeRepository(),
         model_provider=FakeModelProvider(),
         graph_store=FakeGraphStore(),

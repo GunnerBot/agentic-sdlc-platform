@@ -1,10 +1,18 @@
 import asyncio
 import json
+import re
 from collections.abc import Awaitable, Callable
 
 import httpx
 
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.execution_policy import (
+    code_generation_policy,
+    github_write_enabled,
+    normalize_execution_mode,
+    retry_policy_for_mode,
+    sanitize_write_metadata,
+)
 from agentic_sdlc_platform.glue.llm_observability import estimated_llm_usage
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskCommentRequest,
@@ -142,7 +150,12 @@ class MulticaTaskOrchestrator:
             "multica_completed_at": _str(task.get("completed_at")),
             "multica_started_at": _str(task.get("started_at")),
             "multica_dispatched_at": _str(task.get("dispatched_at")),
+            "result_output": _task_result_output(task),
+            **_task_result_pr_metadata(task),
         }
+        execution_usage = _task_result_usage_metadata(task, self._settings)
+        if execution_usage is not None:
+            response_metadata["llm_observability"] = execution_usage
         return TaskResponse(
             external_task_id=task_id,
             status=status,
@@ -364,11 +377,25 @@ class MulticaTaskOrchestrator:
         agent: dict[str, object],
     ) -> str:
         metadata = request.metadata or {}
+        execution_mode = normalize_execution_mode(
+            metadata.get("execution_mode"),
+            default=self._settings.agent_default_execution_mode,
+        )
+        github_write = github_write_enabled(execution_mode)
+        retry_policy = retry_policy_for_mode(self._settings, execution_mode)
+        payload_metadata = sanitize_write_metadata(
+            metadata,
+            execution_mode=execution_mode,
+        )
+        user_intent = _dict_value(metadata.get("user_intent"))
         execution_payload = {
             "source": request.source,
             "external_id": request.external_id,
             "repo": request.repo,
             "runtime_provider": runtime_provider,
+            "execution_mode": execution_mode,
+            "github_write_enabled": github_write,
+            "retry_policy": retry_policy,
             "agent_id": _str(agent.get("id")),
             "agent_name": _str(agent.get("name")),
             "dag_id": metadata.get("dag_id"),
@@ -377,27 +404,78 @@ class MulticaTaskOrchestrator:
             "parent_external_id": metadata.get("parent_external_id"),
             "dependencies_completed": metadata.get("dependencies_completed"),
             "context_session_id": metadata.get("context_session_id"),
-            "expected_pr_reference": metadata.get("expected_pr_reference"),
-            "expected_branch": metadata.get("expected_branch"),
+            "expected_pr_reference": metadata.get("expected_pr_reference")
+            if github_write
+            else None,
+            "expected_branch": metadata.get("expected_branch") if github_write else None,
             "runtime_policy": {
                 "shell_command_prefix": "rtk",
                 "use_rtk_for_terminal_commands": True,
             },
+            "code_generation_policy": metadata.get(
+                "code_generation_policy",
+                code_generation_policy(),
+            ),
+            "pr_plan": metadata.get("pr_plan"),
             "repo_context_policy": {
                 "preferred_context_source": "graphify",
                 "verify_graph_context_against_source": True,
                 "avoid_repeated_broad_scans_when_indexed_context_is_available": True,
             },
-            "metadata": metadata,
+            "metadata": payload_metadata,
         }
+        user_intent_text = _user_intent_text(
+            title=_str(user_intent.get("title")) or request.title,
+            body=_str(user_intent.get("body")),
+            url=_str(user_intent.get("url")),
+        )
+        acceptance_criteria_value = metadata.get("acceptance_criteria")
+        acceptance_criteria = (
+            [
+                item
+                for item in acceptance_criteria_value
+                if isinstance(item, str) and item.strip()
+            ]
+            if isinstance(acceptance_criteria_value, list)
+            else []
+        )
+        acceptance_text = (
+            "\n".join(f"- {criterion}" for criterion in acceptance_criteria)
+            if acceptance_criteria
+            else "- Implement and verify the requested DAG node scope."
+        )
+        mode_lines = [
+            f"Execution mode: {execution_mode}",
+            f"GitHub write enabled: {str(github_write).lower()}",
+            f"Max model retries: {retry_policy['max_model_retries']}",
+        ]
+        if not github_write:
+            mode_lines.append("Repository writes are disabled for this execution mode.")
         return (
             f"Execute agentic SDLC task `{request.external_id}`.\n\n"
             f"Title: {request.title}\n"
             f"Repo: {request.repo or 'not specified'}\n"
-            f"Runtime provider: {runtime_provider}\n\n"
+            f"Runtime provider: {runtime_provider}\n"
+            f"{chr(10).join(mode_lines)}\n\n"
+            "Full user intent:\n"
+            f"{user_intent_text}\n\n"
             "Runtime policy:\n"
             "- Prefix shell commands with `rtk`.\n"
             "- Use indexed repo context first when available; verify with source reads.\n\n"
+            "Code generation policy:\n"
+            "- Use trunk-based development: branch from the repo default/trunk branch.\n"
+            "- Keep PRs small and ordered by the DAG dependency order shown in the payload.\n"
+            "- When modifying shared/common/existing behavior, guard the change behind a "
+            "feature flag or equivalent compatibility gate unless the task explicitly "
+            "requires a breaking global change.\n"
+            "- Put implementation and relevant tests in the same PR for the DAG node.\n\n"
+            "Acceptance criteria for this DAG node:\n"
+            f"{acceptance_text}\n\n"
+            "Completion rule:\n"
+            "- Do not report the task complete if any acceptance criterion remains as "
+            "a next step or follow-up.\n"
+            "- If a criterion is blocked by missing product/DB ownership detail, state "
+            "the blocker explicitly instead of opening a partial PR as done.\n\n"
             "Execution payload:\n"
             "```json\n"
             f"{json.dumps(execution_payload, indent=2, sort_keys=True)}\n"
@@ -480,6 +558,116 @@ class MulticaTaskOrchestrator:
 
 def _str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+_GITHUB_PR_URL_RE = re.compile(
+    r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/(?P<number>\d+)"
+)
+
+
+def _task_result_pr_metadata(task: dict[str, object]) -> dict[str, object]:
+    result = _dict_value(task.get("result"))
+    pr_url = _str(result.get("pr_url"))
+    pr_number = result.get("pr_number") if isinstance(result.get("pr_number"), int) else None
+    if pr_url is None:
+        output = _str(result.get("output"))
+        if output:
+            match = _GITHUB_PR_URL_RE.search(output)
+            if match:
+                pr_url = match.group(0)
+                pr_number = int(match.group("number"))
+    return {"pr_url": pr_url, "pr_number": pr_number}
+
+
+def _task_result_output(task: dict[str, object]) -> str | None:
+    result = _dict_value(task.get("result"))
+    return _str(result.get("output"))
+
+
+def _task_result_usage_metadata(
+    task: dict[str, object],
+    settings: Settings,
+) -> dict[str, object] | None:
+    result = _dict_value(task.get("result"))
+    usage = _dict_value(result.get("llm_observability")) or _dict_value(
+        result.get("usage")
+    )
+    if not usage:
+        usage = _dict_value(task.get("llm_observability")) or _dict_value(task.get("usage"))
+    if not usage:
+        return None
+
+    input_tokens = _int_value(usage.get("input_tokens")) or _int_value(
+        usage.get("prompt_tokens")
+    )
+    output_tokens = _int_value(usage.get("output_tokens")) or _int_value(
+        usage.get("completion_tokens")
+    )
+    total_tokens = _int_value(usage.get("total_tokens"))
+    if input_tokens is None and output_tokens is not None and total_tokens is not None:
+        input_tokens = max(total_tokens - output_tokens, 0)
+    if output_tokens is None and input_tokens is not None and total_tokens is not None:
+        output_tokens = max(total_tokens - input_tokens, 0)
+    if input_tokens is None or output_tokens is None:
+        return None
+
+    model = _str(usage.get("model")) or _str(task.get("model")) or "hermes"
+    operation = _str(usage.get("operation")) or "hermes.multica_task_execution"
+    estimated = estimated_llm_usage(
+        settings=settings,
+        model=model,
+        operation=operation,
+        input_text=None,
+        output_text=None,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        estimation_method=_str(usage.get("estimation_method")) or "provider_usage",
+    )
+    explicit_cost = _float_value(usage.get("estimated_cost_usd"))
+    if explicit_cost is not None:
+        estimated["estimated_cost_usd"] = explicit_cost
+        estimated["cost_source"] = "provider"
+        estimated["provider_reported_cost"] = True
+    elif "cost_source" in usage:
+        estimated["cost_source"] = usage["cost_source"]
+    for key in (
+        "response_id",
+        "response_ids",
+        "session_id",
+        "provider",
+        "runtime_provider",
+    ):
+        if key in usage:
+            estimated[key] = usage[key]
+    return estimated
+
+
+def _dict_value(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _int_value(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, int) else None
+
+
+def _float_value(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    return None
+
+
+def _user_intent_text(*, title: str, body: str | None, url: str | None) -> str:
+    lines = [f"Title: {title}"]
+    if url:
+        lines.append(f"URL: {url}")
+    if body:
+        lines.extend(["Body:", body])
+    return "\n".join(lines)
 
 
 def _json_dict(value: object, label: str) -> dict[str, object]:

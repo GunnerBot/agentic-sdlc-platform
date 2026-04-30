@@ -75,6 +75,42 @@ class RepositoryRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
 
 
+class WorkspaceGitHubInstallation(Base):
+    __tablename__ = "workspace_github_installations"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "installation_id",
+            name="uq_workspace_github_installations_workspace_installation",
+        ),
+        Index(
+            "ix_workspace_github_installations_workspace_status",
+            "workspace_id",
+            "status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    workspace_id: Mapped[str] = mapped_column(nullable=False)
+    provider: Mapped[str] = mapped_column(nullable=False, default="github")
+    installation_id: Mapped[str] = mapped_column(nullable=False)
+    account: Mapped[str | None] = mapped_column(nullable=True)
+    repository_selection: Mapped[str] = mapped_column(nullable=False, default="selected")
+    permissions_json: Mapped[dict[str, object]] = mapped_column(
+        MutableDict.as_mutable(JsonDocument),
+        nullable=False,
+        default=dict,
+    )
+    status: Mapped[str] = mapped_column(nullable=False, default="active")
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        MutableDict.as_mutable(JsonDocument),
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
+
+
 class RepoIndexJob(Base):
     __tablename__ = "repo_index_jobs"
     __table_args__ = (

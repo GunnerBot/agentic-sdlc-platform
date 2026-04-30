@@ -118,7 +118,7 @@ def nodes_reply(task) -> str:
     ready_nodes = [
         node
         for node in dag.nodes
-        if node.status not in {"completed", "skipped", "failed"}
+        if node.status in {"ready", "blocked"}
         and all(dependency in completed for dependency in node.depends_on)
     ]
     next_node = ready_nodes[0].node_key if ready_nodes else "none"
@@ -147,7 +147,14 @@ def nodes_reply(task) -> str:
 
 
 def running_reply(task) -> str:
-    active_statuses = {"queued", "running", "needs_input", "pr_open", "in_review"}
+    active_statuses = {
+        "queued",
+        "running",
+        "needs_input",
+        "needs_changes",
+        "pr_open",
+        "in_review",
+    }
     lines = []
     for dag in getattr(task, "dags", []):
         for node in dag.nodes:
@@ -214,7 +221,7 @@ def dag_progress_summary(task) -> str:
     ready_nodes = [
         node
         for node in dag.nodes
-        if node.status not in {"completed", "skipped", "failed"}
+        if node.status in {"ready", "blocked"}
         and all(dependency in terminal for dependency in node.depends_on)
     ]
     next_node = ready_nodes[0].node_key if ready_nodes else "none"

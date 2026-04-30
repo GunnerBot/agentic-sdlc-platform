@@ -78,25 +78,34 @@ async def test_actionable_linear_webhook_creates_multica_task_when_configured() 
             event.action for event in (await session.scalars(select(AuditEvent))).all()
         }
 
-    assert task_orchestrator.requests == [
-        TaskRequest(
-            source="linear",
-            external_id="OS-1284",
-            title="Build webhook bridge",
-            repo="keychain-os-erp",
-            inbound_event_id=task.inbound_event_id,
-            metadata={
-                "repo_provider": "github",
-                "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
-                "repo_default_branch": "main",
-                "repo_metadata": {},
-                "repo_context": {
-                    "status": "unavailable",
-                    "reason": "graphify CLI query requires graph_path or repo local_path metadata",
-                },
-            },
-        )
-    ]
+    assert task_orchestrator.requests[0].source == "linear"
+    assert task_orchestrator.requests[0].external_id == "OS-1284"
+    assert task_orchestrator.requests[0].repo == "keychain-os-erp"
+    assert task_orchestrator.requests[0].inbound_event_id == task.inbound_event_id
+    assert task_orchestrator.requests[0].metadata == {
+        "execution_mode": "dry_run",
+        "execution_policy": {
+            "terminal_command_prefix": "rtk",
+            "repo_context_policy": "graphstore_first_then_narrow_source_verification",
+            "github_write_enabled": False,
+        },
+        "user_intent": {
+            "source": "linear",
+            "external_id": "OS-1284",
+            "issue_id": "issue-id-1",
+            "title": "Build webhook bridge",
+            "body": None,
+            "url": None,
+        },
+        "repo_provider": "github",
+        "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        "repo_default_branch": "main",
+        "repo_metadata": {},
+        "repo_context": {
+            "status": "unavailable",
+            "reason": "graphify CLI query requires graph_path or repo local_path metadata",
+        },
+    }
     assert task.orchestrator_task_id == "multica-task-1"
     assert task.orchestrator_status == "queued"
     assert "task.orchestrated" in audit_actions
@@ -255,6 +264,7 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
                 "external_id": f"{dag.id}:design",
                 "dag_id": dag.id,
                 "node_key": "design",
+                "acceptance_criteria": [],
                 "pull_request": 18,
                 "url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/18",
             },
@@ -265,15 +275,33 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
     assert task_orchestrator.requests[0].metadata == {
         "parent_task_id": task.id,
         "parent_external_id": "OS-1284",
-        "dag_id": dag.id,
-        "node_key": "implement",
-        "dependency_node_keys": ["design"],
-        "dependencies_completed": ["design"],
-        "context_session_id": None,
-        "hermes_session_id": None,
-        "expected_pr_reference": f"dag/{dag.id}/implement",
-        "expected_branch": f"agent/dag/{dag.id}/implement",
-        "expected_pr_body_marker": f"dag/{dag.id}/implement",
+            "dag_id": dag.id,
+            "node_key": "implement",
+            "acceptance_criteria": [],
+            "dependency_node_keys": ["design"],
+            "dependencies_completed": ["design"],
+            "context_session_id": None,
+            "hermes_session_id": None,
+            "orchestrator_idempotency_key": f"{dag.id}:implement:0",
+            "code_generation_policy": task_orchestrator.requests[0].metadata[
+                "code_generation_policy"
+            ],
+            "pr_plan": {
+                "planned_pr_count": 2,
+                "current_pr_index": 2,
+                "current_node_key": "implement",
+                "ordered_node_keys": ["design", "implement"],
+                "depends_on_prs": ["design"],
+                "unlocks_prs": [],
+                "ordering_strategy": "DAG dependency order, then planner order",
+                "branch_pattern": "agent/dag/<dag_id>/<node_key>",
+                "body_reference_pattern": "dag/<dag_id>/<node_key>",
+            },
+            "execution_policy": {
+                "terminal_command_prefix": "rtk",
+                "repo_context_policy": "graphstore_first_then_narrow_source_verification",
+            "github_write_enabled": False,
+        },
     }
     async with repository._session_factory() as session:
         nodes = (

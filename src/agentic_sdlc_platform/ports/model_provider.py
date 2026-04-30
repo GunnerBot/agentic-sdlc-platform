@@ -20,6 +20,7 @@ class ModelResponse:
     model: str
     content: str
     request_id: str | None = None
+    usage: dict[str, object] | None = None
 
 
 class ModelProviderPort(Protocol):

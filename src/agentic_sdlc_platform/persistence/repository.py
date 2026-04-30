@@ -18,6 +18,7 @@ from agentic_sdlc_platform.persistence.models import (
     TaskArtifact,
     TaskDag,
     TaskDagNode,
+    WorkspaceGitHubInstallation,
     utc_now,
 )
 
@@ -236,6 +237,66 @@ class PersistenceRepository:
             )
             return result.scalars().first()
 
+    async def upsert_github_installation(
+        self,
+        workspace_id: str,
+        installation_id: str,
+        account: str | None,
+        repository_selection: str,
+        permissions: dict[str, object] | None,
+        status: str = "active",
+        metadata: dict[str, object] | None = None,
+    ) -> WorkspaceGitHubInstallation:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(WorkspaceGitHubInstallation).where(
+                    WorkspaceGitHubInstallation.workspace_id == workspace_id,
+                    WorkspaceGitHubInstallation.installation_id == installation_id,
+                )
+            )
+            installation = result.scalars().first()
+            if installation is None:
+                installation = WorkspaceGitHubInstallation(
+                    workspace_id=workspace_id,
+                    provider="github",
+                    installation_id=installation_id,
+                    account=account,
+                    repository_selection=repository_selection,
+                    permissions_json=permissions or {},
+                    status=status,
+                    metadata_json=metadata or {},
+                )
+                session.add(installation)
+            else:
+                installation.account = account
+                installation.repository_selection = repository_selection
+                installation.permissions_json = permissions or {}
+                installation.status = status
+                installation.metadata_json = metadata or {}
+                installation.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(installation)
+            return installation
+
+    async def list_github_installations(
+        self,
+        workspace_id: str | None = None,
+        status: str | None = None,
+    ) -> list[WorkspaceGitHubInstallation]:
+        async with self._session_factory() as session:
+            statement = select(WorkspaceGitHubInstallation).order_by(
+                WorkspaceGitHubInstallation.workspace_id,
+                WorkspaceGitHubInstallation.installation_id,
+            )
+            if workspace_id is not None:
+                statement = statement.where(
+                    WorkspaceGitHubInstallation.workspace_id == workspace_id
+                )
+            if status is not None:
+                statement = statement.where(WorkspaceGitHubInstallation.status == status)
+            result = await session.execute(statement)
+            return list(result.scalars().all())
+
     async def create_repo_index_job(
         self,
         repo_name: str,
@@ -346,11 +407,60 @@ class PersistenceRepository:
                         depends_on_json={"nodes": list(subtask.depends_on)},
                         status="blocked" if subtask.depends_on else "ready",
                         position=index,
+                        metadata_json={
+                            **subtask.metadata,
+                            "acceptance_criteria": list(subtask.acceptance_criteria),
+                        },
                     )
                 )
             session.add(dag)
             await session.commit()
             return await self._get_task_dag(session, dag.id)
+
+    async def add_task_dag_node(
+        self,
+        dag_id: str,
+        subtask: Subtask,
+    ) -> TaskDagNode:
+        async with self._session_factory() as session:
+            dag = await session.get(TaskDag, dag_id)
+            if dag is None:
+                raise LookupError(f"dag {dag_id} not found")
+            existing = await session.execute(
+                select(TaskDagNode).where(
+                    TaskDagNode.dag_id == dag_id,
+                    TaskDagNode.node_key == subtask.id,
+                )
+            )
+            node = existing.scalars().first()
+            if node is not None:
+                return node
+            max_position_result = await session.execute(
+                select(TaskDagNode.position)
+                .where(TaskDagNode.dag_id == dag_id)
+                .order_by(TaskDagNode.position.desc())
+                .limit(1)
+            )
+            max_position = max_position_result.scalars().first()
+            node = TaskDagNode(
+                dag_id=dag_id,
+                node_key=subtask.id,
+                title=subtask.title,
+                repo=subtask.repo,
+                depends_on_json={"nodes": list(subtask.depends_on)},
+                status="blocked" if subtask.depends_on else "ready",
+                position=(max_position + 1) if isinstance(max_position, int) else 0,
+                metadata_json={
+                    **subtask.metadata,
+                    "acceptance_criteria": list(subtask.acceptance_criteria),
+                },
+            )
+            session.add(node)
+            dag.status = "planned"
+            dag.updated_at = utc_now()
+            await session.commit()
+            await session.refresh(node)
+            return node
 
     async def get_task_dag(self, dag_id: str) -> TaskDag | None:
         async with self._session_factory() as session:
@@ -453,6 +563,27 @@ class PersistenceRepository:
             await session.commit()
             await session.refresh(node)
             return node
+
+    async def refresh_dag_completion_status(self, dag_id: str) -> TaskDag:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskDag)
+                .where(TaskDag.id == dag_id)
+                .options(selectinload(TaskDag.nodes), selectinload(TaskDag.task))
+            )
+            dag = result.scalar_one()
+            node_statuses = {node.status for node in dag.nodes}
+            if node_statuses and node_statuses <= {"completed", "skipped"}:
+                dag.status = "completed"
+                dag.task.status = "completed"
+                dag.task.updated_at = utc_now()
+            elif "failed" in node_statuses:
+                dag.status = "failed"
+                dag.task.status = "failed"
+                dag.task.updated_at = utc_now()
+            dag.updated_at = utc_now()
+            await session.commit()
+            return await self._get_task_dag(session, dag_id)
 
     async def update_dag_node_metadata(
         self,

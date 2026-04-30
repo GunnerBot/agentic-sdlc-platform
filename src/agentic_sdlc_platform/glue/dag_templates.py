@@ -119,6 +119,8 @@ def _with_repo(task: Task, subtasks: list[Subtask]) -> list[Subtask]:
             title=subtask.title,
             repo=task.repo,
             depends_on=subtask.depends_on,
+            acceptance_criteria=subtask.acceptance_criteria,
+            metadata=subtask.metadata,
         )
         for subtask in subtasks
     ]

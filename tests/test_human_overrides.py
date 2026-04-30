@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.human_override import parse_plan_approval
 from agentic_sdlc_platform.persistence.models import AuditEvent, Base, Task
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.task_orchestrator import TaskResponse, TaskUpdateRequest
@@ -46,6 +47,16 @@ async def create_task(repository: PersistenceRepository) -> Task:
         title="Build webhook bridge",
         repo="keychain-os-erp",
     )
+
+
+def test_plan_approval_accepts_real_and_smoke_external_ids() -> None:
+    real_command = parse_plan_approval("/approve-plan OS-1284")
+    smoke_command = parse_plan_approval("/approve-plan OS-SMOKE-20260429-A")
+
+    assert real_command is not None
+    assert real_command.external_id == "OS-1284"
+    assert smoke_command is not None
+    assert smoke_command.external_id == "OS-SMOKE-20260429-A"
 
 
 def signed_slack_headers(body: bytes, secret: str) -> dict[str, str]:

@@ -64,6 +64,31 @@ class GitHubAppInstallationResponse(BaseModel):
     repositories: list[GitHubAppRepositoryResponse]
 
 
+class GitHubAppInstallUrlResponse(BaseModel):
+    workspace_id: str
+    install_url: str
+    app_slug: str
+    instructions: str
+
+
+class GitHubAppImportRequest(BaseModel):
+    workspace_id: str = Field(default="default", min_length=1)
+    installation_id: str | None = Field(default=None, min_length=1)
+
+
+class GitHubAppInstallationRecordResponse(BaseModel):
+    id: str
+    workspace_id: str
+    provider: str
+    installation_id: str
+    account: str | None = None
+    repository_selection: str
+    status: str
+    permissions: dict[str, object]
+    metadata: dict[str, object]
+
+
 class GitHubAppImportResponse(BaseModel):
     imported: int
+    installation: GitHubAppInstallationRecordResponse | None = None
     repositories: list[RepoResponse]

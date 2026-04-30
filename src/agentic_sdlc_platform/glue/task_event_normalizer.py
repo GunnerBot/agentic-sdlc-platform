@@ -1,6 +1,8 @@
 import re
 from dataclasses import dataclass
 
+from agentic_sdlc_platform.glue.execution_policy import DRY_RUN
+
 
 @dataclass(frozen=True)
 class NormalizedTaskEvent:
@@ -12,6 +14,7 @@ class NormalizedTaskEvent:
     dag_template: str | None = None
     url: str | None = None
     body: str | None = None
+    execution_mode: str = DRY_RUN
 
 
 @dataclass(frozen=True)
@@ -26,8 +29,13 @@ class NormalizedTaskUpdate:
 
 
 class TaskEventNormalizer:
-    def __init__(self, linear_agent_user_id: str | None = None) -> None:
+    def __init__(
+        self,
+        linear_agent_user_id: str | None = None,
+        default_execution_mode: str = DRY_RUN,
+    ) -> None:
         self._linear_agent_user_id = linear_agent_user_id
+        self._default_execution_mode = default_execution_mode
 
     def normalize(
         self,
@@ -71,15 +79,17 @@ class TaskEventNormalizer:
         if not external_id:
             return None
 
+        label_names = _linear_label_names(data)
         return NormalizedTaskEvent(
             source="linear",
             external_id=external_id,
             title=title,
             issue_id=_str_value(data.get("id")),
-            repo=_repo_from_labels(_linear_label_names(data)),
-            dag_template=_dag_template_from_labels(_linear_label_names(data)),
+            repo=_repo_from_labels(label_names),
+            dag_template=_dag_template_from_labels(label_names),
             url=_str_value(data.get("url")),
             body=_str_value(data.get("description")),
+            execution_mode=self._default_execution_mode,
         )
 
     def _normalize_github(
@@ -109,6 +119,7 @@ class TaskEventNormalizer:
             repo=repo,
             url=_str_value(issue.get("html_url")),
             body=_str_value(issue.get("body")),
+            execution_mode=self._default_execution_mode,
         )
 
     def _matches_linear_assignee(self, data: dict[str, object]) -> bool:

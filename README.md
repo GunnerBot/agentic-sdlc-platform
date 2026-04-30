@@ -23,6 +23,9 @@ make migrate
 uv run agentic-sdlc-platform
 ```
 
+For company self-hosting with Docker Compose, GitHub App onboarding, repo sync, Linear webhooks,
+and the path to EC2, see [Docker Compose Organization Setup](docs/DOCKER_ORG_SETUP.md).
+
 ## Environment
 
 Copy `.env.example` to `.env` and use ignored `.env.local` overrides for machine-local secrets.
@@ -37,15 +40,47 @@ ASDLC_LINEAR_SPEC_PLANNER_ENABLED=true
 ASDLC_LINEAR_PLAN_APPROVAL_REQUIRED=true
 ASDLC_MODEL_PROVIDER=openai
 ASDLC_OPENAI_API_KEY=<openai_api_key>
-ASDLC_OPENAI_DEFAULT_MODEL=gpt-5.4-mini
-ASDLC_OPENAI_FALLBACK_MODEL=gpt-5.4-mini
+ASDLC_OPENAI_DEFAULT_MODEL=gpt-5-mini
+ASDLC_OPENAI_ROUTER_MODEL=gpt-5-nano
+ASDLC_OPENAI_PLANNER_MODEL=gpt-5-mini
+ASDLC_OPENAI_PLANNER_ESCALATION_MODEL=gpt-5
+ASDLC_OPENAI_WRITE_MODEL=gpt-5-mini
+ASDLC_OPENAI_WRITE_ESCALATION_MODEL=gpt-5
+ASDLC_OPENAI_PREMIUM_ESCALATION_MODEL=gpt-5.5
 ```
 
-GitHub App read-only repo discovery uses `ASDLC_GITHUB_APP_*` settings. Put the App ID,
-installation ID, and `ASDLC_GITHUB_APP_PRIVATE_KEY_PATH` in ignored `.env.local`, then store the
-private key in an ignored local file such as `secrets/github-app.pem`; do not commit keys. Write
-operations for automatic branch push and PR creation remain intentionally disabled until a separate
-write-scoped GitHub App policy is approved.
+GitHub repo access uses one read/write GitHub App. Configure the app with repository permissions for
+`Contents: Read & Write`, `Pull requests: Read & Write`, `Issues: Read & Write`, `Checks: Read`,
+and metadata read access. Put the App slug, App ID, installation ID, and
+`ASDLC_GITHUB_APP_PRIVATE_KEY_PATH` in ignored `.env.local`, then store the private key in an ignored
+local file such as `secrets/github-app.pem`; do not commit keys.
+
+```bash
+ASDLC_GITHUB_APP_READ_ONLY_ENABLED=true
+ASDLC_GITHUB_APP_SLUG=<github_app_slug>
+ASDLC_GITHUB_APP_WRITE_ENABLED_DEFAULT=true
+ASDLC_GITHUB_APP_ID=<github_app_id>
+ASDLC_GITHUB_APP_INSTALLATION_ID=<installation_id>
+ASDLC_GITHUB_APP_PRIVATE_KEY_PATH=secrets/github-app.pem
+ASDLC_GITHUB_WEBHOOK_SECRET=<webhook_secret>
+```
+
+Public onboarding flow:
+
+1. Send the workspace to `GET /repos/github-app/install-url?workspace_id=<workspace_id>`.
+2. User installs the GitHub App and chooses all or selected repositories in GitHub.
+3. After GitHub returns/sends the installation ID, call `POST /repos/github-app/sync`:
+
+```json
+{
+  "workspace_id": "workspace-1",
+  "installation_id": "123456"
+}
+```
+
+The sync stores the workspace installation, imports only GitHub-granted repositories, marks them
+`read_enabled` and `write_enabled`, and applies platform write guardrails: no direct default-branch
+push, branch prefix `agent/dag/`, plan approval required, and no auto-merge by default.
 
 For private repo checkouts, enable the git credential helper in ignored local config and install the
 targeted helper:
@@ -80,7 +115,7 @@ ASDLC_HERMES_API_MODE=openai_compatible
 ASDLC_HERMES_API_KEY=<local_hermes_gateway_token>
 ASDLC_HERMES_MODEL=hermes-agent
 ASDLC_HERMES_INFERENCE_PROVIDER=custom
-ASDLC_HERMES_INFERENCE_MODEL=gpt-5.4-mini
+ASDLC_HERMES_INFERENCE_MODEL=gpt-5-mini
 ASDLC_HERMES_TIMEOUT_SECONDS=120
 make compose-real-hermes-up
 ```
@@ -93,9 +128,23 @@ OpenAI-compatible endpoint/model through Hermes' `custom` provider.
 LLM observability is persisted in task/session metadata as `llm_observability`. Request-side token
 counts are estimated by `ASDLC_OBSERVABILITY_CHARS_PER_TOKEN`; cost estimates use
 `ASDLC_OBSERVABILITY_INPUT_COST_PER_MILLION_USD` and
-`ASDLC_OBSERVABILITY_OUTPUT_COST_PER_MILLION_USD`. Defaults track the public GPT-5.4 mini text-token
-rate at the time this was added and should be adjusted if the runtime model changes. Per-task
-totals are exposed at `GET /tasks/{task_id}/llm-observability`.
+`ASDLC_OBSERVABILITY_OUTPUT_COST_PER_MILLION_USD`. Defaults are only estimates; adjust them to the
+active route (`gpt-5-nano`, `gpt-5-mini`, `gpt-5`, or explicit `gpt-5.5`
+escalation) before using the ledger for billing-grade reporting. Per-task totals are exposed at
+`GET /tasks/{task_id}/llm-observability`. Each record also marks whether token counts came from
+provider usage or estimation, and whether cost came from a provider-reported cost or configured
+rate estimate.
+
+Runtime readiness and production guardrails are exposed at `GET /ops/status`. The endpoint reports
+which Notion, Google Docs, Figma, Multica, Hermes, and image-hydration credentials are missing, plus
+API auth/rate-limit status. For production, enable API keys and rate limiting:
+
+```bash
+ASDLC_API_AUTH_ENABLED=true
+ASDLC_API_AUTH_KEYS=<comma_separated_api_keys>
+ASDLC_API_RATE_LIMIT_ENABLED=true
+ASDLC_API_RATE_LIMIT_REQUESTS_PER_MINUTE=120
+```
 
 For real self-hosted Multica, configure the platform with the Multica backend URL, PAT, workspace
 ID, and preferred runtime provider:
@@ -162,7 +211,7 @@ Linear image attachments can be hydrated through an explicit OpenAI vision summa
 ```bash
 ASDLC_DESIGN_IMAGE_HYDRATION_ENABLED=true
 ASDLC_DESIGN_IMAGE_SUMMARY_PROVIDER=openai
-ASDLC_DESIGN_IMAGE_SUMMARY_MODEL=gpt-5.4-mini
+ASDLC_DESIGN_IMAGE_SUMMARY_MODEL=gpt-5-nano
 ASDLC_DESIGN_IMAGE_MAX_BYTES=5000000
 ```
 
@@ -171,8 +220,9 @@ stored context contains the generated summary plus metadata such as content type
 summary model.
 
 In the real Docker overlay, host repos are mounted read-only at `/repos` and generated Graphify data
-is written to the Docker-managed `/graphify-data` volume. Example repo metadata for the local
-`keychain-os-erp` checkout:
+is written to the Docker-managed `/graphify-data` volume. By default the compose overlay mounts the
+parent directory of this service; set `ASDLC_REPO_HOST_ROOT` when your repo checkouts live elsewhere.
+Example repo metadata for the local `keychain-os-erp` checkout:
 
 ```json
 {
