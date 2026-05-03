@@ -100,9 +100,9 @@ class FakeIssueTracker:
             description=(
                 "Need a Customer PO# alphanumeric field on SO. "
                 "It is non-mandatory and used across invoices and BOL. "
-                "Repo: keychain-os-erp."
+                "Repo: erp-service."
             ),
-            url=f"https://linear.app/keychain/issue/{issue_id.lower()}",
+            url=f"https://linear.app/acme/issue/{issue_id.lower()}",
         )
 
 
@@ -143,9 +143,9 @@ async def create_parent_task(repository: PersistenceRepository) -> str:
     task = await repository.create_task_from_event(
         event_id=event_result.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build agentic SDLC platform",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
     return task.id
 
@@ -212,36 +212,36 @@ async def test_create_task_dag_endpoint_uses_builtin_feature_template() -> None:
     ] == [
         {
             "node_key": "design",
-            "title": "Design implementation for OS-1284",
-            "repo": "keychain-os-erp",
+            "title": "Design implementation for ENG-1284",
+            "repo": "erp-service",
             "depends_on": [],
             "status": "ready",
         },
         {
             "node_key": "contract",
-            "title": "Define contracts for OS-1284",
-            "repo": "keychain-os-erp",
+            "title": "Define contracts for ENG-1284",
+            "repo": "erp-service",
             "depends_on": ["design"],
             "status": "blocked",
         },
         {
             "node_key": "implement",
-            "title": "Implement OS-1284",
-            "repo": "keychain-os-erp",
+            "title": "Implement ENG-1284",
+            "repo": "erp-service",
             "depends_on": ["contract"],
             "status": "blocked",
         },
         {
             "node_key": "verify",
-            "title": "Verify OS-1284",
-            "repo": "keychain-os-erp",
+            "title": "Verify ENG-1284",
+            "repo": "erp-service",
             "depends_on": ["implement"],
             "status": "blocked",
         },
         {
             "node_key": "review",
-            "title": "Review and prepare PR for OS-1284",
-            "repo": "keychain-os-erp",
+            "title": "Review and prepare PR for ENG-1284",
+            "repo": "erp-service",
             "depends_on": ["verify"],
             "status": "blocked",
         },
@@ -267,11 +267,11 @@ async def test_create_task_dag_hydrates_linear_context_and_uses_generic_fallback
     artifacts = client.get(f"/tasks/{task_id}/artifacts", params={"kind": "hydrated_spec"})
 
     assert response.status_code == 201
-    assert issue_tracker.context_requests == ["OS-1284"]
+    assert issue_tracker.context_requests == ["ENG-1284"]
     assert [node["node_key"] for node in response.json()["nodes"]] == [
         "backend_data_model_api",
     ]
-    assert response.json()["nodes"][0]["repo"] == "keychain-os-erp"
+    assert response.json()["nodes"][0]["repo"] == "erp-service"
     assert response.json()["nodes"][0]["depends_on"] == []
     assert response.json()["nodes"][0]["acceptance_criteria"] == [
         (
@@ -303,7 +303,7 @@ async def test_list_tasks_endpoint_returns_task_and_session_status() -> None:
         provider="linear",
         external_thread_id="issue-id-1",
         hermes_session_id="hermes-session-1",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
     await repository.record_session_event(
         session_id=session.id,
@@ -327,7 +327,7 @@ async def test_list_tasks_endpoint_returns_task_and_session_status() -> None:
     assert response.status_code == 200
     payload = response.json()[0]
     assert payload["id"] == task_id
-    assert payload["external_id"] == "OS-1284"
+    assert payload["external_id"] == "ENG-1284"
     assert payload["dags"][0]["id"] == dag.id
     assert payload["dags"][0]["node_count"] == 2
     assert payload["dags"][0]["ready_count"] == 1
@@ -344,7 +344,7 @@ async def test_list_tasks_endpoint_returns_task_and_session_status() -> None:
             "orchestrator_provider": None,
             "orchestrator_issue_id": None,
             "orchestrator_task_id": None,
-            "repo": "keychain-os-erp",
+            "repo": "erp-service",
             "status": "active",
             "context_summary": None,
             "event_count": 1,
@@ -360,7 +360,7 @@ async def test_get_task_endpoint_returns_session_event_history() -> None:
         provider="linear",
         external_thread_id="issue-id-1",
         hermes_session_id="hermes-session-1",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
     event = await repository.record_session_event(
         session_id=session.id,
@@ -406,7 +406,7 @@ async def test_sync_session_orchestrator_comments_records_and_mirrors_reply() ->
         provider="linear",
         external_thread_id="issue-id-1",
         hermes_session_id=None,
-        repo="keychain-os-erp",
+        repo="erp-service",
         orchestrator_provider="multica",
         orchestrator_issue_id="issue-1",
         orchestrator_task_id="multica-task-1",
@@ -502,7 +502,7 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
     )
     assert task_orchestrator.requests[0].metadata == {
         "parent_task_id": task_id,
-        "parent_external_id": "OS-1284",
+        "parent_external_id": "ENG-1284",
         "dag_id": dag_id,
         "node_key": "web",
         "acceptance_criteria": [],
@@ -715,10 +715,10 @@ async def test_sync_completed_node_requires_same_pr_rework_when_incomplete() -> 
         read_metadata={
             "multica_task_status": "completed",
             "multica_runtime_provider": "hermes",
-            "pr_url": "https://github.com/acme/keychain-os-erp/pull/1320",
+            "pr_url": "https://github.com/acme/erp-service/pull/1320",
             "pr_number": 1320,
             "result_output": (
-                "Done. Opened PR https://github.com/acme/keychain-os-erp/pull/1320\n\n"
+                "Done. Opened PR https://github.com/acme/erp-service/pull/1320\n\n"
                 "Next steps you may want me to take\n"
                 "- Add a Liquibase changeset file for sales_orders and sales_orders_audit.\n"
                 "- Add focused unit/integration tests for create/update/get/list round trips.\n"
@@ -739,7 +739,7 @@ async def test_sync_completed_node_requires_same_pr_rework_when_incomplete() -> 
             Subtask(
                 "backend_customer_po_number",
                 "Implement backend customer PO number on Sales Orders",
-                repo="keychain-os-erp",
+                repo="erp-service",
                 acceptance_criteria=(
                     "Liquibase migration adds nullable customer_po_number to sales_orders.",
                     "Focused tests prove create/update/get/list round trips.",

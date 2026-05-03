@@ -10,14 +10,14 @@ def test_normalizes_linear_issue_payload_to_task_event() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
-                "url": "https://linear.app/keychain/issue/OS-1284",
+                "url": "https://linear.app/acme/issue/ENG-1284",
                 "description": "Create the agentic SDLC bridge.",
                 "labels": {
                     "nodes": [
                         {"name": "agent"},
-                        {"name": "repo:keychain-os-erp"},
+                        {"name": "repo:erp-service"},
                         {"name": "type:feature"},
                     ]
                 },
@@ -27,11 +27,11 @@ def test_normalizes_linear_issue_payload_to_task_event() -> None:
 
     assert task_event is not None
     assert task_event.source == "linear"
-    assert task_event.external_id == "OS-1284"
+    assert task_event.external_id == "ENG-1284"
     assert task_event.title == "Build webhook bridge"
-    assert task_event.repo == "keychain-os-erp"
+    assert task_event.repo == "erp-service"
     assert task_event.dag_template == "feature"
-    assert task_event.url == "https://linear.app/keychain/issue/OS-1284"
+    assert task_event.url == "https://linear.app/acme/issue/ENG-1284"
     assert task_event.execution_mode == "dry_run"
 
 
@@ -44,7 +44,7 @@ def test_linear_execution_mode_labels_are_not_external_write_controls() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "labels": {"nodes": [{"name": "mode:write_pr"}]},
             },
@@ -63,7 +63,7 @@ def test_normalizes_linear_execution_mode_from_configured_default() -> None:
             "type": "Issue",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "labels": {"nodes": []},
             },
@@ -84,7 +84,7 @@ def test_linear_assignment_filter_requires_configured_agent_assignee() -> None:
             "type": "Issue",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "someone-else"},
             },
@@ -97,7 +97,7 @@ def test_linear_assignment_filter_requires_configured_agent_assignee() -> None:
             "type": "Issue",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
             },
@@ -160,10 +160,10 @@ def test_normalizes_github_pull_request_update_from_branch_ticket_key() -> None:
             "action": "opened",
             "pull_request": {
                 "number": 17,
-                "title": "OS-1284 Build webhook bridge",
+                "title": "ENG-1284 Build webhook bridge",
                 "html_url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/17",
-                "head": {"ref": "agent/OS-1284-build-webhook-bridge"},
-                "body": "Implements OS-1284.",
+                "head": {"ref": "agent/ENG-1284-build-webhook-bridge"},
+                "body": "Implements ENG-1284.",
                 "merged": False,
             },
             "repository": {"full_name": "GunnerBot/agentic-sdlc-platform"},
@@ -172,7 +172,7 @@ def test_normalizes_github_pull_request_update_from_branch_ticket_key() -> None:
 
     assert task_update is not None
     assert task_update.source == "github"
-    assert task_update.external_id == "OS-1284"
+    assert task_update.external_id == "ENG-1284"
     assert task_update.status == "pr_open"
     assert task_update.repo == "GunnerBot/agentic-sdlc-platform"
     assert task_update.metadata == {
@@ -216,7 +216,7 @@ def test_normalizes_github_pull_request_merged_status() -> None:
             "pull_request": {
                 "number": 17,
                 "title": "Build webhook bridge",
-                "head": {"ref": "agent/OS-1284-build-webhook-bridge"},
+                "head": {"ref": "agent/ENG-1284-build-webhook-bridge"},
                 "merged": True,
             },
             "repository": {"full_name": "GunnerBot/agentic-sdlc-platform"},

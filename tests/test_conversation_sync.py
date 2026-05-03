@@ -75,9 +75,9 @@ async def create_task(repository: PersistenceRepository) -> str:
     task = await repository.create_task_from_event(
         event_id=event_result.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build webhook bridge",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
     return task.id
 
@@ -90,7 +90,7 @@ async def test_conversation_sync_service_records_and_mirrors_new_comments_once()
         provider="linear",
         external_thread_id="issue-id-1",
         hermes_session_id=None,
-        repo="keychain-os-erp",
+        repo="erp-service",
         orchestrator_provider="multica",
         orchestrator_issue_id="issue-1",
         orchestrator_task_id="multica-task-1",
@@ -144,7 +144,7 @@ async def test_conversation_sync_service_syncs_all_active_orchestrator_sessions(
         provider="linear",
         external_thread_id="issue-id-1",
         hermes_session_id=None,
-        repo="keychain-os-erp",
+        repo="erp-service",
         orchestrator_provider="multica",
         orchestrator_issue_id="issue-1",
         orchestrator_task_id="multica-task-1",
@@ -154,7 +154,7 @@ async def test_conversation_sync_service_syncs_all_active_orchestrator_sessions(
         provider="slack",
         external_thread_id="C123:1",
         hermes_session_id="hermes-session-1",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
     service = ConversationSyncService(
         repository=repository,
@@ -175,7 +175,7 @@ async def test_conversation_sync_service_mirrors_slack_thread_replies() -> None:
         provider="slack",
         external_thread_id="C123:1710000000.000000",
         hermes_session_id=None,
-        repo="keychain-os-erp",
+        repo="erp-service",
         orchestrator_provider="multica",
         orchestrator_issue_id="issue-1",
         orchestrator_task_id="multica-task-1",
@@ -203,7 +203,7 @@ async def test_conversation_sync_service_mirrors_telegram_messages() -> None:
         provider="telegram",
         external_thread_id="-1001234567890",
         hermes_session_id=None,
-        repo="keychain-os-erp",
+        repo="erp-service",
         orchestrator_provider="multica",
         orchestrator_issue_id="issue-1",
         orchestrator_task_id="multica-task-1",
@@ -229,7 +229,7 @@ async def test_conversation_sync_does_not_mark_comment_seen_when_channel_mirror_
         provider="slack",
         external_thread_id="C123:1710000000.000000",
         hermes_session_id=None,
-        repo="keychain-os-erp",
+        repo="erp-service",
         orchestrator_provider="multica",
         orchestrator_issue_id="issue-1",
         orchestrator_task_id="multica-task-1",

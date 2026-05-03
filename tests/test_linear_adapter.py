@@ -20,7 +20,7 @@ async def test_linear_adapter_blocks_when_http_disabled() -> None:
         await adapter.mark_task_queued(
             IssueTrackerUpdate(
                 issue_id="issue-id-1",
-                external_id="OS-1284",
+                external_id="ENG-1284",
                 internal_task_id="task-1",
                 orchestrator_task_id="multica-task-1",
             )
@@ -50,7 +50,7 @@ async def test_linear_adapter_posts_agent_queued_comment() -> None:
     await adapter.mark_task_queued(
         IssueTrackerUpdate(
             issue_id="issue-id-1",
-            external_id="OS-1284",
+            external_id="ENG-1284",
             internal_task_id="task-1",
             orchestrator_task_id="multica-task-1",
         )
@@ -63,7 +63,7 @@ async def test_linear_adapter_posts_agent_queued_comment() -> None:
     assert payload["variables"] == {
         "issueId": "issue-id-1",
         "body": (
-            "Agent task queued for OS-1284. "
+            "Agent task queued for ENG-1284. "
             "Internal task: task-1. Multica task: multica-task-1."
         ),
     }
@@ -118,8 +118,8 @@ async def test_linear_adapter_creates_issue() -> None:
                         "success": True,
                         "issue": {
                             "id": "issue-id-1",
-                            "identifier": "OS-1284",
-                            "url": "https://linear.app/keychain/issue/OS-1284",
+                            "identifier": "ENG-1284",
+                            "url": "https://linear.app/acme/issue/ENG-1284",
                         },
                     }
                 }
@@ -144,8 +144,8 @@ async def test_linear_adapter_creates_issue() -> None:
     )
 
     assert response.issue_id == "issue-id-1"
-    assert response.external_id == "OS-1284"
-    assert response.url == "https://linear.app/keychain/issue/OS-1284"
+    assert response.external_id == "ENG-1284"
+    assert response.url == "https://linear.app/acme/issue/ENG-1284"
     assert captured_request is not None
     payload = json.loads(captured_request.content)
     assert payload["variables"] == {
@@ -167,10 +167,10 @@ async def test_linear_adapter_fetches_issue_context() -> None:
                 "data": {
                     "issue": {
                         "id": "issue-id-1",
-                        "identifier": "OS-3001",
+                        "identifier": "ENG-3001",
                         "title": "Support dynamic form titles",
-                        "description": "## Repositories\n- webapp-monorepo",
-                        "url": "https://linear.app/keychain/issue/OS-3001",
+                        "description": "## Repositories\n- frontend-monorepo",
+                        "url": "https://linear.app/acme/issue/ENG-3001",
                         "attachments": {
                             "nodes": [
                                 {
@@ -210,8 +210,8 @@ async def test_linear_adapter_fetches_issue_context() -> None:
     payload = json.loads(captured_request.content)
     assert payload["variables"] == {"issueId": "issue-id-1"}
     assert context.issue_id == "issue-id-1"
-    assert context.identifier == "OS-3001"
-    assert context.description == "## Repositories\n- webapp-monorepo"
+    assert context.identifier == "ENG-3001"
+    assert context.description == "## Repositories\n- frontend-monorepo"
     assert context.attachments is not None
     assert context.attachments[0].title == "form-title.png"
     assert context.attachments[0].content_type == "image/png"
@@ -235,7 +235,7 @@ async def test_linear_adapter_raises_structured_error_for_failure() -> None:
         await adapter.mark_task_queued(
             IssueTrackerUpdate(
                 issue_id="issue-id-1",
-                external_id="OS-1284",
+                external_id="ENG-1284",
                 internal_task_id="task-1",
                 orchestrator_task_id=None,
             )

@@ -91,9 +91,9 @@ async def test_linear_issue_webhook_creates_internal_task() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
-                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+                "labels": {"nodes": [{"name": "repo:erp-service"}]},
             },
         },
         headers={"Linear-Delivery": "delivery-task-1"},
@@ -107,7 +107,7 @@ async def test_linear_issue_webhook_creates_internal_task() -> None:
 
     assert len(tasks) == 1
     assert tasks[0].source == "linear"
-    assert tasks[0].external_id == "OS-1284"
+    assert tasks[0].external_id == "ENG-1284"
     assert tasks[0].title == "Build webhook bridge"
-    assert tasks[0].repo == "keychain-os-erp"
+    assert tasks[0].repo == "erp-service"
     assert "task.normalized" in {event.action for event in audit_events}

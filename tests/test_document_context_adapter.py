@@ -39,7 +39,7 @@ async def test_notion_adapter_fetches_page_title_and_block_text() -> None:
                         {
                             "type": "bulleted_list_item",
                             "bulleted_list_item": {
-                                "rich_text": [{"plain_text": "keychain-os-erp"}]
+                                "rich_text": [{"plain_text": "erp-service"}]
                             },
                         },
                     ]
@@ -71,7 +71,7 @@ async def test_notion_adapter_fetches_page_title_and_block_text() -> None:
     assert context is not None
     assert context.provider == "notion"
     assert context.title == "Dynamic form titles"
-    assert context.text == "Repositories\nkeychain-os-erp"
+    assert context.text == "Repositories\nerp-service"
     assert requests[0].headers["authorization"] == "Bearer notion-secret"
     assert requests[0].headers["notion-version"] == "2022-06-28"
 
@@ -82,7 +82,7 @@ async def test_google_docs_adapter_fetches_exported_text() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal captured_request
         captured_request = request
-        return httpx.Response(status_code=200, text="## Repositories\n- webapp-monorepo")
+        return httpx.Response(status_code=200, text="## Repositories\n- frontend-monorepo")
 
     adapter = GoogleDocsDocumentContextAdapter(
         Settings(
@@ -96,7 +96,7 @@ async def test_google_docs_adapter_fetches_exported_text() -> None:
 
     assert context is not None
     assert context.provider == "google_docs"
-    assert context.text == "## Repositories\n- webapp-monorepo"
+    assert context.text == "## Repositories\n- frontend-monorepo"
     assert captured_request is not None
     assert captured_request.headers["authorization"] == "Bearer google-token"
     assert captured_request.url.path == "/document/d/doc-123/export"

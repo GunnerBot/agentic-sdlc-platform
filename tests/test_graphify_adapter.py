@@ -31,7 +31,7 @@ async def test_graphify_cli_query_uses_real_graphify_command(tmp_path) -> None:
 
     result = await store.query(
         GraphQuery(
-            repo="keychain-os-erp",
+            repo="erp-service",
             question="How does dry run validation work?",
             metadata={"graph_path": str(graph_path)},
         )
@@ -69,8 +69,8 @@ async def test_graphify_cli_index_uses_repo_local_path(tmp_path) -> None:
 
     result = await store.index(
         GraphIndexRequest(
-            repo="keychain-os-erp",
-            clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            repo="erp-service",
+            clone_url="https://github.com/acme-corp/erp-service.git",
             default_branch="main",
             metadata={"local_path": str(repo_path)},
         )
@@ -88,7 +88,7 @@ async def test_graphify_cli_index_copies_repo_to_output_root(tmp_path) -> None:
     (source_repo_path / "app.py").write_text("print('hello')", encoding="utf-8")
     output_root = tmp_path / "graphify-data"
     copied_graph_path = (
-        output_root / "atlas-tech-inc__keychain-os-erp" / "graphify-out" / "graph.json"
+        output_root / "acme-corp__erp-service" / "graphify-out" / "graph.json"
     )
     captured_commands: list[list[str]] = []
 
@@ -109,13 +109,13 @@ async def test_graphify_cli_index_copies_repo_to_output_root(tmp_path) -> None:
 
     result = await store.index(
         GraphIndexRequest(
-            repo="atlas-tech-inc/keychain-os-erp",
+            repo="acme-corp/erp-service",
             default_branch="main",
             metadata={"local_path": str(source_repo_path)},
         )
     )
 
-    copied_repo_path = output_root / "atlas-tech-inc__keychain-os-erp"
+    copied_repo_path = output_root / "acme-corp__erp-service"
     assert (copied_repo_path / "app.py").read_text(encoding="utf-8") == "print('hello')"
     assert captured_commands == [["graphify", "update", str(copied_repo_path)]]
     assert result.external_index_id == str(copied_graph_path)
@@ -130,7 +130,7 @@ async def test_graphify_cli_index_ignores_dangling_symlinks(tmp_path) -> None:
         source_repo_path / "missing-target"
     )
     output_root = tmp_path / "graphify-data"
-    copied_graph_path = output_root / "webapp-monorepo" / "graphify-out" / "graph.json"
+    copied_graph_path = output_root / "frontend-monorepo" / "graphify-out" / "graph.json"
 
     async def runner(command: list[str], command_timeout: float) -> str:
         copied_graph_path.parent.mkdir(parents=True)
@@ -148,13 +148,13 @@ async def test_graphify_cli_index_ignores_dangling_symlinks(tmp_path) -> None:
 
     result = await store.index(
         GraphIndexRequest(
-            repo="webapp-monorepo",
+            repo="frontend-monorepo",
             default_branch="main",
             metadata={"local_path": str(source_repo_path)},
         )
     )
 
-    copied_repo_path = output_root / "webapp-monorepo"
+    copied_repo_path = output_root / "frontend-monorepo"
     assert (copied_repo_path / "app.py").exists()
     assert not (copied_repo_path / "public" / "_next-video").exists()
     assert result.external_index_id == str(copied_graph_path)
@@ -194,7 +194,7 @@ async def test_graphify_http_query_posts_to_compatible_backend() -> None:
 
     result = await store.query(
         GraphQuery(
-            repo="keychain-os-erp",
+            repo="erp-service",
             question="How does FEFO work?",
             metadata={"default_branch": "main"},
         )
@@ -216,7 +216,7 @@ async def test_graphify_http_index_posts_to_compatible_backend() -> None:
         return httpx.Response(
             status_code=200,
             json={
-                "external_index_id": "graphify:keychain-os-erp:main",
+                "external_index_id": "graphify:erp-service:main",
                 "status": "indexed",
             },
         )
@@ -232,13 +232,13 @@ async def test_graphify_http_index_posts_to_compatible_backend() -> None:
 
     result = await store.index(
         GraphIndexRequest(
-            repo="keychain-os-erp",
-            clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            repo="erp-service",
+            clone_url="https://github.com/acme-corp/erp-service.git",
             default_branch="main",
         )
     )
 
     assert captured_request is not None
     assert str(captured_request.url) == "https://graphify.local/api/index"
-    assert result.external_index_id == "graphify:keychain-os-erp:main"
+    assert result.external_index_id == "graphify:erp-service:main"
     assert result.status == "indexed"

@@ -1,11 +1,11 @@
 [[channels]]
 provider = "slack"
 channel = "C1234567890"
-repo = "keychain-os-erp"
+repo = "erp-service"
 allowed_senders = ["U1234567890"]
 
 [[channels]]
 provider = "telegram"
 channel = "-1001234567890"
-repo = "keychain-os-erp"
+repo = "erp-service"
 allowed_senders = ["123456789"]

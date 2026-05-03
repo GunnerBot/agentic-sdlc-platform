@@ -238,9 +238,9 @@ async def build_repository() -> PersistenceRepository:
 async def test_linear_assigned_issue_comments_when_agent_task_is_queued() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -264,10 +264,10 @@ async def test_linear_assigned_issue_comments_when_agent_task_is_queued() -> Non
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
-                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+                "labels": {"nodes": [{"name": "repo:erp-service"}]},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-lifecycle-1"},
@@ -278,7 +278,7 @@ async def test_linear_assigned_issue_comments_when_agent_task_is_queued() -> Non
     assert issue_tracker.updates == [
         IssueTrackerUpdate(
             issue_id="issue-id-1",
-            external_id="OS-1284",
+            external_id="ENG-1284",
             internal_task_id=response.json()["task_id"],
             orchestrator_task_id="multica-task-1",
         )
@@ -287,11 +287,11 @@ async def test_linear_assigned_issue_comments_when_agent_task_is_queued() -> Non
         IssueTrackerReply(
             issue_id="issue-id-1",
             body=(
-                "Accepted OS-1284.\n"
-                "Repo: keychain-os-erp.\n"
+                "Accepted ENG-1284.\n"
+                "Repo: erp-service.\n"
                 "DAG template: none.\n"
                 "First DAG node queued: none.\n"
-                "Commands: /status OS-1284, /context OS-1284, /agents OS-1284."
+                "Commands: /status ENG-1284, /context ENG-1284, /agents ENG-1284."
             ),
         )
     ]
@@ -300,9 +300,9 @@ async def test_linear_assigned_issue_comments_when_agent_task_is_queued() -> Non
 async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="develop",
         metadata={"linear_team_key": "OS"},
     )
@@ -324,10 +324,10 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
-                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+                "labels": {"nodes": [{"name": "repo:erp-service"}]},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-registered-repo-1"},
@@ -337,18 +337,18 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
     assert task_orchestrator.created == [
         TaskRequest(
             source="linear",
-            external_id="OS-1284",
+            external_id="ENG-1284",
                 title="Build webhook bridge",
-                repo="keychain-os-erp",
+                repo="erp-service",
                 inbound_event_id=task_orchestrator.created[0].inbound_event_id,
                 metadata={
                     **dry_run_metadata(
-                        external_id="OS-1284",
+                        external_id="ENG-1284",
                         issue_id="issue-id-1",
                         title="Build webhook bridge",
                     ),
                     "repo_provider": "github",
-                    "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+                    "repo_clone_url": "https://github.com/acme-corp/erp-service.git",
                     "repo_default_branch": "develop",
                 "repo_metadata": {"linear_team_key": "OS"},
                 "repo_context": {
@@ -362,11 +362,11 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
         IssueTrackerReply(
             issue_id="issue-id-1",
             body=(
-                "Accepted OS-1284.\n"
-                "Repo: keychain-os-erp.\n"
+                "Accepted ENG-1284.\n"
+                "Repo: erp-service.\n"
                 "DAG template: none.\n"
                 "First DAG node queued: none.\n"
-                "Commands: /status OS-1284, /context OS-1284, /agents OS-1284."
+                "Commands: /status ENG-1284, /context ENG-1284, /agents ENG-1284."
             ),
         )
     ]
@@ -375,9 +375,9 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
 async def test_linear_assigned_issue_includes_graphify_repo_context_when_available() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="develop",
         metadata={"linear_team_key": "OS"},
     )
@@ -405,11 +405,11 @@ async def test_linear_assigned_issue_includes_graphify_repo_context_when_availab
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Explain foo DAFET validation dry run behaviour",
                 "description": "How does it work on form submission?",
                 "assignee": {"id": "agent-user-1"},
-                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+                "labels": {"nodes": [{"name": "repo:erp-service"}]},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-graphify-context-1"},
@@ -418,23 +418,23 @@ async def test_linear_assigned_issue_includes_graphify_repo_context_when_availab
     assert response.status_code == 202
     assert graph_store.queries == [
         GraphQuery(
-            repo="keychain-os-erp",
+            repo="erp-service",
             question=(
                 "Explain foo DAFET validation dry run behaviour\n\n"
                 "How does it work on form submission?"
             ),
-            metadata={"source": "linear", "external_id": "OS-1284"},
+            metadata={"source": "linear", "external_id": "ENG-1284"},
         )
     ]
     assert task_orchestrator.created[0].metadata == {
         **dry_run_metadata(
-            external_id="OS-1284",
+            external_id="ENG-1284",
             issue_id="issue-id-1",
             title="Explain foo DAFET validation dry run behaviour",
             body="How does it work on form submission?",
         ),
         "repo_provider": "github",
-        "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        "repo_clone_url": "https://github.com/acme-corp/erp-service.git",
         "repo_default_branch": "develop",
         "repo_metadata": {"linear_team_key": "OS"},
         "repo_context": {
@@ -454,16 +454,16 @@ async def test_linear_assigned_issue_includes_graphify_repo_context_when_availab
 async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
     await repository.upsert_repo(
-        name="webapp-monorepo",
+        name="frontend-monorepo",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        clone_url="https://github.com/acme-corp/frontend-monorepo.git",
         default_branch="main",
         metadata={},
     )
@@ -494,12 +494,12 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-2222",
+                "identifier": "ENG-2222",
                 "title": "Support dynamic form titles",
                 "description": (
                     "## Repositories\n"
-                    "- keychain-os-erp\n"
-                    "- webapp-monorepo\n\n"
+                    "- erp-service\n"
+                    "- frontend-monorepo\n\n"
                     "## Acceptance\n"
                     "- Backend supplies title metadata.\n"
                     "- Webapp renders dynamic titles."
@@ -522,19 +522,19 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
         ).one()
 
     assert [node.node_key for node in dag.nodes] == [
-        "scope_keychain_os_erp",
-        "scope_webapp_monorepo",
+        "scope_erp_service",
+        "scope_frontend_monorepo",
     ]
-    assert [node.repo for node in dag.nodes] == ["keychain-os-erp", "webapp-monorepo"]
+    assert [node.repo for node in dag.nodes] == ["erp-service", "frontend-monorepo"]
     assert [request.repo for request in task_orchestrator.created] == [
-        "keychain-os-erp",
-        "webapp-monorepo",
+        "erp-service",
+        "frontend-monorepo",
     ]
     assert task_orchestrator.created[0].metadata["spec_ingestion"]["repo_scope"] == {
         "scope": "multi_repo",
         "repos": [
-            {"repo": "keychain-os-erp", "reason": "mentioned_in_spec"},
-            {"repo": "webapp-monorepo", "reason": "mentioned_in_spec"},
+            {"repo": "erp-service", "reason": "mentioned_in_spec"},
+            {"repo": "frontend-monorepo", "reason": "mentioned_in_spec"},
         ],
         "unknown_repos": [],
     }
@@ -542,21 +542,21 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
         "scope"
     ] == "multi_repo"
     assert [query.repo for query in graph_store.queries] == [
-        "keychain-os-erp",
-        "webapp-monorepo",
+        "erp-service",
+        "frontend-monorepo",
     ]
     assert spec_event.metadata_json["repo_scope"]["scope"] == "multi_repo"
     assert issue_tracker.replies == [
         IssueTrackerReply(
             issue_id="issue-id-1",
             body=(
-                "Accepted OS-2222.\n"
+                "Accepted ENG-2222.\n"
                 "Repo: none.\n"
-                "Spec repo scope: multi_repo (keychain-os-erp, webapp-monorepo).\n"
+                "Spec repo scope: multi_repo (erp-service, frontend-monorepo).\n"
                 "DAG template: linear-spec.\n"
-                "Planned nodes: 2 (scope_keychain_os_erp, scope_webapp_monorepo).\n"
-                "First DAG node queued: scope_keychain_os_erp (queued).\n"
-                "Commands: /status OS-2222, /context OS-2222, /agents OS-2222."
+                "Planned nodes: 2 (scope_erp_service, scope_frontend_monorepo).\n"
+                "First DAG node queued: scope_erp_service (queued).\n"
+                "Commands: /status ENG-2222, /context ENG-2222, /agents ENG-2222."
             ),
         )
     ]
@@ -565,16 +565,16 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
 async def test_linear_assigned_issue_uses_model_planner_for_spec_dag() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
     await repository.upsert_repo(
-        name="webapp-monorepo",
+        name="frontend-monorepo",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        clone_url="https://github.com/acme-corp/frontend-monorepo.git",
         default_branch="main",
         metadata={},
     )
@@ -585,18 +585,18 @@ async def test_linear_assigned_issue_uses_model_planner_for_spec_dag() -> None:
   {
     "id": "backend_contract",
     "title": "Add dynamic title contract",
-    "repo": "keychain-os-erp"
+    "repo": "erp-service"
   },
   {
     "id": "backend_impl",
     "title": "Persist and expose dynamic form title metadata",
-    "repo": "keychain-os-erp",
+    "repo": "erp-service",
     "depends_on": ["backend_contract"]
   },
   {
     "id": "frontend_impl",
     "title": "Render dynamic form titles in the web app",
-    "repo": "webapp-monorepo",
+    "repo": "frontend-monorepo",
     "depends_on": ["backend_contract"]
   }
 ]
@@ -630,12 +630,12 @@ async def test_linear_assigned_issue_uses_model_planner_for_spec_dag() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-2444",
+                "identifier": "ENG-2444",
                 "title": "Support dynamic form titles",
                 "description": (
                     "## Repositories\n"
-                    "- keychain-os-erp\n"
-                    "- webapp-monorepo\n\n"
+                    "- erp-service\n"
+                    "- frontend-monorepo\n\n"
                     "## Acceptance\n"
                     "- Backend supplies title metadata.\n"
                     "- Webapp renders dynamic titles."
@@ -663,9 +663,9 @@ async def test_linear_assigned_issue_uses_model_planner_for_spec_dag() -> None:
         "frontend_impl",
     ]
     assert [node.repo for node in dag.nodes] == [
-        "keychain-os-erp",
-        "keychain-os-erp",
-        "webapp-monorepo",
+        "erp-service",
+        "erp-service",
+        "frontend-monorepo",
     ]
     assert dag.nodes[0].status == "queued"
     assert dag.nodes[1].status == "blocked"
@@ -675,23 +675,23 @@ async def test_linear_assigned_issue_uses_model_planner_for_spec_dag() -> None:
     assert planned_event.metadata_json["strategy"] == "model"
     assert planned_event.metadata_json["node_count"] == 3
     assert [request.role for request in planning_model.requests] == ["plan_agent"]
-    assert "keychain-os-erp" in planning_model.requests[0].prompt
-    assert "webapp-monorepo" in planning_model.requests[0].prompt
+    assert "erp-service" in planning_model.requests[0].prompt
+    assert "frontend-monorepo" in planning_model.requests[0].prompt
     assert [query.repo for query in graph_store.queries[:2]] == [
-        "keychain-os-erp",
-        "webapp-monorepo",
+        "erp-service",
+        "frontend-monorepo",
     ]
     assert issue_tracker.replies == [
         IssueTrackerReply(
             issue_id="issue-id-1",
             body=(
-                "Accepted OS-2444.\n"
+                "Accepted ENG-2444.\n"
                 "Repo: none.\n"
-                "Spec repo scope: multi_repo (keychain-os-erp, webapp-monorepo).\n"
+                "Spec repo scope: multi_repo (erp-service, frontend-monorepo).\n"
                 "DAG template: linear-spec.\n"
                 "Planned nodes: 3 (backend_contract, backend_impl, frontend_impl).\n"
                 "First DAG node queued: backend_contract (queued).\n"
-                "Commands: /status OS-2444, /context OS-2444, /agents OS-2444."
+                "Commands: /status ENG-2444, /context ENG-2444, /agents ENG-2444."
             ),
         )
     ]
@@ -700,9 +700,9 @@ async def test_linear_assigned_issue_uses_model_planner_for_spec_dag() -> None:
 async def test_linear_model_planner_falls_back_when_plan_references_unknown_repo() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -743,11 +743,11 @@ async def test_linear_model_planner_falls_back_when_plan_references_unknown_repo
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-2445",
+                "identifier": "ENG-2445",
                 "title": "Support dynamic form titles",
                 "description": (
                     "## Repositories\n"
-                    "- keychain-os-erp\n\n"
+                    "- erp-service\n\n"
                     "## Acceptance\n"
                     "- Backend supplies title metadata."
                 ),
@@ -768,8 +768,8 @@ async def test_linear_model_planner_falls_back_when_plan_references_unknown_repo
             )
         ).one()
 
-    assert [node.node_key for node in dag.nodes] == ["scope_keychain_os_erp"]
-    assert [node.repo for node in dag.nodes] == ["keychain-os-erp"]
+    assert [node.node_key for node in dag.nodes] == ["scope_erp_service"]
+    assert [node.repo for node in dag.nodes] == ["erp-service"]
     assert planned_event.metadata_json["strategy"] == "repo_fallback"
     assert planned_event.metadata_json["fallback_reason"] == "invalid_model_plan"
     assert task_orchestrator.created[0].metadata["planning_strategy"] == "repo_fallback"
@@ -778,9 +778,9 @@ async def test_linear_model_planner_falls_back_when_plan_references_unknown_repo
 async def test_linear_model_planner_falls_back_when_plan_has_dependency_cycle() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -790,13 +790,13 @@ async def test_linear_model_planner_falls_back_when_plan_has_dependency_cycle() 
   {
     "id": "api_contract",
     "title": "Define API contract",
-    "repo": "keychain-os-erp",
+    "repo": "erp-service",
     "depends_on": ["api_impl"]
   },
   {
     "id": "api_impl",
     "title": "Implement API",
-    "repo": "keychain-os-erp",
+    "repo": "erp-service",
     "depends_on": ["api_contract"]
   }
 ]
@@ -827,11 +827,11 @@ async def test_linear_model_planner_falls_back_when_plan_has_dependency_cycle() 
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-2447",
+                "identifier": "ENG-2447",
                 "title": "Support dynamic form titles",
                 "description": (
                     "## Repositories\n"
-                    "- keychain-os-erp\n\n"
+                    "- erp-service\n\n"
                     "## Acceptance\n"
                     "- Backend supplies title metadata."
                 ),
@@ -852,7 +852,7 @@ async def test_linear_model_planner_falls_back_when_plan_has_dependency_cycle() 
             )
         ).one()
 
-    assert [node.node_key for node in dag.nodes] == ["scope_keychain_os_erp"]
+    assert [node.node_key for node in dag.nodes] == ["scope_erp_service"]
     assert planned_event.metadata_json["strategy"] == "repo_fallback"
     assert planned_event.metadata_json["fallback_reason"] == "invalid_model_plan"
     assert task_orchestrator.created[0].metadata["planning_strategy"] == "repo_fallback"
@@ -861,9 +861,9 @@ async def test_linear_model_planner_falls_back_when_plan_has_dependency_cycle() 
 async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -873,7 +873,7 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
   {
     "id": "backend_contract",
     "title": "Add dynamic title contract",
-    "repo": "keychain-os-erp"
+    "repo": "erp-service"
   }
 ]
 """
@@ -904,11 +904,11 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-2446",
+                "identifier": "ENG-2446",
                 "title": "Support dynamic form titles",
                 "description": (
                     "## Repositories\n"
-                    "- keychain-os-erp\n\n"
+                    "- erp-service\n\n"
                     "## Acceptance\n"
                     "- Backend supplies title metadata."
                 ),
@@ -918,7 +918,7 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
         headers={"Linear-Delivery": "delivery-linear-plan-approval-1"},
     )
 
-    task = await repository.find_task_by_external_id("OS-2446")
+    task = await repository.find_task_by_external_id("ENG-2446")
     assert assignment_response.status_code == 202
     assert task is not None
     assert task.status == "needs_plan_approval"
@@ -926,14 +926,14 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
         body=(
-            "Accepted OS-2446.\n"
-            "Repo: keychain-os-erp.\n"
-            "Spec repo scope: single_repo (keychain-os-erp).\n"
+            "Accepted ENG-2446.\n"
+            "Repo: erp-service.\n"
+            "Spec repo scope: single_repo (erp-service).\n"
             "DAG template: linear-spec.\n"
             "Planned nodes: 1 (backend_contract).\n"
-            "Plan approval required: reply /approve-plan OS-2446 to start.\n"
+            "Plan approval required: reply /approve-plan ENG-2446 to start.\n"
             "First DAG node queued: none.\n"
-            "Commands: /status OS-2446, /context OS-2446, /agents OS-2446."
+            "Commands: /status ENG-2446, /context ENG-2446, /agents ENG-2446."
         ),
     )
 
@@ -944,16 +944,16 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
             "action": "create",
             "data": {
                 "id": "comment-1",
-                "body": "/approve-plan OS-2446",
+                "body": "/approve-plan ENG-2446",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-2446"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-2446"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-plan-approval-2"},
     )
 
     assert approval_response.status_code == 202
-    task = await repository.find_task_by_external_id("OS-2446")
+    task = await repository.find_task_by_external_id("ENG-2446")
     assert task is not None
     assert task.status == "queued"
     assert [request.external_id for request in task_orchestrator.created] == [
@@ -974,16 +974,16 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
     }
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
-        body="Plan approved for OS-2446. Queued nodes: backend_contract.",
+        body="Plan approved for ENG-2446. Queued nodes: backend_contract.",
     )
 
 
 async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="webapp-monorepo",
+        name="frontend-monorepo",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        clone_url="https://github.com/acme-corp/frontend-monorepo.git",
         default_branch="main",
         metadata={},
     )
@@ -1014,7 +1014,7 @@ async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() 
                 "title": "Build dynamic form title designs",
                 "description": (
                     "## Repositories\n"
-                    "- webapp-monorepo\n\n"
+                    "- frontend-monorepo\n\n"
                     "## Design\n"
                     "Use https://www.figma.com/file/abc123/form-title-flow"
                 ),
@@ -1030,7 +1030,7 @@ async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() 
                         {
                             "id": "attachment-2",
                             "title": "frontend-notes.md",
-                            "content": "## Repositories\n- webapp-monorepo",
+                            "content": "## Repositories\n- frontend-monorepo",
                             "contentType": "text/markdown",
                         },
                     ]
@@ -1048,16 +1048,16 @@ async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() 
         text=(
             "Build dynamic form title designs\n\n"
             "## Repositories\n"
-            "- webapp-monorepo\n\n"
+            "- frontend-monorepo\n\n"
             "## Design\n"
             "Use https://www.figma.com/file/abc123/form-title-flow\n\n"
             "Ingested Linear spec context:\n"
-            "Repos: webapp-monorepo\n"
+            "Repos: frontend-monorepo\n"
             "Design assets:\n"
             "- form-title-mobile.png (https://linear.local/form-title-mobile.png)\n"
             "- Figma link (https://www.figma.com/file/abc123/form-title-flow)"
         ),
-        repo="webapp-monorepo",
+        repo="frontend-monorepo",
     )
     assert task_orchestrator.created[0].metadata["spec_ingestion"]["asset_count"] == 2
     assert issue_tracker.replies == [
@@ -1065,8 +1065,8 @@ async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() 
             issue_id="issue-id-1",
             body=(
                 "Accepted WEB-991.\n"
-                "Repo: webapp-monorepo.\n"
-                "Spec repo scope: single_repo (webapp-monorepo).\n"
+                "Repo: frontend-monorepo.\n"
+                "Spec repo scope: single_repo (frontend-monorepo).\n"
                 "Design assets: 2.\n"
                 "DAG template: none.\n"
                 "First DAG node queued: none.\n"
@@ -1079,16 +1079,16 @@ async def test_linear_assigned_issue_ingests_design_assets_for_hermes_context() 
 async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
     await repository.upsert_repo(
-        name="webapp-monorepo",
+        name="frontend-monorepo",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        clone_url="https://github.com/acme-corp/frontend-monorepo.git",
         default_branch="main",
         metadata={},
     )
@@ -1099,12 +1099,12 @@ async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None
         hydrated_issues={
             "issue-id-1": IssueContext(
                 issue_id="issue-id-1",
-                identifier="OS-3001",
+                identifier="ENG-3001",
                 title="Support dynamic form titles",
                 description=(
                     "## Repositories\n"
-                    "- keychain-os-erp\n"
-                    "- webapp-monorepo\n\n"
+                    "- erp-service\n"
+                    "- frontend-monorepo\n\n"
                     "## Acceptance\n"
                     "- Backend persists the title expression.\n"
                     "- Webapp renders the resolved title."
@@ -1139,7 +1139,7 @@ async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-3001",
+                "identifier": "ENG-3001",
                 "title": "Support dynamic form titles",
                 "description": "Assigned to agent.",
                 "assignee": {"id": "agent-user-1"},
@@ -1160,20 +1160,20 @@ async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None
             )
         ).one()
 
-    assert [node.repo for node in dag.nodes] == ["keychain-os-erp", "webapp-monorepo"]
+    assert [node.repo for node in dag.nodes] == ["erp-service", "frontend-monorepo"]
     assert task_orchestrator.created[0].metadata["spec_ingestion"]["asset_count"] == 1
     assert spec_event.metadata_json["text_sources"][0]["title"] == "Linear description"
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
         body=(
-            "Accepted OS-3001.\n"
+            "Accepted ENG-3001.\n"
             "Repo: none.\n"
-            "Spec repo scope: multi_repo (keychain-os-erp, webapp-monorepo).\n"
+            "Spec repo scope: multi_repo (erp-service, frontend-monorepo).\n"
             "Design assets: 1.\n"
             "DAG template: linear-spec.\n"
-            "Planned nodes: 2 (scope_keychain_os_erp, scope_webapp_monorepo).\n"
-            "First DAG node queued: scope_keychain_os_erp (queued).\n"
-            "Commands: /status OS-3001, /context OS-3001, /agents OS-3001."
+            "Planned nodes: 2 (scope_erp_service, scope_frontend_monorepo).\n"
+            "First DAG node queued: scope_erp_service (queued).\n"
+            "Commands: /status ENG-3001, /context ENG-3001, /agents ENG-3001."
         ),
     )
 
@@ -1181,9 +1181,9 @@ async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None
 async def test_linear_assigned_issue_hydrates_notion_doc_from_description() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -1199,7 +1199,7 @@ async def test_linear_assigned_issue_hydrates_notion_doc_from_description() -> N
                 title="Dynamic form titles spec",
                 text=(
                     "## Repositories\n"
-                    "- keychain-os-erp\n\n"
+                    "- erp-service\n\n"
                     "## Acceptance\n"
                     "- Backend persists title expression metadata."
                 ),
@@ -1229,7 +1229,7 @@ async def test_linear_assigned_issue_hydrates_notion_doc_from_description() -> N
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-3004",
+                "identifier": "ENG-3004",
                 "title": "Support dynamic form titles",
                 "description": f"Spec: {notion_url}",
                 "assignee": {"id": "agent-user-1"},
@@ -1240,16 +1240,16 @@ async def test_linear_assigned_issue_hydrates_notion_doc_from_description() -> N
 
     assert response.status_code == 202
     assert document_context.fetched_urls == [notion_url]
-    assert task_orchestrator.created[0].repo == "keychain-os-erp"
+    assert task_orchestrator.created[0].repo == "erp-service"
     assert task_orchestrator.created[0].metadata["spec_ingestion"]["repo_scope"] == {
         "scope": "single_repo",
-        "repos": [{"repo": "keychain-os-erp", "reason": "mentioned_in_spec"}],
+        "repos": [{"repo": "erp-service", "reason": "mentioned_in_spec"}],
         "unknown_repos": [],
     }
     assert task_orchestrator.created[0].metadata["spec_ingestion"]["text_sources"][1] == {
         "kind": "attachment",
         "title": "Dynamic form titles spec",
-        "length": 94,
+        "length": 90,
     }
     async with repository._session_factory() as session:
         hydrated_event = (
@@ -1263,9 +1263,9 @@ async def test_linear_assigned_issue_hydrates_notion_doc_from_description() -> N
 async def test_linear_assigned_issue_hydrates_figma_design_from_description() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="webapp-monorepo",
+        name="frontend-monorepo",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        clone_url="https://github.com/acme-corp/frontend-monorepo.git",
         default_branch="main",
         metadata={},
     )
@@ -1280,7 +1280,7 @@ async def test_linear_assigned_issue_hydrates_figma_design_from_description() ->
                     "Figma file: Dynamic form titles\n"
                     "Requested node: 1:2\n\n"
                     "## Repositories\n"
-                    "- webapp-monorepo\n\n"
+                    "- frontend-monorepo\n\n"
                     "## Acceptance\n"
                     "- Use the compact dynamic title frame."
                 ),
@@ -1327,10 +1327,10 @@ async def test_linear_assigned_issue_hydrates_figma_design_from_description() ->
             "content_type": None,
         }
     ]
-    assert task_orchestrator.created[0].repo == "webapp-monorepo"
+    assert task_orchestrator.created[0].repo == "frontend-monorepo"
     assert task_orchestrator.created[0].metadata["spec_ingestion"]["repo_scope"] == {
         "scope": "single_repo",
-        "repos": [{"repo": "webapp-monorepo", "reason": "mentioned_in_spec"}],
+        "repos": [{"repo": "frontend-monorepo", "reason": "mentioned_in_spec"}],
         "unknown_repos": [],
     }
     assert any(
@@ -1361,9 +1361,9 @@ async def test_linear_assigned_issue_hydrates_figma_design_from_description() ->
 async def test_linear_assigned_issue_hydrates_image_attachment_summary() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="webapp-monorepo",
+        name="frontend-monorepo",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/webapp-monorepo.git",
+        clone_url="https://github.com/acme-corp/frontend-monorepo.git",
         default_branch="main",
         metadata={},
     )
@@ -1377,7 +1377,7 @@ async def test_linear_assigned_issue_hydrates_image_attachment_summary() -> None
                 summary=(
                     "Image attachment: form-title.png\n\n"
                     "## Repositories\n"
-                    "- webapp-monorepo\n\n"
+                    "- frontend-monorepo\n\n"
                     "## Acceptance\n"
                     "- The dynamic form title appears above the first editable field."
                 ),
@@ -1435,7 +1435,7 @@ async def test_linear_assigned_issue_hydrates_image_attachment_summary() -> None
             "content_type": "image/png",
         }
     ]
-    assert task_orchestrator.created[0].repo == "webapp-monorepo"
+    assert task_orchestrator.created[0].repo == "frontend-monorepo"
     spec_ingestion = task_orchestrator.created[0].metadata["spec_ingestion"]
     assert task_orchestrator.created[0].metadata["hydrated_spec_artifact_id"]
     assert any(
@@ -1463,7 +1463,7 @@ async def test_linear_assigned_issue_hydrates_image_attachment_summary() -> None
     assert artifacts[0].content_json["text_sources"][1]["text"] == (
         "Image attachment: form-title.png\n\n"
         "## Repositories\n"
-        "- webapp-monorepo\n\n"
+        "- frontend-monorepo\n\n"
         "## Acceptance\n"
         "- The dynamic form title appears above the first editable field."
     )
@@ -1480,9 +1480,9 @@ async def test_linear_assigned_issue_hydrates_image_attachment_summary() -> None
 async def test_linear_assigned_issue_blocks_and_asks_for_repo_when_spec_is_ambiguous() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -1504,7 +1504,7 @@ async def test_linear_assigned_issue_blocks_and_asks_for_repo_when_spec_is_ambig
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-3002",
+                "identifier": "ENG-3002",
                 "title": "Support dynamic form titles",
                 "description": (
                     "## Repositories\n"
@@ -1520,7 +1520,7 @@ async def test_linear_assigned_issue_blocks_and_asks_for_repo_when_spec_is_ambig
 
     assert response.status_code == 202
     assert task_orchestrator.created == []
-    task = await repository.find_task_by_external_id("OS-3002")
+    task = await repository.find_task_by_external_id("ENG-3002")
     assert task is not None
     assert task.status == "blocked"
     assert issue_tracker.updates == []
@@ -1528,8 +1528,8 @@ async def test_linear_assigned_issue_blocks_and_asks_for_repo_when_spec_is_ambig
         IssueTrackerReply(
             issue_id="issue-id-1",
             body=(
-                "I need a registered repository before I can start OS-3002.\n"
-                "Mention one of: keychain-os-erp.\n"
+                "I need a registered repository before I can start ENG-3002.\n"
+                "Mention one of: erp-service.\n"
                 "Unregistered repo mentions: missing-service."
             ),
         )
@@ -1539,9 +1539,9 @@ async def test_linear_assigned_issue_blocks_and_asks_for_repo_when_spec_is_ambig
 async def test_linear_repo_clarification_comment_resumes_blocked_task() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -1563,7 +1563,7 @@ async def test_linear_repo_clarification_comment_resumes_blocked_task() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-3003",
+                "identifier": "ENG-3003",
                 "title": "Support dynamic form titles",
                 "description": (
                     "## Acceptance\n"
@@ -1582,9 +1582,9 @@ async def test_linear_repo_clarification_comment_resumes_blocked_task() -> None:
             "action": "create",
             "data": {
                 "id": "comment-1",
-                "body": "Use keychain-os-erp for this.",
+                "body": "Use erp-service for this.",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-3003"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-3003"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-clarification-resume-2"},
@@ -1593,19 +1593,19 @@ async def test_linear_repo_clarification_comment_resumes_blocked_task() -> None:
     assert assignment_response.status_code == 202
     assert response.status_code == 202
     assert response.json()["task_id"] == assignment_response.json()["task_id"]
-    task = await repository.find_task_by_external_id("OS-3003")
+    task = await repository.find_task_by_external_id("ENG-3003")
     assert task is not None
-    assert task.repo == "keychain-os-erp"
+    assert task.repo == "erp-service"
     assert task.status == "queued"
     assert task_orchestrator.created == [
         TaskRequest(
             source="linear",
-            external_id="OS-3003",
+            external_id="ENG-3003",
             title="Support dynamic form titles",
-            repo="keychain-os-erp",
+            repo="erp-service",
             metadata={
                 "repo_provider": "github",
-                "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+                "repo_clone_url": "https://github.com/acme-corp/erp-service.git",
                 "repo_default_branch": "main",
                 "repo_metadata": {},
                 "repo_context": {
@@ -1615,7 +1615,7 @@ async def test_linear_repo_clarification_comment_resumes_blocked_task() -> None:
                 "repo_clarification": {
                     "comment_id": "comment-1",
                     "actor": "linear:user-1",
-                    "resolved_repo": "keychain-os-erp",
+                    "resolved_repo": "erp-service",
                 },
             },
         )
@@ -1623,23 +1623,23 @@ async def test_linear_repo_clarification_comment_resumes_blocked_task() -> None:
     assert issue_tracker.updates == [
         IssueTrackerUpdate(
             issue_id="issue-id-1",
-            external_id="OS-3003",
+            external_id="ENG-3003",
             internal_task_id=response.json()["task_id"],
             orchestrator_task_id="multica-task-1",
         )
     ]
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
-        body="Thanks, I will use keychain-os-erp and start OS-3003.",
+        body="Thanks, I will use erp-service and start ENG-3003.",
     )
 
 
 async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -1661,12 +1661,12 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
                 "labels": {
                     "nodes": [
-                        {"name": "repo:keychain-os-erp"},
+                        {"name": "repo:erp-service"},
                         {"name": "type:bug"},
                     ]
                 },
@@ -1692,7 +1692,7 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
         ).one()
 
         assert [node.node_key for node in dag.nodes] == ["reproduce", "fix", "test", "review"]
-        assert [node.repo for node in dag.nodes] == ["keychain-os-erp"] * 4
+        assert [node.repo for node in dag.nodes] == ["erp-service"] * 4
         assert dag.nodes[0].status == "queued"
         assert dag.nodes[0].orchestrator_task_id == "multica-dag-node-1"
         assert dag.nodes[1].status == "blocked"
@@ -1700,7 +1700,7 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
     assert task_orchestrator.created[0].external_id == f"{dag.id}:reproduce"
     assert task_orchestrator.created[0].metadata == {
         "parent_task_id": response.json()["task_id"],
-        "parent_external_id": "OS-1284",
+        "parent_external_id": "ENG-1284",
         "dag_id": dag.id,
         "node_key": "reproduce",
         "acceptance_criteria": [],
@@ -1728,12 +1728,12 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
             "reason": "graphify CLI query requires graph_path or repo local_path metadata",
         },
         **dry_run_metadata(
-            external_id="OS-1284",
+            external_id="ENG-1284",
             issue_id="issue-id-1",
             title="Build webhook bridge",
         ),
         "repo_provider": "github",
-        "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        "repo_clone_url": "https://github.com/acme-corp/erp-service.git",
         "repo_default_branch": "main",
         "repo_metadata": {},
     }
@@ -1745,11 +1745,11 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
         IssueTrackerReply(
             issue_id="issue-id-1",
             body=(
-                "Accepted OS-1284.\n"
-                "Repo: keychain-os-erp.\n"
+                "Accepted ENG-1284.\n"
+                "Repo: erp-service.\n"
                 "DAG template: bugfix.\n"
                 "First DAG node queued: reproduce (queued).\n"
-                "Commands: /status OS-1284, /context OS-1284, /agents OS-1284."
+                "Commands: /status ENG-1284, /context ENG-1284, /agents ENG-1284."
             ),
         )
     ]
@@ -1775,7 +1775,7 @@ async def test_linear_assigned_issue_blocks_when_repo_label_is_unknown() -> None
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
                 "labels": {"nodes": [{"name": "repo:missing-repo"}]},
@@ -1793,11 +1793,11 @@ async def test_linear_assigned_issue_blocks_when_repo_label_is_unknown() -> None
             issue_id="issue-id-1",
             body=(
                 "Repository missing-repo is not registered. "
-                "Register it before I can work on OS-1284."
+                "Register it before I can work on ENG-1284."
             ),
         )
     ]
-    task = await repository.find_task_by_external_id("OS-1284")
+    task = await repository.find_task_by_external_id("ENG-1284")
     assert task is not None
     assert task.status == "blocked"
 
@@ -1805,9 +1805,9 @@ async def test_linear_assigned_issue_blocks_when_repo_label_is_unknown() -> None
 async def test_linear_assigned_issue_starts_and_persists_hermes_session() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -1829,11 +1829,11 @@ async def test_linear_assigned_issue_starts_and_persists_hermes_session() -> Non
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "description": "Create the bridge.",
                 "assignee": {"id": "agent-user-1"},
-                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+                "labels": {"nodes": [{"name": "repo:erp-service"}]},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-session-1"},
@@ -1846,7 +1846,7 @@ async def test_linear_assigned_issue_starts_and_persists_hermes_session() -> Non
             provider="linear",
             external_thread_id="issue-id-1",
             text="Build webhook bridge\n\nCreate the bridge.",
-            repo="keychain-os-erp",
+            repo="erp-service",
         )
     ]
     persisted = await repository.find_agent_session(
@@ -1860,9 +1860,9 @@ async def test_linear_assigned_issue_starts_and_persists_hermes_session() -> Non
 async def test_linear_assigned_issue_records_hermes_start_failure_without_aborting() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -1884,11 +1884,11 @@ async def test_linear_assigned_issue_records_hermes_start_failure_without_aborti
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "description": "Create the bridge.",
                 "assignee": {"id": "agent-user-1"},
-                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+                "labels": {"nodes": [{"name": "repo:erp-service"}]},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-session-failure-1"},
@@ -1953,7 +1953,7 @@ async def test_linear_issue_assigned_to_other_user_is_not_actionable() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "someone-else"},
             },
@@ -1969,9 +1969,9 @@ async def test_linear_issue_assigned_to_other_user_is_not_actionable() -> None:
 async def test_linear_comment_resumes_session_and_replies_in_thread() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -1994,10 +1994,10 @@ async def test_linear_comment_resumes_session_and_replies_in_thread() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
-                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+                "labels": {"nodes": [{"name": "repo:erp-service"}]},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-session-comment-1"},
@@ -2012,7 +2012,7 @@ async def test_linear_comment_resumes_session_and_replies_in_thread() -> None:
                 "id": "comment-1",
                 "body": "Please check inventory allocation first.",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-1284"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-session-comment-2"},
@@ -2053,9 +2053,9 @@ async def test_linear_comment_resumes_session_and_replies_in_thread() -> None:
 async def test_linear_comment_on_multica_backed_session_is_added_to_multica_issue() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -2078,10 +2078,10 @@ async def test_linear_comment_on_multica_backed_session_is_added_to_multica_issu
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
-                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+                "labels": {"nodes": [{"name": "repo:erp-service"}]},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-multica-session-1"},
@@ -2096,7 +2096,7 @@ async def test_linear_comment_on_multica_backed_session_is_added_to_multica_issu
                 "id": "comment-1",
                 "body": "What exact class has the dryRun default mismatch?",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-1284"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-multica-session-2"},
@@ -2167,7 +2167,7 @@ async def test_linear_comment_from_agent_user_is_ignored_to_prevent_reply_loop()
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
             },
@@ -2183,7 +2183,7 @@ async def test_linear_comment_from_agent_user_is_ignored_to_prevent_reply_loop()
                 "id": "comment-1",
                 "body": "I will check inventory allocation first.",
                 "user": {"id": "agent-user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-1284"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-loop-2"},
@@ -2194,7 +2194,7 @@ async def test_linear_comment_from_agent_user_is_ignored_to_prevent_reply_loop()
     assert response.json()["task_id"] == assignment_response.json()["task_id"]
     assert hermes_session.resumed == []
     assert len(issue_tracker.replies) == 1
-    assert issue_tracker.replies[0].body.startswith("Accepted OS-1284.")
+    assert issue_tracker.replies[0].body.startswith("Accepted ENG-1284.")
 
 
 async def test_linear_comment_command_updates_task_status_and_replies() -> None:
@@ -2218,7 +2218,7 @@ async def test_linear_comment_command_updates_task_status_and_replies() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
             },
@@ -2232,9 +2232,9 @@ async def test_linear_comment_command_updates_task_status_and_replies() -> None:
             "action": "create",
             "data": {
                 "id": "comment-1",
-                "body": "/pause OS-1284 waiting for product decision",
+                "body": "/pause ENG-1284 waiting for product decision",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-1284"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-command-2"},
@@ -2246,9 +2246,9 @@ async def test_linear_comment_command_updates_task_status_and_replies() -> None:
     assert task_orchestrator.updated == [("multica-task-1", "paused")]
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
-        body="Command /pause applied. Task OS-1284 is now paused.",
+        body="Command /pause applied. Task ENG-1284 is now paused.",
     )
-    task = await repository.find_task_by_external_id("OS-1284")
+    task = await repository.find_task_by_external_id("ENG-1284")
     assert task is not None
     assert task.status == "paused"
 
@@ -2273,7 +2273,7 @@ async def test_linear_status_comment_replies_with_current_task_state() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
             },
@@ -2287,9 +2287,9 @@ async def test_linear_status_comment_replies_with_current_task_state() -> None:
             "action": "create",
             "data": {
                 "id": "comment-1",
-                "body": "/status OS-1284",
+                "body": "/status ENG-1284",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-1284"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-status-2"},
@@ -2301,7 +2301,7 @@ async def test_linear_status_comment_replies_with_current_task_state() -> None:
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
         body=(
-            "Task OS-1284 status: queued. "
+            "Task ENG-1284 status: queued. "
             "Orchestrator: multica-task-1 (queued). "
             "Repo: none. Sessions: 1 active session. "
             "DAG: none."
@@ -2312,9 +2312,9 @@ async def test_linear_status_comment_replies_with_current_task_state() -> None:
 async def test_linear_status_comment_replies_with_dag_progress() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -2336,12 +2336,12 @@ async def test_linear_status_comment_replies_with_dag_progress() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
                 "labels": {
                     "nodes": [
-                        {"name": "repo:keychain-os-erp"},
+                        {"name": "repo:erp-service"},
                         {"name": "type:feature"},
                     ]
                 },
@@ -2356,9 +2356,9 @@ async def test_linear_status_comment_replies_with_dag_progress() -> None:
             "action": "create",
             "data": {
                 "id": "comment-1",
-                "body": "/status OS-1284",
+                "body": "/status ENG-1284",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-1284"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-status-dag-2"},
@@ -2370,9 +2370,9 @@ async def test_linear_status_comment_replies_with_dag_progress() -> None:
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
         body=(
-            "Task OS-1284 status: queued. "
+            "Task ENG-1284 status: queued. "
             "Orchestrator: none. "
-            "Repo: keychain-os-erp. Sessions: 1 active session. "
+            "Repo: erp-service. Sessions: 1 active session. "
             "DAG: planned, 0/5 completed, 0 skipped, 0 failed, 0 ready, next: none."
         ),
     )
@@ -2381,9 +2381,9 @@ async def test_linear_status_comment_replies_with_dag_progress() -> None:
 async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -2408,12 +2408,12 @@ async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
                 "labels": {
                     "nodes": [
-                        {"name": "repo:keychain-os-erp"},
+                        {"name": "repo:erp-service"},
                         {"name": "type:feature"},
                     ]
                 },
@@ -2428,9 +2428,9 @@ async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
             "action": "create",
             "data": {
                 "id": "comment-1",
-                "body": "/nodes OS-1284",
+                "body": "/nodes ENG-1284",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-1284"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-nodes-2"},
@@ -2442,17 +2442,17 @@ async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
         body=(
-            "Task OS-1284 nodes:\n"
+            "Task ENG-1284 nodes:\n"
             "Next runnable: none\n"
-            "- design: queued; repo keychain-os-erp; depends_on none; "
+            "- design: queued; repo erp-service; depends_on none; "
             "orchestrator multica-task-1; pr none; failure none\n"
-            "- contract: blocked; repo keychain-os-erp; depends_on design; "
+            "- contract: blocked; repo erp-service; depends_on design; "
             "orchestrator none; pr none; failure none\n"
-            "- implement: blocked; repo keychain-os-erp; depends_on contract; "
+            "- implement: blocked; repo erp-service; depends_on contract; "
             "orchestrator none; pr none; failure none\n"
-            "- verify: blocked; repo keychain-os-erp; depends_on implement; "
+            "- verify: blocked; repo erp-service; depends_on implement; "
             "orchestrator none; pr none; failure none\n"
-            "- review: blocked; repo keychain-os-erp; depends_on verify; "
+            "- review: blocked; repo erp-service; depends_on verify; "
             "orchestrator none; pr none; failure none"
         ),
     )
@@ -2461,9 +2461,9 @@ async def test_linear_nodes_comment_replies_with_dag_node_statuses() -> None:
 async def test_linear_context_comment_replies_with_repo_and_recent_events() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={"owner": "platform"},
     )
@@ -2485,10 +2485,10 @@ async def test_linear_context_comment_replies_with_repo_and_recent_events() -> N
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
-                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+                "labels": {"nodes": [{"name": "repo:erp-service"}]},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-context-1"},
@@ -2502,7 +2502,7 @@ async def test_linear_context_comment_replies_with_repo_and_recent_events() -> N
                 "id": "comment-1",
                 "body": "Please check inventory allocation first.",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-1284"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-context-2"},
@@ -2514,9 +2514,9 @@ async def test_linear_context_comment_replies_with_repo_and_recent_events() -> N
             "action": "create",
             "data": {
                 "id": "comment-2",
-                "body": "/context OS-1284",
+                "body": "/context ENG-1284",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-1284"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-context-3"},
@@ -2528,8 +2528,8 @@ async def test_linear_context_comment_replies_with_repo_and_recent_events() -> N
     assert issue_tracker.replies[-1] == IssueTrackerReply(
         issue_id="issue-id-1",
         body=(
-            "Task OS-1284 context:\n"
-            "Repo: keychain-os-erp (github, main)\n"
+            "Task ENG-1284 context:\n"
+            "Repo: erp-service (github, main)\n"
             "Recent events:\n"
             "- system session_started: Build webhook bridge\n"
             "- linear:user-1 comment: Please check inventory allocation first.\n"
@@ -2558,7 +2558,7 @@ async def test_linear_agents_comment_replies_with_session_and_orchestrator_state
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
                 "assignee": {"id": "agent-user-1"},
             },
@@ -2572,9 +2572,9 @@ async def test_linear_agents_comment_replies_with_session_and_orchestrator_state
             "action": "create",
             "data": {
                 "id": "comment-1",
-                "body": "/agents OS-1284",
+                "body": "/agents ENG-1284",
                 "user": {"id": "user-1"},
-                "issue": {"id": "issue-id-1", "identifier": "OS-1284"},
+                "issue": {"id": "issue-id-1", "identifier": "ENG-1284"},
             },
         },
         headers={"Linear-Delivery": "delivery-linear-agents-2"},
@@ -2586,7 +2586,7 @@ async def test_linear_agents_comment_replies_with_session_and_orchestrator_state
     reply = issue_tracker.replies[-1]
     assert reply.issue_id == "issue-id-1"
     assert reply.body.startswith(
-        "Task OS-1284 agents:\n"
+        "Task ENG-1284 agents:\n"
         "Orchestrator: multica-task-1 (queued)\n"
         "- linear session "
     )

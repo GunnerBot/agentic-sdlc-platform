@@ -7,7 +7,7 @@ from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest, Her
 
 
 class FakeRepo:
-    name = "keychain-os-erp"
+    name = "erp-service"
     metadata_json = {}
     default_branch = "main"
 
@@ -18,9 +18,9 @@ class FakeSession:
 
 class FakeTask:
     id = "task-1"
-    external_id = "OS-1284"
+    external_id = "ENG-1284"
     status = "queued"
-    repo = "keychain-os-erp"
+    repo = "erp-service"
     orchestrator_task_id = "multica-task-1"
     orchestrator_status = "queued"
     sessions = [FakeSession()]
@@ -51,10 +51,10 @@ class FakeGraphStore:
 
 class FakeRepository:
     async def get_repo_by_name(self, name: str):
-        return FakeRepo() if name == "keychain-os-erp" else None
+        return FakeRepo() if name == "erp-service" else None
 
     async def find_task_by_external_id(self, external_id: str):
-        return FakeTask() if external_id == "OS-1284" else None
+        return FakeTask() if external_id == "ENG-1284" else None
 
 
 def test_telegram_ingress_rejects_invalid_secret_token_when_configured() -> None:
@@ -113,7 +113,7 @@ def test_telegram_implementation_command_routes_to_multica_task_without_hermes()
 
     response = client.post(
         "/channels/telegram/webhook",
-        json={"message": {"chat": {"id": 42}, "from": {"id": 7}, "text": "/implement OS-1284"}},
+        json={"message": {"chat": {"id": 42}, "from": {"id": 7}, "text": "/implement ENG-1284"}},
     )
 
     assert response.status_code == 200
@@ -136,19 +136,19 @@ def test_telegram_message_routes_repo_question_to_graph_store() -> None:
             "message": {
                 "chat": {"id": -1001234567890},
                 "from": {"id": 7},
-                "text": "repo:keychain-os-erp Where does allocation live?",
+                "text": "repo:erp-service Where does allocation live?",
             }
         },
     )
 
     assert response.status_code == 200
     assert response.json()["route"] == "graph_repo_query"
-    assert response.json()["repo"] == "keychain-os-erp"
+    assert response.json()["repo"] == "erp-service"
     assert response.json()["answer"] == "Allocation lives in inventory/allocation.py."
     assert response.json()["references"] == ["inventory/allocation.py"]
     assert graph_store.queries == [
         GraphQuery(
-            repo="keychain-os-erp",
+            repo="erp-service",
             question="Where does allocation live?",
             metadata={"default_branch": "main"},
         )
@@ -164,7 +164,7 @@ def test_telegram_task_status_command_returns_task_info() -> None:
             "message": {
                 "chat": {"id": -1001234567890},
                 "from": {"id": 7},
-                "text": "/status OS-1284",
+                "text": "/status ENG-1284",
             }
         },
     )

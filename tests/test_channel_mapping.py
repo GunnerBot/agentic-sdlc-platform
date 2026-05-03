@@ -12,14 +12,14 @@ from agentic_sdlc_platform.ports.hermes_session import HermesSessionRequest, Her
 
 
 class FakeRepo:
-    name = "keychain-os-erp"
+    name = "erp-service"
     metadata_json = {}
     default_branch = "main"
 
 
 class FakeRepository:
     async def get_repo_by_name(self, name: str):
-        return FakeRepo() if name == "keychain-os-erp" else None
+        return FakeRepo() if name == "erp-service" else None
 
 
 class FakeGraphStore:
@@ -51,13 +51,13 @@ def write_mapping(tmp_path) -> str:
 [[channels]]
 provider = "slack"
 channel = "C123"
-repo = "keychain-os-erp"
+repo = "erp-service"
 allowed_senders = ["U123"]
 
 [[channels]]
 provider = "telegram"
 channel = "-1001234567890"
-repo = "keychain-os-erp"
+repo = "erp-service"
 allowed_senders = ["7"]
 """.strip(),
         encoding="utf-8",
@@ -99,7 +99,7 @@ def test_generic_channel_ingress_applies_mapped_repo(tmp_path) -> None:
     )
 
     assert response.status_code == 202
-    assert hermes_session.requests[0].repo == "keychain-os-erp"
+    assert hermes_session.requests[0].repo == "erp-service"
 
 
 def test_generic_channel_ingress_uses_graph_for_mapped_repo_when_enabled(tmp_path) -> None:
@@ -133,7 +133,7 @@ def test_generic_channel_ingress_uses_graph_for_mapped_repo_when_enabled(tmp_pat
     assert hermes_session.requests == []
     assert graph_store.queries == [
         GraphQuery(
-            repo="keychain-os-erp",
+            repo="erp-service",
             question="How does FEFO allocation work?",
             metadata={"default_branch": "main"},
         )
@@ -212,4 +212,4 @@ def test_telegram_ingress_applies_mapped_repo(tmp_path) -> None:
     )
 
     assert response.status_code == 200
-    assert hermes_session.requests[0].repo == "keychain-os-erp"
+    assert hermes_session.requests[0].repo == "erp-service"

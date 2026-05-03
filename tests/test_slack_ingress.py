@@ -25,7 +25,7 @@ from agentic_sdlc_platform.ports.task_orchestrator import (
 
 
 class FakeRepo:
-    name = "keychain-os-erp"
+    name = "erp-service"
     metadata_json = {}
     default_branch = "main"
 
@@ -37,7 +37,7 @@ class FakeSession:
 class FakeNode:
     node_key = "design"
     title = "Design"
-    repo = "keychain-os-erp"
+    repo = "erp-service"
     depends_on = ()
     status = "queued"
     orchestrator_task_id = "multica-node-1"
@@ -52,9 +52,9 @@ class FakeDag:
 
 class FakeTask:
     id = "task-1"
-    external_id = "OS-1284"
+    external_id = "ENG-1284"
     status = "queued"
-    repo = "keychain-os-erp"
+    repo = "erp-service"
     orchestrator_task_id = "multica-task-1"
     orchestrator_status = "queued"
     sessions = [FakeSession()]
@@ -110,8 +110,8 @@ class FakeIssueTracker:
         self.created.append(request)
         return IssueCreateResponse(
             issue_id="issue-id-1",
-            external_id="OS-1284",
-            url="https://linear.app/keychain/issue/OS-1284",
+            external_id="ENG-1284",
+            url="https://linear.app/acme/issue/ENG-1284",
         )
 
 
@@ -137,10 +137,10 @@ class FakeRepository:
         self.session_events: list[tuple[str, str, str, str, str | None]] = []
 
     async def get_repo_by_name(self, name: str):
-        return FakeRepo() if name == "keychain-os-erp" else None
+        return FakeRepo() if name == "erp-service" else None
 
     async def find_task_by_external_id(self, external_id: str):
-        return FakeTask() if external_id == "OS-1284" else None
+        return FakeTask() if external_id == "ENG-1284" else None
 
     async def record_inbound_event(self, source, delivery_id, event_type, payload):
         return SimpleNamespace(
@@ -378,7 +378,7 @@ def test_slack_thread_followup_resumes_stored_session() -> None:
         provider="slack",
         external_thread_id="C123:1710000000.000000",
         hermes_session_id="hermes-session-1",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
     repository.agent_sessions[("slack", "C123:1710000000.000000")] = existing
     hermes_session = FakeHermesSession()
@@ -451,7 +451,7 @@ def test_slack_thread_followup_on_multica_session_adds_multica_comment() -> None
         orchestrator_provider="multica",
         orchestrator_issue_id="multica-issue-1",
         orchestrator_task_id="multica-task-1",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
     repository.agent_sessions[("slack", "C123:1710000000.000000")] = existing
     task_orchestrator = FakeTaskOrchestrator()
@@ -510,7 +510,7 @@ def test_slack_app_mention_routes_repo_question_to_graph_store() -> None:
                 "type": "app_mention",
                 "channel": "C123",
                 "user": "U123",
-                "text": "<@BOT> repo:keychain-os-erp Where does allocation live?",
+                "text": "<@BOT> repo:erp-service Where does allocation live?",
             },
         }
     ).encode("utf-8")
@@ -533,7 +533,7 @@ def test_slack_app_mention_routes_repo_question_to_graph_store() -> None:
     assert response.json() == {
         "ok": True,
         "route": "graph_repo_query",
-        "repo": "keychain-os-erp",
+        "repo": "erp-service",
         "answer": "Allocation lives in inventory/allocation.py.",
         "references": ["inventory/allocation.py"],
         "session_id": None,
@@ -541,7 +541,7 @@ def test_slack_app_mention_routes_repo_question_to_graph_store() -> None:
     }
     assert graph_store.queries == [
         GraphQuery(
-            repo="keychain-os-erp",
+            repo="erp-service",
             question="Where does allocation live?",
             metadata={"default_branch": "main"},
         )
@@ -559,7 +559,7 @@ def test_slack_create_ticket_command_creates_linear_issue_with_message_context()
                 "ts": "1710000000.000100",
                 "thread_ts": "1710000000.000000",
                 "text": (
-                    "<@BOT> /create-ticket repo:keychain-os-erp type:feature "
+                    "<@BOT> /create-ticket repo:erp-service type:feature "
                     "Add FEFO allocation support | Carry over Slack context."
                 ),
             },
@@ -584,10 +584,10 @@ def test_slack_create_ticket_command_creates_linear_issue_with_message_context()
         "ok": True,
         "route": "create_ticket",
         "command": "create-ticket",
-        "repo": "keychain-os-erp",
+        "repo": "erp-service",
         "issue_id": "issue-id-1",
-        "external_id": "OS-1284",
-        "url": "https://linear.app/keychain/issue/OS-1284",
+        "external_id": "ENG-1284",
+        "url": "https://linear.app/acme/issue/ENG-1284",
         "session_id": None,
         "message_id": None,
     }
@@ -601,12 +601,12 @@ def test_slack_create_ticket_command_creates_linear_issue_with_message_context()
                 "Sender: U123\n"
                 "Message timestamp: 1710000000.000100\n"
                 "Thread timestamp: 1710000000.000000\n"
-                "Repo: keychain-os-erp\n"
+                "Repo: erp-service\n"
                 "Template: feature\n"
                 "\n"
                 "Carry over Slack context."
             ),
-            repo="keychain-os-erp",
+            repo="erp-service",
             metadata={
                 "provider": "slack",
                 "channel": "C123",
@@ -700,7 +700,7 @@ def test_slack_app_mention_task_nodes_command_returns_task_info() -> None:
                 "type": "app_mention",
                 "channel": "C123",
                 "user": "U123",
-                "text": "<@BOT> /nodes OS-1284",
+                "text": "<@BOT> /nodes ENG-1284",
             },
         }
     ).encode("utf-8")
@@ -722,8 +722,8 @@ def test_slack_app_mention_task_nodes_command_returns_task_info() -> None:
     assert response.json()["command"] == "nodes"
     assert response.json()["task_id"] == "task-1"
     assert response.json()["answer"] == (
-        "Task OS-1284 nodes:\n"
+        "Task ENG-1284 nodes:\n"
         "Next runnable: none\n"
-        "- design: queued; repo keychain-os-erp; depends_on none; "
+        "- design: queued; repo erp-service; depends_on none; "
         "orchestrator multica-node-1; pr none; failure none"
     )

@@ -15,20 +15,20 @@ async def test_upsert_repo_registry_record_and_lookup_by_name() -> None:
     repository = await build_repository()
 
     repo = await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={"linear_team_key": "OS"},
     )
     updated = await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="develop",
         metadata={"linear_team_key": "ERP"},
     )
-    found = await repository.get_repo_by_name("keychain-os-erp")
+    found = await repository.get_repo_by_name("erp-service")
 
     assert updated.id == repo.id
     assert found is not None
@@ -39,7 +39,7 @@ async def test_upsert_repo_registry_record_and_lookup_by_name() -> None:
 async def test_list_repos_filters_by_provider_and_status() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
         clone_url=None,
         default_branch="main",
@@ -56,7 +56,7 @@ async def test_list_repos_filters_by_provider_and_status() -> None:
 
     repos = await repository.list_repos(provider="github", status="active")
 
-    assert [repo.name for repo in repos] == ["keychain-os-erp"]
+    assert [repo.name for repo in repos] == ["erp-service"]
 
 
 async def test_upsert_and_list_github_installations_by_workspace() -> None:
@@ -65,7 +65,7 @@ async def test_upsert_and_list_github_installations_by_workspace() -> None:
     created = await repository.upsert_github_installation(
         workspace_id="workspace-1",
         installation_id="installation-1",
-        account="atlas-tech-inc",
+        account="acme-corp",
         repository_selection="selected",
         permissions={"contents": "write", "pull_requests": "write"},
         metadata={"repo_count": 2},
@@ -73,7 +73,7 @@ async def test_upsert_and_list_github_installations_by_workspace() -> None:
     updated = await repository.upsert_github_installation(
         workspace_id="workspace-1",
         installation_id="installation-1",
-        account="atlas-tech-inc",
+        account="acme-corp",
         repository_selection="selected",
         permissions={"contents": "write"},
         metadata={"repo_count": 3},

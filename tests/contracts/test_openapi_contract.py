@@ -14,9 +14,9 @@ class FakeEvent:
 class FakeTask:
     id = "task-1"
     source = "linear"
-    external_id = "OS-1284"
+    external_id = "ENG-1284"
     title = "Build task status API"
-    repo = "keychain-os-erp"
+    repo = "erp-service"
     status = "queued"
     orchestrator_task_id = None
     orchestrator_status = None
@@ -26,7 +26,7 @@ class FakeTask:
 
 class FakeRepo:
     id = "repo-1"
-    name = "keychain-os-erp"
+    name = "erp-service"
     provider = "github"
     clone_url = None
     default_branch = "main"
@@ -36,9 +36,9 @@ class FakeRepo:
 
 class FakeRepoIndexJob:
     id = "repo-index-job-1"
-    repo_name = "keychain-os-erp"
+    repo_name = "erp-service"
     provider = "graphify"
-    external_index_id = "idx:keychain-os-erp"
+    external_index_id = "idx:erp-service"
     status = "indexed"
     error = None
     metadata_json = {}
@@ -52,7 +52,7 @@ class FakeWriteResult:
 class FakeDagNode:
     node_key = "api"
     title = "Add API contract"
-    repo = "keychain-os-erp"
+    repo = "erp-service"
     depends_on = ()
     status = "ready"
     orchestrator_task_id = None
@@ -209,7 +209,7 @@ class FakeModelProvider:
 class FakeGraphStore:
     async def index(self, request):
         class Result:
-            external_index_id = "idx:keychain-os-erp"
+            external_index_id = "idx:erp-service"
             status = "indexed"
 
         return Result()

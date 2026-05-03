@@ -12,7 +12,7 @@ from agentic_sdlc_platform.ports.issue_tracker import IssueCreateRequest, IssueC
 
 
 class FakeRepo:
-    name = "keychain-os-erp"
+    name = "erp-service"
     metadata_json = {"linear_team_key": "OS"}
     default_branch = "main"
 
@@ -23,9 +23,9 @@ class FakeSession:
 
 class FakeTask:
     id = "task-1"
-    external_id = "OS-1284"
+    external_id = "ENG-1284"
     status = "queued"
-    repo = "keychain-os-erp"
+    repo = "erp-service"
     orchestrator_task_id = "multica-task-1"
     orchestrator_status = "queued"
     sessions = [FakeSession()]
@@ -66,17 +66,17 @@ class FakeIssueTracker:
         self.created.append(request)
         return IssueCreateResponse(
             issue_id="issue-id-1",
-            external_id="OS-1284",
-            url="https://linear.app/keychain/issue/OS-1284",
+            external_id="ENG-1284",
+            url="https://linear.app/acme/issue/ENG-1284",
         )
 
 
 class FakeRepository:
     async def get_repo_by_name(self, name: str):
-        return FakeRepo() if name == "keychain-os-erp" else None
+        return FakeRepo() if name == "erp-service" else None
 
     async def find_task_by_external_id(self, external_id: str):
-        return FakeTask() if external_id == "OS-1284" else None
+        return FakeTask() if external_id == "ENG-1284" else None
 
 
 async def build_repository() -> PersistenceRepository:
@@ -96,9 +96,9 @@ async def create_task_with_dag(repository: PersistenceRepository) -> str:
     task = await repository.create_task_from_event(
         event_id=event.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build allocation",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
     await repository.create_task_dag(
         task_id=task.id,
@@ -151,7 +151,7 @@ def test_channel_ingress_routes_implementation_requests_to_multica_task() -> Non
             "provider": "telegram",
             "channel": "-1001234567890",
             "sender_id": "42",
-            "text": "/implement OS-1284",
+            "text": "/implement ENG-1284",
         },
     )
 
@@ -169,7 +169,7 @@ def test_channel_ingress_create_ticket_command_creates_issue() -> None:
             "provider": "slack",
             "channel": "C123",
             "sender_id": "U123",
-            "text": "/create-ticket repo:keychain-os-erp type:bug Fix allocation bug",
+            "text": "/create-ticket repo:erp-service type:bug Fix allocation bug",
         },
     )
 
@@ -177,8 +177,8 @@ def test_channel_ingress_create_ticket_command_creates_issue() -> None:
     assert response.json()["route"] == "create_ticket"
     assert response.json()["command"] == "create-ticket"
     assert response.json()["issue_id"] == "issue-id-1"
-    assert response.json()["external_id"] == "OS-1284"
-    assert response.json()["url"] == "https://linear.app/keychain/issue/OS-1284"
+    assert response.json()["external_id"] == "ENG-1284"
+    assert response.json()["url"] == "https://linear.app/acme/issue/ENG-1284"
     assert issue_tracker.created == [
         IssueCreateRequest(
             title="Fix allocation bug",
@@ -187,10 +187,10 @@ def test_channel_ingress_create_ticket_command_creates_issue() -> None:
                 "Provider: slack\n"
                 "Channel: C123\n"
                 "Sender: U123\n"
-                "Repo: keychain-os-erp\n"
+                "Repo: erp-service\n"
                 "Template: bug"
             ),
-            repo="keychain-os-erp",
+            repo="erp-service",
             metadata={
                 "provider": "slack",
                 "channel": "C123",
@@ -217,7 +217,7 @@ def test_channel_ingress_invokes_hermes_for_direct_questions_when_configured() -
             "channel": "C123",
             "sender_id": "U123",
             "text": "How does FEFO allocation work?",
-            "repo": "keychain-os-erp",
+            "repo": "erp-service",
         },
     )
 
@@ -244,7 +244,7 @@ def test_channel_ingress_invokes_hermes_for_direct_questions_when_configured() -
             channel="C123",
             sender_id="U123",
             text="How does FEFO allocation work?",
-            repo="keychain-os-erp",
+            repo="erp-service",
         )
     ]
 
@@ -268,7 +268,7 @@ def test_channel_ingress_routes_repo_field_question_to_graph_when_enabled() -> N
             "channel": "C123",
             "sender_id": "U123",
             "text": "How does FEFO allocation work?",
-            "repo": "keychain-os-erp",
+            "repo": "erp-service",
         },
     )
 
@@ -278,7 +278,7 @@ def test_channel_ingress_routes_repo_field_question_to_graph_when_enabled() -> N
     assert hermes_session.requests == []
     assert graph_store.queries == [
         GraphQuery(
-            repo="keychain-os-erp",
+            repo="erp-service",
             question="How does FEFO allocation work?",
             metadata={"linear_team_key": "OS", "default_branch": "main"},
         )
@@ -317,18 +317,18 @@ def test_channel_ingress_routes_repo_scoped_question_to_graph_store() -> None:
             "provider": "slack",
             "channel": "C123",
             "sender_id": "U123",
-            "text": "repo:keychain-os-erp Where does allocation live?",
+            "text": "repo:erp-service Where does allocation live?",
         },
     )
 
     assert response.status_code == 202
     assert response.json()["route"] == "graph_repo_query"
-    assert response.json()["repo"] == "keychain-os-erp"
+    assert response.json()["repo"] == "erp-service"
     assert response.json()["answer"] == "Allocation lives in inventory/allocation.py."
     assert response.json()["references"] == ["inventory/allocation.py"]
     assert graph_store.queries == [
         GraphQuery(
-            repo="keychain-os-erp",
+            repo="erp-service",
             question="Where does allocation live?",
             metadata={"linear_team_key": "OS", "default_branch": "main"},
         )
@@ -344,7 +344,7 @@ def test_channel_ingress_task_status_command_returns_task_info() -> None:
             "provider": "slack",
             "channel": "C123",
             "sender_id": "U123",
-            "text": "/status OS-1284",
+            "text": "/status ENG-1284",
         },
     )
 
@@ -353,9 +353,9 @@ def test_channel_ingress_task_status_command_returns_task_info() -> None:
     assert response.json()["command"] == "status"
     assert response.json()["task_id"] == "task-1"
     assert response.json()["answer"] == (
-        "Task OS-1284 status: queued. "
+        "Task ENG-1284 status: queued. "
         "Orchestrator: multica-task-1 (queued). "
-        "Repo: keychain-os-erp. Sessions: 1 active session. DAG: none."
+        "Repo: erp-service. Sessions: 1 active session. DAG: none."
     )
 
 
@@ -370,7 +370,7 @@ async def test_channel_ingress_running_why_blocked_and_node_override_commands() 
             "provider": "slack",
             "channel": "C123",
             "sender_id": "U123",
-            "text": "/running OS-1284",
+            "text": "/running ENG-1284",
         },
     )
     blocked = client.post(
@@ -379,7 +379,7 @@ async def test_channel_ingress_running_why_blocked_and_node_override_commands() 
             "provider": "slack",
             "channel": "C123",
             "sender_id": "U123",
-            "text": "/why-blocked OS-1284",
+            "text": "/why-blocked ENG-1284",
         },
     )
     skipped = client.post(
@@ -388,16 +388,16 @@ async def test_channel_ingress_running_why_blocked_and_node_override_commands() 
             "provider": "slack",
             "channel": "C123",
             "sender_id": "U123",
-            "text": "/skip-node OS-1284 api duplicate work",
+            "text": "/skip-node ENG-1284 api duplicate work",
         },
     )
 
     assert running.status_code == 202
     assert running.json()["route"] == "task_info"
-    assert running.json()["answer"] == "Task OS-1284 running:\n- none"
+    assert running.json()["answer"] == "Task ENG-1284 running:\n- none"
     assert blocked.status_code == 202
     assert "- web: waiting on api" in blocked.json()["answer"]
     assert skipped.status_code == 202
     assert skipped.json()["route"] == "node_override"
     assert skipped.json()["task_id"] == task_id
-    assert skipped.json()["answer"] == "Node api on OS-1284 is now skipped."
+    assert skipped.json()["answer"] == "Node api on ENG-1284 is now skipped."

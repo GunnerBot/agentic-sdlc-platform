@@ -69,7 +69,7 @@ async def test_hermes_adapter_posts_direct_question() -> None:
             channel="C123",
             sender_id="U123",
             text="How does FEFO allocation work?",
-            repo="keychain-os-erp",
+            repo="erp-service",
         )
     )
 
@@ -84,7 +84,7 @@ async def test_hermes_adapter_posts_direct_question() -> None:
         "channel": "C123",
         "sender_id": "U123",
         "text": "How does FEFO allocation work?",
-        "repo": "keychain-os-erp",
+        "repo": "erp-service",
         **AGENT_POLICY_PAYLOAD,
     }
 
@@ -140,7 +140,7 @@ async def test_hermes_adapter_starts_task_session() -> None:
             provider="linear",
             external_thread_id="issue-id-1",
             text="Build webhook bridge",
-            repo="keychain-os-erp",
+            repo="erp-service",
         )
     )
 
@@ -152,7 +152,7 @@ async def test_hermes_adapter_starts_task_session() -> None:
         "provider": "linear",
         "external_thread_id": "issue-id-1",
         "text": "Build webhook bridge",
-        "repo": "keychain-os-erp",
+        "repo": "erp-service",
         **AGENT_POLICY_PAYLOAD,
     }
 
@@ -233,7 +233,7 @@ async def test_hermes_adapter_openai_compatible_starts_session() -> None:
             provider="linear",
             external_thread_id="issue-id-1",
             text="Build webhook bridge",
-            repo="keychain-os-erp",
+            repo="erp-service",
         )
     )
 

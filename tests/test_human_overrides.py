@@ -43,20 +43,20 @@ async def create_task(repository: PersistenceRepository) -> Task:
     return await repository.create_task_from_event(
         event_id=event_result.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build webhook bridge",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
 
 
 def test_plan_approval_accepts_real_and_smoke_external_ids() -> None:
-    real_command = parse_plan_approval("/approve-plan OS-1284")
-    smoke_command = parse_plan_approval("/approve-plan OS-SMOKE-20260429-A")
+    real_command = parse_plan_approval("/approve-plan ENG-1284")
+    smoke_command = parse_plan_approval("/approve-plan ENG-SMOKE-20260429-A")
 
     assert real_command is not None
-    assert real_command.external_id == "OS-1284"
+    assert real_command.external_id == "ENG-1284"
     assert smoke_command is not None
-    assert smoke_command.external_id == "OS-SMOKE-20260429-A"
+    assert smoke_command.external_id == "ENG-SMOKE-20260429-A"
 
 
 def signed_slack_headers(body: bytes, secret: str) -> dict[str, str]:
@@ -81,7 +81,7 @@ async def test_pause_command_updates_task_status_and_audit_log() -> None:
             "provider": "slack",
             "channel": "C123",
             "sender_id": "U123",
-            "text": "/pause OS-1284 waiting for product clarification",
+            "text": "/pause ENG-1284 waiting for product clarification",
         },
     )
 
@@ -122,7 +122,7 @@ async def test_resume_command_updates_multica_task_when_orchestrated() -> None:
             "provider": "telegram",
             "channel": "-1001234567890",
             "sender_id": "7",
-            "text": "/resume OS-1284",
+            "text": "/resume ENG-1284",
         },
     )
 
@@ -157,7 +157,7 @@ async def test_override_command_for_unknown_task_returns_404() -> None:
             "provider": "slack",
             "channel": "C123",
             "sender_id": "U123",
-            "text": "/reject OS-999 not valid",
+            "text": "/reject ENG-999 not valid",
         },
     )
 
@@ -174,7 +174,7 @@ async def test_slack_override_command_updates_task_status() -> None:
                 "type": "app_mention",
                 "channel": "C123",
                 "user": "U123",
-                "text": "<@BOT> /takeover OS-1284 handling manually",
+                "text": "<@BOT> /takeover ENG-1284 handling manually",
             },
         }
     ).encode("utf-8")
@@ -216,7 +216,7 @@ async def test_telegram_override_command_updates_task_status() -> None:
             "message": {
                 "chat": {"id": -1001234567890},
                 "from": {"id": 7},
-                "text": "/context OS-1284 need more details",
+                "text": "/context ENG-1284 need more details",
             }
         },
         headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},

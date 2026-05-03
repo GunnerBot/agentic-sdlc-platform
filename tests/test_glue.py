@@ -7,7 +7,7 @@ from agentic_sdlc_platform.glue.deploy_hook import DeployHook, DeployRequest
 def test_channel_router_routes_ticket_commands_to_multica() -> None:
     router = ChannelRouter()
 
-    route = router.route(ChannelMessage(channel="slack", text="/implement OS-123", sender_id="u1"))
+    route = router.route(ChannelMessage(channel="slack", text="/implement ENG-123", sender_id="u1"))
 
     assert route == RouteTarget.MULTICA_TASK
 

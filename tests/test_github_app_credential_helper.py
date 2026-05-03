@@ -7,7 +7,7 @@ def test_github_app_credential_helper_ignores_non_github_hosts() -> None:
         {
             "protocol": "https",
             "host": "example.com",
-            "path": "atlas-tech-inc/keychain-os-erp.git",
+            "path": "acme-corp/erp-service.git",
         },
         settings=Settings(github_app_git_credential_enabled=True),
     )
@@ -24,7 +24,7 @@ def test_github_app_credential_helper_ignores_disallowed_owner() -> None:
         },
         settings=Settings(
             github_app_git_credential_enabled=True,
-            github_app_git_credential_allowed_owners="atlas-tech-inc",
+            github_app_git_credential_allowed_owners="acme-corp",
         ),
     )
 
@@ -42,11 +42,11 @@ def test_github_app_credential_helper_returns_installation_credentials(monkeypat
         {
             "protocol": "https",
             "host": "github.com",
-            "path": "atlas-tech-inc/keychain-os-erp.git",
+            "path": "acme-corp/erp-service.git",
         },
         settings=Settings(
             github_app_git_credential_enabled=True,
-            github_app_git_credential_allowed_owners="atlas-tech-inc",
+            github_app_git_credential_allowed_owners="acme-corp",
         ),
     )
 

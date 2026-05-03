@@ -7,9 +7,9 @@ def test_builtin_dag_templates_define_expected_execution_shapes() -> None:
         id="task-1",
         inbound_event_id="event-1",
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build workflow templates",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
 
     templates = {
@@ -23,7 +23,7 @@ def test_builtin_dag_templates_define_expected_execution_shapes() -> None:
         subtasks = build_dag_template(template, task)
 
         assert [subtask.id for subtask in subtasks] == node_keys
-        assert {subtask.repo for subtask in subtasks} == {"keychain-os-erp"}
+        assert {subtask.repo for subtask in subtasks} == {"erp-service"}
         assert subtasks[0].depends_on == ()
         assert subtasks[-1].id == "review"
         assert subtasks[-1].depends_on == (node_keys[-2],)

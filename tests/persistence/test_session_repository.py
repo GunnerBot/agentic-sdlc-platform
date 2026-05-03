@@ -21,9 +21,9 @@ async def create_task(repository: PersistenceRepository) -> str:
     task = await repository.create_task_from_event(
         event_id=event_result.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build webhook bridge",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
     return task.id
 
@@ -37,7 +37,7 @@ async def test_create_agent_session_persists_channel_and_hermes_ids() -> None:
         provider="linear",
         external_thread_id="issue-id-1",
         hermes_session_id="hermes-session-1",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
 
     assert session.task_id == task_id
@@ -55,7 +55,7 @@ async def test_find_agent_session_by_thread_and_record_events() -> None:
         provider="linear",
         external_thread_id="issue-id-1",
         hermes_session_id="hermes-session-1",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
 
     found = await repository.find_agent_session(provider="linear", external_thread_id="issue-id-1")
@@ -83,7 +83,7 @@ async def test_list_orchestrator_backed_sessions_only_returns_active_backed_sess
         provider="linear",
         external_thread_id="issue-id-1",
         hermes_session_id=None,
-        repo="keychain-os-erp",
+        repo="erp-service",
         orchestrator_provider="multica",
         orchestrator_issue_id="issue-1",
         orchestrator_task_id="task-1",
@@ -93,7 +93,7 @@ async def test_list_orchestrator_backed_sessions_only_returns_active_backed_sess
         provider="slack",
         external_thread_id="C123:1",
         hermes_session_id="hermes-session-1",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
 
     sessions = await repository.list_orchestrator_backed_agent_sessions()

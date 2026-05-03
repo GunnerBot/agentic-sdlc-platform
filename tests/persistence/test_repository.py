@@ -66,9 +66,9 @@ async def test_mark_task_orchestrated_persists_external_task_state() -> None:
     task = await repository.create_task_from_event(
         event_id=event_result.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build webhook bridge",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
 
     updated = await repository.mark_task_orchestrated(
@@ -92,12 +92,12 @@ async def test_find_and_update_task_status_by_external_id() -> None:
     created = await repository.create_task_from_event(
         event_id=event_result.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build webhook bridge",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
 
-    found = await repository.find_task_by_external_id("OS-1284")
+    found = await repository.find_task_by_external_id("ENG-1284")
     updated = await repository.update_task_status(task_id=created.id, status="pr_open")
 
     assert found is not None
@@ -132,15 +132,15 @@ async def test_task_artifacts_are_persisted_and_filterable() -> None:
     task = await repository.create_task_from_event(
         event_id=event_result.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build webhook bridge",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
 
     artifact = await repository.create_task_artifact(
         task_id=task.id,
         kind="hydrated_spec",
-        name="OS-1284:hydrated-spec",
+        name="ENG-1284:hydrated-spec",
         content={"text_sources": [{"title": "Linear description", "text": "Spec"}]},
         metadata={"asset_count": 0},
     )

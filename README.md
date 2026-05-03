@@ -24,7 +24,9 @@ uv run agentic-sdlc-platform
 ```
 
 For company self-hosting with Docker Compose, GitHub App onboarding, repo sync, Linear webhooks,
-and the path to EC2, see [Docker Compose Organization Setup](docs/DOCKER_ORG_SETUP.md).
+and the path to EC2, see [Docker Compose Organization Setup](docs/DOCKER_ORG_SETUP.md). For the
+repeatable operator sequence, see
+[Self-Hosted Bootstrap Runbook](docs/SELF_HOSTED_BOOTSTRAP_RUNBOOK.md).
 
 ## Environment
 
@@ -87,7 +89,7 @@ targeted helper:
 
 ```bash
 ASDLC_GITHUB_APP_GIT_CREDENTIAL_ENABLED=true
-ASDLC_GITHUB_APP_GIT_CREDENTIAL_ALLOWED_OWNERS=atlas-tech-inc
+ASDLC_GITHUB_APP_GIT_CREDENTIAL_ALLOWED_OWNERS=acme-corp
 make github-app-git-credential-configure
 ```
 
@@ -222,16 +224,16 @@ summary model.
 In the real Docker overlay, host repos are mounted read-only at `/repos` and generated Graphify data
 is written to the Docker-managed `/graphify-data` volume. By default the compose overlay mounts the
 parent directory of this service; set `ASDLC_REPO_HOST_ROOT` when your repo checkouts live elsewhere.
-Example repo metadata for the local `keychain-os-erp` checkout:
+Example repo metadata for the local `erp-service` checkout:
 
 ```json
 {
-  "local_path": "/repos/keychain-os-erp"
+  "local_path": "/repos/erp-service"
 }
 ```
 
-Indexing copies that read-only repo into `/graphify-data/keychain-os-erp/` and creates
-`/graphify-data/keychain-os-erp/graphify-out/graph.json`. Nothing is written back to the host repo
+Indexing copies that read-only repo into `/graphify-data/erp-service/` and creates
+`/graphify-data/erp-service/graphify-out/graph.json`. Nothing is written back to the host repo
 checkout, and nothing under `graphify-out/` is committed.
 
 Linear assignment can ingest markdown specs directly from the issue description and text/markdown

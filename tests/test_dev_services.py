@@ -13,7 +13,7 @@ def test_local_dev_hermes_contract_requires_token() -> None:
             "channel": "C123",
             "sender_id": "U123",
             "text": "what is this repo?",
-            "repo": "atlas-tech-inc/keychain-os-erp",
+            "repo": "acme-corp/erp-service",
         },
     )
 
@@ -31,14 +31,14 @@ def test_local_dev_hermes_contract_answers_questions() -> None:
             "channel": "C123",
             "sender_id": "U123",
             "text": "what is this repo?",
-            "repo": "atlas-tech-inc/keychain-os-erp",
+            "repo": "acme-corp/erp-service",
         },
     )
 
     assert response.status_code == 200
     assert response.json()["session_id"].startswith("dev-hermes-session-")
     assert response.json()["message_id"].startswith("dev-hermes-message-")
-    assert "atlas-tech-inc/keychain-os-erp" in response.json()["answer"]
+    assert "acme-corp/erp-service" in response.json()["answer"]
 
 
 def test_local_dev_multica_contract_creates_and_updates_tasks() -> None:
@@ -49,9 +49,9 @@ def test_local_dev_multica_contract_creates_and_updates_tasks() -> None:
         headers={"Authorization": "Bearer local-dev-multica-key"},
         json={
             "source": "linear",
-            "external_id": "OS-123",
+            "external_id": "ENG-123",
             "title": "Fix allocation bug",
-            "repo": "atlas-tech-inc/keychain-os-erp",
+            "repo": "acme-corp/erp-service",
             "metadata": {"priority": "high"},
         },
     )

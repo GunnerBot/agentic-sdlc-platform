@@ -22,9 +22,9 @@ async def create_parent_task(repository: PersistenceRepository) -> str:
     task = await repository.create_task_from_event(
         event_id=event_result.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build agentic SDLC platform",
-        repo="keychain-os-erp",
+        repo="erp-service",
     )
     return task.id
 

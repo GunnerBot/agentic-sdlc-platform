@@ -94,16 +94,16 @@ async def test_create_repo_endpoint_registers_repo_for_multi_repo_work() -> None
     response = client.post(
         "/repos",
         json={
-            "name": "keychain-os-erp",
+            "name": "erp-service",
             "provider": "github",
-            "clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            "clone_url": "https://github.com/acme-corp/erp-service.git",
             "default_branch": "main",
             "metadata": {"linear_team_key": "OS"},
         },
     )
 
     assert response.status_code == 201
-    assert response.json()["name"] == "keychain-os-erp"
+    assert response.json()["name"] == "erp-service"
     assert response.json()["status"] == "active"
     assert response.json()["metadata"] == {"linear_team_key": "OS"}
 
@@ -114,18 +114,18 @@ async def test_list_and_get_repo_endpoints_return_registered_repos() -> None:
     created = client.post(
         "/repos",
         json={
-            "name": "keychain-os-erp",
+            "name": "erp-service",
             "provider": "github",
             "default_branch": "main",
         },
     )
 
     list_response = client.get("/repos", params={"provider": "github", "status": "active"})
-    get_response = client.get("/repos/keychain-os-erp")
+    get_response = client.get("/repos/erp-service")
 
     assert created.status_code == 201
     assert list_response.status_code == 200
-    assert [repo["name"] for repo in list_response.json()] == ["keychain-os-erp"]
+    assert [repo["name"] for repo in list_response.json()] == ["erp-service"]
     assert get_response.status_code == 200
     assert get_response.json()["id"] == created.json()["id"]
 
@@ -148,26 +148,26 @@ async def test_index_repo_endpoint_creates_graphify_index_job() -> None:
     client.post(
         "/repos",
         json={
-            "name": "keychain-os-erp",
+            "name": "erp-service",
             "provider": "github",
-            "clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            "clone_url": "https://github.com/acme-corp/erp-service.git",
             "default_branch": "main",
             "metadata": {"linear_team_key": "OS"},
         },
     )
 
-    response = client.post("/repos/keychain-os-erp/index")
-    jobs_response = client.get("/repos/keychain-os-erp/index-jobs")
+    response = client.post("/repos/erp-service/index")
+    jobs_response = client.get("/repos/erp-service/index-jobs")
 
     assert response.status_code == 202
     assert response.json()["status"] == "indexed"
-    assert response.json()["external_index_id"] == "idx:keychain-os-erp"
+    assert response.json()["external_index_id"] == "idx:erp-service"
     assert jobs_response.status_code == 200
     assert [job["id"] for job in jobs_response.json()] == [response.json()["id"]]
     assert graph_store.index_requests == [
         GraphIndexRequest(
-            repo="keychain-os-erp",
-            clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            repo="erp-service",
+            clone_url="https://github.com/acme-corp/erp-service.git",
             default_branch="main",
             metadata={"linear_team_key": "OS"},
         )
@@ -181,7 +181,7 @@ async def test_ask_repo_endpoint_queries_graph_store_with_repo_metadata() -> Non
     client.post(
         "/repos",
         json={
-            "name": "keychain-os-erp",
+            "name": "erp-service",
             "provider": "github",
             "default_branch": "main",
             "metadata": {"linear_team_key": "OS"},
@@ -189,7 +189,7 @@ async def test_ask_repo_endpoint_queries_graph_store_with_repo_metadata() -> Non
     )
 
     response = client.post(
-        "/repos/keychain-os-erp/ask",
+        "/repos/erp-service/ask",
         json={"question": "Where does allocation live?"},
     )
 
@@ -201,7 +201,7 @@ async def test_ask_repo_endpoint_queries_graph_store_with_repo_metadata() -> Non
     }
     assert graph_store.query_requests == [
         GraphQuery(
-            repo="keychain-os-erp",
+            repo="erp-service",
             question="Where does allocation live?",
             metadata={"linear_team_key": "OS", "default_branch": "main"},
         )
@@ -225,14 +225,14 @@ async def test_ask_repo_endpoint_returns_503_when_graph_store_is_disabled() -> N
     client.post(
         "/repos",
         json={
-            "name": "keychain-os-erp",
+            "name": "erp-service",
             "provider": "github",
             "default_branch": "main",
         },
     )
 
     response = client.post(
-        "/repos/keychain-os-erp/ask",
+        "/repos/erp-service/ask",
         json={"question": "Where does allocation live?"},
     )
 
@@ -247,9 +247,9 @@ async def test_index_all_repos_indexes_only_active_repositories() -> None:
     client.post(
         "/repos",
         json={
-            "name": "keychain-os-erp",
+            "name": "erp-service",
             "provider": "github",
-            "clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            "clone_url": "https://github.com/acme-corp/erp-service.git",
             "default_branch": "main",
         },
     )
@@ -266,14 +266,14 @@ async def test_index_all_repos_indexes_only_active_repositories() -> None:
     response = client.post("/repos/index-all")
 
     assert response.status_code == 202
-    assert [job["repo_name"] for job in response.json()["jobs"]] == ["keychain-os-erp"]
+    assert [job["repo_name"] for job in response.json()["jobs"]] == ["erp-service"]
     assert response.json()["total"] == 1
     assert response.json()["indexed"] == 1
     assert response.json()["failed"] == 0
     assert graph_store.index_requests == [
         GraphIndexRequest(
-            repo="keychain-os-erp",
-            clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+            repo="erp-service",
+            clone_url="https://github.com/acme-corp/erp-service.git",
             default_branch="main",
             metadata={},
         )
@@ -287,7 +287,7 @@ async def test_index_all_repos_records_failed_jobs_when_graph_store_is_disabled(
     client.post(
         "/repos",
         json={
-            "name": "keychain-os-erp",
+            "name": "erp-service",
             "provider": "github",
             "default_branch": "main",
         },

@@ -203,7 +203,7 @@ The real Compose overlay mounts that path at `/repos`. Example registered repo m
 
 ```json
 {
-  "local_path": "/repos/keychain-os-erp"
+  "local_path": "/repos/erp-service"
 }
 ```
 

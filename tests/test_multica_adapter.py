@@ -33,9 +33,9 @@ async def test_multica_adapter_blocks_when_http_disabled() -> None:
         await orchestrator.create_task(
             TaskRequest(
                 source="linear",
-                external_id="OS-1284",
+                external_id="ENG-1284",
                 title="Build webhook bridge",
-                repo="keychain-os-erp",
+                repo="erp-service",
             )
         )
 
@@ -93,9 +93,9 @@ async def test_multica_adapter_creates_agent_issue_and_task_run() -> None:
     response = await orchestrator.create_task(
         TaskRequest(
             source="linear",
-            external_id="OS-1284",
+            external_id="ENG-1284",
             title="Build webhook bridge",
-            repo="keychain-os-erp",
+            repo="erp-service",
             inbound_event_id="event-1",
             metadata={
                 "dag_id": "dag-1",
@@ -150,7 +150,7 @@ def test_multica_description_keeps_branch_reference_only_in_write_mode() -> None
             source="dag",
             external_id="dag-1:design",
             title="Design webhook bridge",
-            repo="keychain-os-erp",
+            repo="erp-service",
             metadata={
                 "execution_mode": "write_pr",
                 "expected_branch": "agent/dag/dag-1/design",
@@ -223,7 +223,7 @@ async def test_multica_adapter_reuses_existing_agent_for_provider_runtime() -> N
             source="dag",
             external_id="dag-1:api",
             title="Implement API",
-            repo="keychain-os-erp",
+            repo="erp-service",
         )
     )
 
@@ -287,7 +287,7 @@ async def test_multica_adapter_extracts_pr_url_from_completed_task_output() -> N
                     "result": {
                         "output": (
                             "Completed. PR opened:\n\n"
-                            "https://github.com/atlas-tech-inc/keychain-os-erp/pull/1318"
+                            "https://github.com/acme-corp/erp-service/pull/1318"
                         ),
                         "pr_url": "",
                         "usage": {
@@ -316,7 +316,7 @@ async def test_multica_adapter_extracts_pr_url_from_completed_task_output() -> N
     )
 
     assert response.metadata["pr_url"] == (
-        "https://github.com/atlas-tech-inc/keychain-os-erp/pull/1318"
+        "https://github.com/acme-corp/erp-service/pull/1318"
     )
     assert response.metadata["pr_number"] == 1318
     assert response.metadata["llm_observability"] == {
@@ -435,7 +435,7 @@ async def test_multica_adapter_requires_workspace_id_for_real_api() -> None:
         await orchestrator.create_task(
             TaskRequest(
                 source="linear",
-                external_id="OS-1284",
+                external_id="ENG-1284",
                 title="Build webhook bridge",
             )
         )
@@ -511,9 +511,9 @@ async def test_multica_adapter_retries_transient_failure() -> None:
         await orchestrator.create_task(
             TaskRequest(
                 source="linear",
-                external_id="OS-1284",
+                external_id="ENG-1284",
                 title="Build webhook bridge",
-                repo="keychain-os-erp",
+                repo="erp-service",
             )
         )
 
@@ -538,7 +538,7 @@ async def test_multica_adapter_does_not_retry_permanent_failure() -> None:
         await orchestrator.create_task(
             TaskRequest(
                 source="linear",
-                external_id="OS-1284",
+                external_id="ENG-1284",
                 title="Build webhook bridge",
             )
         )

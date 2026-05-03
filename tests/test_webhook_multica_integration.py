@@ -40,9 +40,9 @@ async def build_repository() -> PersistenceRepository:
 async def test_actionable_linear_webhook_creates_multica_task_when_configured() -> None:
     repository = await build_repository()
     await repository.upsert_repo(
-        name="keychain-os-erp",
+        name="erp-service",
         provider="github",
-        clone_url="https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        clone_url="https://github.com/acme-corp/erp-service.git",
         default_branch="main",
         metadata={},
     )
@@ -62,9 +62,9 @@ async def test_actionable_linear_webhook_creates_multica_task_when_configured() 
             "action": "update",
             "data": {
                 "id": "issue-id-1",
-                "identifier": "OS-1284",
+                "identifier": "ENG-1284",
                 "title": "Build webhook bridge",
-                "labels": {"nodes": [{"name": "repo:keychain-os-erp"}]},
+                "labels": {"nodes": [{"name": "repo:erp-service"}]},
             },
         },
         headers={"Linear-Delivery": "delivery-multica-1"},
@@ -79,8 +79,8 @@ async def test_actionable_linear_webhook_creates_multica_task_when_configured() 
         }
 
     assert task_orchestrator.requests[0].source == "linear"
-    assert task_orchestrator.requests[0].external_id == "OS-1284"
-    assert task_orchestrator.requests[0].repo == "keychain-os-erp"
+    assert task_orchestrator.requests[0].external_id == "ENG-1284"
+    assert task_orchestrator.requests[0].repo == "erp-service"
     assert task_orchestrator.requests[0].inbound_event_id == task.inbound_event_id
     assert task_orchestrator.requests[0].metadata == {
         "execution_mode": "dry_run",
@@ -91,14 +91,14 @@ async def test_actionable_linear_webhook_creates_multica_task_when_configured() 
         },
         "user_intent": {
             "source": "linear",
-            "external_id": "OS-1284",
+            "external_id": "ENG-1284",
             "issue_id": "issue-id-1",
             "title": "Build webhook bridge",
             "body": None,
             "url": None,
         },
         "repo_provider": "github",
-        "repo_clone_url": "https://github.com/atlas-tech-inc/keychain-os-erp.git",
+        "repo_clone_url": "https://github.com/acme-corp/erp-service.git",
         "repo_default_branch": "main",
         "repo_metadata": {},
         "repo_context": {
@@ -122,7 +122,7 @@ async def test_github_pull_request_webhook_updates_existing_multica_task() -> No
     task = await repository.create_task_from_event(
         event_id=inbound_event.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build webhook bridge",
         repo="GunnerBot/agentic-sdlc-platform",
     )
@@ -146,10 +146,10 @@ async def test_github_pull_request_webhook_updates_existing_multica_task() -> No
             "action": "opened",
             "pull_request": {
                 "number": 17,
-                "title": "OS-1284 Build webhook bridge",
+                "title": "ENG-1284 Build webhook bridge",
                 "html_url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/17",
-                "head": {"ref": "agent/OS-1284-build-webhook-bridge"},
-                "body": "Implements OS-1284.",
+                "head": {"ref": "agent/ENG-1284-build-webhook-bridge"},
+                "body": "Implements ENG-1284.",
                 "merged": False,
             },
             "repository": {"full_name": "GunnerBot/agentic-sdlc-platform"},
@@ -169,7 +169,7 @@ async def test_github_pull_request_webhook_updates_existing_multica_task() -> No
             metadata={
                 "source": "github",
                 "event_type": "pull_request",
-                "external_id": "OS-1284",
+                "external_id": "ENG-1284",
                 "pull_request": 17,
                 "url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/17",
             },
@@ -197,7 +197,7 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
     task = await repository.create_task_from_event(
         event_id=inbound_event.event.id,
         source="linear",
-        external_id="OS-1284",
+        external_id="ENG-1284",
         title="Build webhook bridge",
         repo="GunnerBot/agentic-sdlc-platform",
     )
@@ -274,7 +274,7 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
     assert task_orchestrator.requests[0].external_id == f"{dag.id}:implement"
     assert task_orchestrator.requests[0].metadata == {
         "parent_task_id": task.id,
-        "parent_external_id": "OS-1284",
+        "parent_external_id": "ENG-1284",
             "dag_id": dag.id,
             "node_key": "implement",
             "acceptance_criteria": [],

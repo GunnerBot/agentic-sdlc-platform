@@ -89,7 +89,7 @@ async def test_openai_image_adapter_fetches_and_summarizes_attachment() -> None:
                 "id": "resp-1",
                 "output_text": (
                     "Image shows a compact dynamic form title above the fields. "
-                    "Repository: webapp-monorepo."
+                    "Repository: frontend-monorepo."
                 ),
             },
         )
@@ -114,7 +114,7 @@ async def test_openai_image_adapter_fetches_and_summarizes_attachment() -> None:
     assert context is not None
     assert context.provider == "openai_vision"
     assert context.title == "form-title.png"
-    assert "Repository: webapp-monorepo" in context.summary
+    assert "Repository: frontend-monorepo" in context.summary
     assert context.metadata == {
         "source_content_type": "image/png",
         "byte_count": len(b"fake-png-bytes"),
