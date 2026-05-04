@@ -34,12 +34,12 @@ flowchart LR
     session --> hydrate[Spec Hydration]
     hydrate --> docs[Notion / Google Docs / Figma / Images]
     hydrate --> scope[Repo Scope Resolver]
-    scope --> graph[GraphStore<br/>Graphify]
+    scope --> graph[GraphStore / Graphify]
     graph --> planner[Planner Model]
     planner --> dag[DAG Planner + Approval Gate]
     dag --> multica[Multica]
     multica --> hermes[Hermes Runtime]
-    hermes --> github[GitHub App<br/>Clone / Branch / PR]
+    hermes --> github[GitHub App / Clone / Branch / PR]
     github --> prhook[GitHub PR Webhook]
     prhook --> session
     session --> channels
