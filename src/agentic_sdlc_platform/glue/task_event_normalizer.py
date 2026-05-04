@@ -155,6 +155,13 @@ class TaskEventNormalizer:
         url = _str_value(pull_request.get("html_url"))
         if url:
             metadata["url"] = url
+        if dag_reference is not None:
+            expected_reference = f"dag/{dag_reference[0]}/{dag_reference[1]}"
+            metadata["pr_body_reference"] = expected_reference
+            metadata["pr_body_has_dag_reference"] = (
+                _extract_dag_node_reference(_str_value(pull_request.get("body")))
+                == dag_reference
+            )
 
         return NormalizedTaskUpdate(
             source="github",

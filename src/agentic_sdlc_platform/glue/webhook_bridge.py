@@ -29,6 +29,10 @@ from agentic_sdlc_platform.glue.human_override import (
     parse_task_info,
 )
 from agentic_sdlc_platform.glue.llm_observability import record_llm_cost_ledger
+from agentic_sdlc_platform.glue.quality_gate import (
+    evaluate_completion_quality_gate,
+    quality_gate_metadata,
+)
 from agentic_sdlc_platform.glue.spec_ingestion import (
     SpecIngestionBundle,
     ingest_linear_spec,
@@ -1863,9 +1867,21 @@ class WebhookBridge:
 
         orchestration_status = task_update.status
         node_status = task_update.status
+        quality_gate = None
         if task_update.status == "merged":
-            orchestration_status = "completed"
-            node_status = "completed"
+            quality_gate = evaluate_completion_quality_gate(
+                metadata=dict(node.metadata_json) if node.metadata_json else {},
+                external_metadata=task_update.metadata or {},
+                expected_pr_reference=(
+                    f"dag/{task_update.dag_id}/{task_update.dag_node_key}"
+                ),
+            )
+            if quality_gate.satisfied:
+                orchestration_status = "completed"
+                node_status = "completed"
+            else:
+                orchestration_status = "needs_changes"
+                node_status = "needs_changes"
 
         if node.orchestrator_task_id and self._task_orchestrator is not None:
             external_task = await self._task_orchestrator.update_task(
@@ -1880,6 +1896,11 @@ class WebhookBridge:
                         "node_key": task_update.dag_node_key,
                         **(dict(node.metadata_json) if node.metadata_json else {}),
                         **(task_update.metadata or {}),
+                        **(
+                            {"quality_gate": quality_gate_metadata(quality_gate)}
+                            if quality_gate is not None
+                            else {}
+                        ),
                     },
                 )
             )
@@ -1915,7 +1936,14 @@ class WebhookBridge:
                 node_key=task_update.dag_node_key,
                 status=node_status,
                 orchestrator_status=orchestration_status,
-                metadata=_pr_node_metadata(task_update),
+                metadata={
+                    **_pr_node_metadata(task_update),
+                    **(
+                        {"quality_gate": quality_gate_metadata(quality_gate)}
+                        if quality_gate is not None
+                        else {}
+                    ),
+                },
             )
             await self._update_latest_execution_from_pr(task_update, node_status)
 

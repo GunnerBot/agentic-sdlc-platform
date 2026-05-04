@@ -1,4 +1,4 @@
-.PHONY: sync lint test contract quality run migrate github-app-git-credential-configure compose-real-up compose-real-hermes-up compose-real-down compose-real-logs
+.PHONY: sync lint test contract agent-gates quality run migrate github-app-git-credential-configure compose-real-up compose-real-hermes-up compose-real-down compose-real-logs
 
 sync:
 	uv sync
@@ -12,7 +12,10 @@ test:
 contract:
 	uv run pytest tests/contracts
 
-quality: lint test contract
+agent-gates:
+	uv run python scripts/enforce_agent_quality_gates.py
+
+quality: agent-gates lint test contract
 
 run:
 	uv run agentic-sdlc-platform

@@ -222,6 +222,18 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
         node_key="design",
         orchestrator_task_id="multica-design-1",
         orchestrator_status="queued",
+        metadata={
+            "test_evidence": {
+                "unit_tests_passed": True,
+                "focused_tests_passed": True,
+                "smoke_tests_required": False,
+                "contract_tests_required": False,
+                "production_files_changed": [
+                    "src/agentic_sdlc_platform/glue/webhook_bridge.py"
+                ],
+                "test_files_changed": ["tests/test_webhook_multica_integration.py"],
+            },
+        },
     )
     task_orchestrator = FakeTaskOrchestrator()
     client = TestClient(
@@ -265,8 +277,34 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
                 "dag_id": dag.id,
                 "node_key": "design",
                 "acceptance_criteria": [],
+                "test_evidence": {
+                    "unit_tests_passed": True,
+                    "focused_tests_passed": True,
+                    "smoke_tests_required": False,
+                    "contract_tests_required": False,
+                    "production_files_changed": [
+                        "src/agentic_sdlc_platform/glue/webhook_bridge.py"
+                    ],
+                    "test_files_changed": ["tests/test_webhook_multica_integration.py"],
+                },
                 "pull_request": 18,
                 "url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/18",
+                "pr_body_reference": f"dag/{dag.id}/design",
+                "pr_body_has_dag_reference": True,
+                "quality_gate": {
+                    "status": "satisfied",
+                    "missing": [],
+                    "evidence": {
+                        "unit_tests_passed": True,
+                        "focused_tests_passed": True,
+                        "smoke_tests_required": False,
+                        "contract_tests_required": False,
+                        "production_files_changed": [
+                            "src/agentic_sdlc_platform/glue/webhook_bridge.py"
+                        ],
+                        "test_files_changed": ["tests/test_webhook_multica_integration.py"],
+                    },
+                },
             },
         )
     ]
@@ -327,3 +365,80 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
     assert nodes[1].orchestrator_task_id == "multica-task-1"
     assert "task.dag_node_updated_from_github" in audit_actions
     assert "task.dag_node_enqueued" in audit_actions
+
+
+async def test_github_pull_request_merge_blocks_dag_completion_without_test_evidence() -> None:
+    repository = await build_repository()
+    inbound_event = await repository.record_inbound_event(
+        source="linear",
+        delivery_id="delivery-linear-2",
+        event_type="Issue",
+        payload={"id": "issue-2"},
+    )
+    task = await repository.create_task_from_event(
+        event_id=inbound_event.event.id,
+        source="linear",
+        external_id="ENG-1285",
+        title="Build quality gate",
+        repo="GunnerBot/agentic-sdlc-platform",
+    )
+    dag = await repository.create_task_dag(
+        task_id=task.id,
+        subtasks=[
+            Subtask(
+                id="implement",
+                title="Implement quality gate",
+                repo="GunnerBot/agentic-sdlc-platform",
+            )
+        ],
+    )
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag.id,
+        node_key="implement",
+        orchestrator_task_id="multica-implement-1",
+        orchestrator_status="queued",
+        metadata={
+            "execution_mode": "write_pr",
+            "expected_pr_reference": f"dag/{dag.id}/implement",
+        },
+    )
+    task_orchestrator = FakeTaskOrchestrator()
+    client = TestClient(
+        create_app(
+            Settings(_env_file=None),
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+        )
+    )
+
+    response = client.post(
+        "/webhooks/github",
+        json={
+            "action": "closed",
+            "pull_request": {
+                "number": 19,
+                "title": "Implement quality gate",
+                "html_url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/19",
+                "head": {"ref": f"agent/dag/{dag.id}/implement"},
+                "body": f"Completes dag/{dag.id}/implement",
+                "merged": True,
+            },
+            "repository": {"full_name": "GunnerBot/agentic-sdlc-platform"},
+        },
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": "delivery-pr-dag-quality-gate-1",
+        },
+    )
+
+    assert response.status_code == 202
+    async with repository._session_factory() as session:
+        node = (await session.scalars(select(TaskDagNode))).one()
+
+    assert node.status == "needs_changes"
+    assert node.metadata_json["quality_gate"] == {
+        "status": "blocked",
+        "missing": ["test_evidence"],
+        "evidence": {},
+    }
+    assert task_orchestrator.requests == []

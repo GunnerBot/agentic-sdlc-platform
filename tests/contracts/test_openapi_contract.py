@@ -184,6 +184,9 @@ class FakeRepository:
     async def update_dag_node_execution(self, **kwargs):
         return FakeDagNodeExecution()
 
+    async def update_dag_node_metadata(self, **kwargs):
+        return FakeDagNode()
+
     async def list_dag_node_executions(self, **kwargs):
         return [FakeDagNodeExecution()]
 

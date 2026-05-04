@@ -28,6 +28,10 @@ from agentic_sdlc_platform.glue.llm_observability import (
     usage_records_from_ledger_artifacts,
     usage_records_from_metadata,
 )
+from agentic_sdlc_platform.glue.quality_gate import (
+    evaluate_completion_quality_gate,
+    quality_gate_metadata,
+)
 from agentic_sdlc_platform.models.tasks import (
     AgentSessionDetailResponse,
     AgentSessionEventResponse,
@@ -328,6 +332,24 @@ async def complete_dag_node(
     enqueue_ready: Annotated[str, Query(pattern="^(true|false)$")] = "true",
 ) -> CompleteDagNodeResponse:
     dag = await _require_task_dag(request, task_id, dag_id)
+    node = _node_from_dag(dag, node_key)
+    quality_gate = evaluate_completion_quality_gate(
+        metadata=dict(node.metadata_json),
+        expected_pr_reference=f"dag/{dag_id}/{node_key}",
+    )
+    if not quality_gate.satisfied:
+        await request.app.state.repository.update_dag_node_metadata(
+            dag_id=dag_id,
+            node_key=node_key,
+            metadata={"quality_gate": quality_gate_metadata(quality_gate)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "DAG node quality gate is not satisfied",
+                "missing": list(quality_gate.missing),
+            },
+        )
     await request.app.state.repository.mark_dag_node_completed(
         dag_id=dag_id,
         node_key=node_key,
@@ -466,6 +488,7 @@ async def sync_dag_node_orchestrator_state(
     status_from_orchestrator = _node_status_from_orchestrator(external_task.status)
     metadata = external_task.metadata
     verification: CompletionVerification | None = None
+    quality_gate = None
     if status_from_orchestrator == "completed":
         verification = verify_node_completion(
             node_key=node.node_key,
@@ -473,6 +496,11 @@ async def sync_dag_node_orchestrator_state(
             repo=node.repo,
             metadata=dict(node.metadata_json),
             external_metadata=metadata or {},
+        )
+        quality_gate = evaluate_completion_quality_gate(
+            metadata=dict(node.metadata_json),
+            external_metadata=metadata or {},
+            expected_pr_reference=f"dag/{dag_id}/{node_key}",
         )
         metadata = {
             **(metadata or {}),
@@ -482,6 +510,7 @@ async def sync_dag_node_orchestrator_state(
                 "follow_up_nodes": [followup.id for followup in verification.followups],
                 "evidence": verification.evidence,
             },
+            "quality_gate": quality_gate_metadata(quality_gate),
         }
     synced_node = await request.app.state.repository.update_dag_node_status(
         dag_id=dag_id,
@@ -489,7 +518,11 @@ async def sync_dag_node_orchestrator_state(
         status=(
             "needs_changes"
             if verification is not None
-            and not verification.satisfied
+            and (
+                not verification.satisfied
+                or quality_gate is not None
+                and not quality_gate.satisfied
+            )
             and not verification.followups
             else status_from_orchestrator
         ),

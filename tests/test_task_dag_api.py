@@ -569,6 +569,42 @@ async def test_complete_dag_node_endpoint_can_skip_auto_enqueue() -> None:
     assert task_orchestrator.requests == []
 
 
+async def test_complete_dag_node_endpoint_requires_quality_evidence_for_pr_nodes() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    client = TestClient(
+        create_app(
+            Settings(_env_file=None),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+    await repository.update_dag_node_metadata(
+        dag_id=dag_id,
+        node_key="api",
+        metadata={
+            "execution_mode": "write_pr",
+            "expected_pr_reference": f"dag/{dag_id}/api",
+        },
+    )
+
+    response = client.post(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/complete")
+    task = client.get(f"/tasks/{task_id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "message": "DAG node quality gate is not satisfied",
+        "missing": ["test_evidence"],
+    }
+    node = task.json()["dags"][0]["nodes"][0]
+    assert node["status"] == "ready"
+
+
 async def test_fail_skip_and_retry_dag_node_endpoints() -> None:
     repository = await build_repository()
     task_id = await create_parent_task(repository)
@@ -769,6 +805,10 @@ async def test_sync_completed_node_requires_same_pr_rework_when_incomplete() -> 
     assert response.json()["status"] == "needs_changes"
     assert response.json()["verification_status"] == "rework_required"
     assert response.json()["follow_up_nodes"] == []
+    assert (
+        "Add focused unit/integration tests for create/update/get/list round trips."
+        in response.json()["verification_missing"]
+    )
     nodes = {node["node_key"]: node for node in task.json()["dags"][0]["nodes"]}
     assert nodes["backend_customer_po_number"]["pr_number"] == 1320
     assert len(nodes) == 1
@@ -871,6 +911,18 @@ async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> No
         ),
         "feature_flag_required_for_common_code": True,
         "tests_policy": "implementation_and_relevant_tests_same_pr",
+        "test_first_required": True,
+        "test_first_policy": (
+            "For write-capable DAG nodes, create or update relevant tests before "
+            "production code edits, then keep tests and implementation in the same PR."
+        ),
+        "changed_file_test_gate": True,
+        "contract_tests_required_for_api_changes": True,
+        "open_pr_allowed_only_after_tests_passing": True,
+        "completion_gate": (
+            "Do not mark a node completed or fixed until unit, focused, contract-when-relevant, "
+            "and configured smoke checks pass, and test evidence is persisted."
+        ),
         "merge_order_policy": (
             "merge PRs in DAG dependency order; do not merge a dependent PR first"
         ),
