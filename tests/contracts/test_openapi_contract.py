@@ -273,16 +273,24 @@ class FakeSourceControl:
         )
 
 
-schema = schemathesis.openapi.from_asgi(
-    "/openapi.json",
-    create_app(
-        Settings(github_app_slug="agentic-sdlc"),
-        repository=FakeRepository(),
-        model_provider=FakeModelProvider(),
-        graph_store=FakeGraphStore(),
-        source_control=FakeSourceControl(),
-    ),
+contract_app = create_app(
+    Settings(github_app_slug="agentic-sdlc"),
+    repository=FakeRepository(),
+    model_provider=FakeModelProvider(),
+    graph_store=FakeGraphStore(),
+    source_control=FakeSourceControl(),
 )
+
+schema = schemathesis.openapi.from_asgi("/openapi.json", contract_app)
+
+
+def test_openapi_contract_includes_adversarial_review_node_operation() -> None:
+    raw_schema = contract_app.openapi()
+
+    assert (
+        "/tasks/{task_id}/dag/{dag_id}/nodes/{node_key}/adversarial-reviews"
+        in raw_schema["paths"]
+    )
 
 
 @schema.parametrize()

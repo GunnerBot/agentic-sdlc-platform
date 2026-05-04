@@ -139,6 +139,9 @@ class Settings(BaseSettings):
     agent_default_execution_mode: str = "dry_run"
     agent_readonly_max_model_retries: int = 0
     agent_write_max_model_retries: int = 1
+    adversarial_review_loop_enabled: bool = False
+    adversarial_review_max_turns: int = 3
+    adversarial_review_model: str | None = None
 
     agent_executor_enabled: bool = False
     agent_executor_provider: str = "local"

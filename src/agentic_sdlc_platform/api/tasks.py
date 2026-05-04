@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
+from agentic_sdlc_platform.glue.adversarial_loop import run_adversarial_review_loop
 from agentic_sdlc_platform.glue.adversarial_review import normalize_adversarial_review
 from agentic_sdlc_platform.glue.conversation_sync import ConversationSyncService
 from agentic_sdlc_platform.glue.dag_completion_verifier import (
@@ -562,15 +563,67 @@ async def sync_dag_node_orchestrator_state(
     verification: CompletionVerification | None = None
     quality_gate = None
     if status_from_orchestrator == "completed":
+        node_metadata = dict(node.metadata_json)
         verification = verify_node_completion(
             node_key=node.node_key,
             node_title=node.title,
             repo=node.repo,
-            metadata=dict(node.metadata_json),
+            metadata=node_metadata,
             external_metadata=metadata or {},
         )
+        if verification.satisfied:
+            adversarial_loop = await run_adversarial_review_loop(
+                task=dag.task,
+                dag=dag,
+                node=node,
+                repository=request.app.state.repository,
+                model_provider=request.app.state.model_provider,
+                task_orchestrator=request.app.state.task_orchestrator,
+                settings=request.app.state.settings,
+                external_metadata=metadata or {},
+            )
+            metadata = {
+                **(metadata or {}),
+                **adversarial_loop.node_metadata,
+            }
+            if adversarial_loop.should_requeue:
+                await _record_synced_task_usage(
+                    request=request,
+                    task_id=task_id,
+                    dag_id=dag_id,
+                    node_key=node_key,
+                    external_task=external_task,
+                )
+                return _node_response(
+                    await _requeue_node_after_adversarial_revision(
+                        request=request,
+                        task_id=task_id,
+                        dag_id=dag_id,
+                        node_key=node_key,
+                    )
+                )
+            if adversarial_loop.human_intervention_required:
+                synced_node = await request.app.state.repository.update_dag_node_status(
+                    dag_id=dag_id,
+                    node_key=node_key,
+                    status="needs_input",
+                    orchestrator_status="needs_input",
+                    metadata=metadata,
+                )
+                await _record_synced_task_usage(
+                    request=request,
+                    task_id=task_id,
+                    dag_id=dag_id,
+                    node_key=node_key,
+                    external_task=external_task,
+                )
+                return _node_response(synced_node)
+            node_metadata = {
+                **node_metadata,
+                **adversarial_loop.node_metadata,
+            }
         quality_gate = evaluate_completion_quality_gate(
-            metadata=dict(node.metadata_json),
+            metadata=node_metadata,
             external_metadata=metadata or {},
             expected_pr_reference=f"dag/{dag_id}/{node_key}",
         )
@@ -773,6 +826,30 @@ async def _enqueue_ready_nodes(
             metadata=persisted_metadata,
         )
     return queued_nodes
+
+
+async def _requeue_node_after_adversarial_revision(
+    *,
+    request: Request,
+    task_id: str,
+    dag_id: str,
+    node_key: str,
+):
+    await request.app.state.repository.retry_dag_node(
+        dag_id=dag_id,
+        node_key=node_key,
+    )
+    dag = await _require_task_dag(request, task_id, dag_id)
+    node = _node_from_dag(dag, node_key)
+    if request.app.state.task_orchestrator is None:
+        return node
+    queued = await _enqueue_ready_nodes(
+        request=request,
+        dag=dag,
+        task=dag.task,
+        ready_nodes=[node],
+    )
+    return queued[0] if queued else node
 
 
 def _dag_node_idempotency_key(

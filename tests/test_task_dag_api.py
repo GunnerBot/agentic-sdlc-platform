@@ -15,6 +15,8 @@ from agentic_sdlc_platform.ports.agent_executor import (
 from agentic_sdlc_platform.ports.issue_tracker import IssueContext, IssueTrackerReply
 from agentic_sdlc_platform.ports.model_provider import ModelRequest, ModelResponse
 from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskCommentRequest,
+    TaskCommentResponse,
     TaskConversationMessage,
     TaskReadRequest,
     TaskRequest,
@@ -25,9 +27,22 @@ from agentic_sdlc_platform.ports.task_orchestrator import (
 class FakePlannerModel:
     def __init__(self) -> None:
         self.requests: list[ModelRequest] = []
+        self.review_content = """
+{
+  "verdict": "approved",
+  "score": {"overall": 9},
+  "summary": "No blocking issues."
+}
+"""
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         self.requests.append(request)
+        if request.role == "review_agent":
+            return ModelResponse(
+                provider="fake",
+                model="fake-review-model",
+                content=self.review_content,
+            )
         return ModelResponse(
             provider="fake",
             model="fake-model",
@@ -51,12 +66,13 @@ class FakeTaskOrchestrator:
     ) -> None:
         self.requests: list[TaskRequest] = []
         self.read_requests: list[TaskReadRequest] = []
+        self.comments: list[TaskCommentRequest] = []
         self.read_status = read_status
         self.read_metadata = read_metadata or {
             "multica_task_status": read_status,
             "multica_runtime_provider": "codex",
         }
-        self.comments = [
+        self.listed_comments = [
             TaskConversationMessage(
                 id="multica-comment-1",
                 body="Agent found the answer.",
@@ -81,7 +97,16 @@ class FakeTaskOrchestrator:
         )
 
     async def list_comments(self, external_task_id: str, metadata=None):
-        return self.comments
+        return self.listed_comments
+
+    async def add_comment(self, request):
+        self.comments.append(request)
+        return TaskCommentResponse(
+            external_task_id=request.external_task_id,
+            comment_id="multica-comment-1",
+            status="commented",
+            metadata={"commented": True},
+        )
 
 
 class FakeIssueTracker:
@@ -924,6 +949,237 @@ async def test_sync_completed_node_requires_same_pr_rework_when_incomplete() -> 
     assert task_list.json()[0]["dags"][0]["ready_count"] == 0
     assert task_list.json()[0]["dags"][0]["first_ready_node"] is None
     assert task_orchestrator.requests == []
+
+
+async def test_sync_completed_node_runs_adversarial_loop_and_requeues_on_revision() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    task_orchestrator = FakeTaskOrchestrator(
+        read_status="completed",
+        read_metadata={
+            "multica_task_status": "completed",
+            "multica_runtime_provider": "hermes",
+            "result_output": "Opened PR https://github.com/acme/erp-service/pull/1321",
+        },
+    )
+    model_provider = FakePlannerModel()
+    model_provider.review_content = """
+{
+  "verdict": "revise",
+  "score": {"overall": 5},
+  "summary": "The implementation missed focused tests.",
+  "issues": [
+    {
+      "id": "missing-tests",
+      "blocking": true,
+      "description": "Add focused tests before completion."
+    }
+  ]
+}
+"""
+    client = TestClient(
+        create_app(
+            Settings(adversarial_review_loop_enabled=True),
+            repository=repository,
+            model_provider=model_provider,
+            task_orchestrator=task_orchestrator,
+        )
+    )
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask(
+                "backend_tests",
+                "Add backend tests",
+                repo="erp-service",
+                metadata={"adversarial_review_required": True},
+            )
+        ],
+    )
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag.id,
+        node_key="backend_tests",
+        orchestrator_task_id="multica-task-1",
+        orchestrator_status="queued",
+        metadata={"multica_issue_id": "issue-1"},
+    )
+
+    response = client.post(
+        f"/tasks/{task_id}/dag/{dag.id}/nodes/backend_tests/sync-orchestrator"
+    )
+    artifacts = client.get(
+        f"/tasks/{task_id}/artifacts",
+        params={
+            "kind": "adversarial_review",
+            "dag_id": dag.id,
+            "node_key": "backend_tests",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    assert response.json()["retry_count"] == 1
+    assert response.json()["adversarial_review_status"] == "revise"
+    review_requests = [
+        request for request in model_provider.requests if request.role == "review_agent"
+    ]
+    assert len(review_requests) == 1
+    assert "Opened PR https://github.com/acme/erp-service/pull/1321" in review_requests[0].prompt
+    assert task_orchestrator.comments == [
+        TaskCommentRequest(
+            external_task_id="multica-task-1",
+            body=(
+                "Adversarial review requested changes for DAG node backend_tests:\n"
+                "The implementation missed focused tests.\n\n"
+                "Blocking issues:\n"
+                "- missing-tests: Add focused tests before completion."
+            ),
+            actor="adversarial-reviewer",
+            metadata={
+                "dag_id": dag.id,
+                "node_key": "backend_tests",
+                "review_status": "revise",
+                "review_turn": 1,
+            },
+        )
+    ]
+    assert task_orchestrator.requests[0].metadata["adversarial_review"]["status"] == "revise"
+    assert task_orchestrator.requests[0].metadata["adversarial_review_turn_count"] == 1
+    assert (
+        task_orchestrator.requests[0].metadata["latest_adversarial_feedback"][
+            "blocking_issues"
+        ][0]["description"]
+        == "Add focused tests before completion."
+    )
+    assert artifacts.status_code == 200
+    assert artifacts.json()[0]["metadata"]["status"] == "revise"
+
+
+async def test_sync_completed_node_escalates_for_human_after_max_adversarial_turns() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    task_orchestrator = FakeTaskOrchestrator(
+        read_status="completed",
+        read_metadata={
+            "multica_task_status": "completed",
+            "multica_runtime_provider": "hermes",
+            "result_output": "Opened PR https://github.com/acme/erp-service/pull/1322",
+        },
+    )
+    model_provider = FakePlannerModel()
+    model_provider.review_content = """
+{
+  "verdict": "revise",
+  "score": {"overall": 4},
+  "summary": "Still missing the migration.",
+  "issues": [
+    {
+      "id": "missing-migration",
+      "blocking": true,
+      "description": "Add the database migration."
+    }
+  ]
+}
+"""
+    client = TestClient(
+        create_app(
+            Settings(
+                adversarial_review_loop_enabled=True,
+                adversarial_review_max_turns=2,
+            ),
+            repository=repository,
+            model_provider=model_provider,
+            task_orchestrator=task_orchestrator,
+        )
+    )
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask(
+                "backend_migration",
+                "Add backend migration",
+                repo="erp-service",
+                metadata={
+                    "adversarial_review_required": True,
+                    "adversarial_review_turn_count": 1,
+                },
+            )
+        ],
+    )
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag.id,
+        node_key="backend_migration",
+        orchestrator_task_id="multica-task-1",
+        orchestrator_status="queued",
+    )
+
+    response = client.post(
+        f"/tasks/{task_id}/dag/{dag.id}/nodes/backend_migration/sync-orchestrator"
+    )
+    task = client.get(f"/tasks/{task_id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "needs_input"
+    assert response.json()["adversarial_review_status"] == "escalated"
+    assert task_orchestrator.requests == []
+    node_metadata = task.json()["dags"][0]["nodes"][0]
+    assert node_metadata["adversarial_review_status"] == "escalated"
+
+
+async def test_sync_completed_node_completes_after_adversarial_approval() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    task_orchestrator = FakeTaskOrchestrator(
+        read_status="completed",
+        read_metadata={
+            "multica_task_status": "completed",
+            "multica_runtime_provider": "hermes",
+            "result_output": "Opened PR https://github.com/acme/erp-service/pull/1323",
+        },
+    )
+    model_provider = FakePlannerModel()
+    model_provider.review_content = """
+{
+  "verdict": "approved",
+  "score": {"overall": 9},
+  "summary": "The implementation satisfies the node."
+}
+"""
+    client = TestClient(
+        create_app(
+            Settings(adversarial_review_loop_enabled=True),
+            repository=repository,
+            model_provider=model_provider,
+            task_orchestrator=task_orchestrator,
+        )
+    )
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask(
+                "backend_complete",
+                "Complete backend work",
+                repo="erp-service",
+                metadata={"adversarial_review_required": True},
+            )
+        ],
+    )
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag.id,
+        node_key="backend_complete",
+        orchestrator_task_id="multica-task-1",
+        orchestrator_status="queued",
+    )
+
+    response = client.post(
+        f"/tasks/{task_id}/dag/{dag.id}/nodes/backend_complete/sync-orchestrator"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["adversarial_review_status"] == "approved"
+    assert task_orchestrator.requests == []
+    assert task_orchestrator.comments == []
 
 
 async def test_get_task_detail_returns_rich_dag_node_metadata() -> None:

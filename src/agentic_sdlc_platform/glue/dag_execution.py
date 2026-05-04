@@ -62,6 +62,16 @@ async def build_dag_node_execution_metadata(
         "code_generation_policy": code_generation_policy(),
         "pr_plan": _pr_plan_metadata(dag=dag, node=node),
     }
+    for key in (
+        "adversarial_review_required",
+        "adversarial_review",
+        "adversarial_review_turn_count",
+        "adversarial_review_max_turns",
+        "latest_adversarial_feedback",
+        "revision_requested",
+    ):
+        if key in node_metadata:
+            metadata[key] = node_metadata[key]
     repo_context = await _repo_context(
         repo=node.repo,
         node_title=_repo_context_question(task=task, node=node, criteria=acceptance_criteria),
