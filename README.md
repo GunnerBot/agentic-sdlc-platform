@@ -28,19 +28,19 @@ and dependencies that must finish before it can run.
 
 ```mermaid
 flowchart LR
-    user[User] --> channels[Linear / Slack / Telegram]
-    channels --> ingress[Platform Webhooks]
-    ingress --> session[Session + Task Store]
-    session --> hydrate[Spec Hydration]
-    hydrate --> docs[Notion / Google Docs / Figma / Images]
-    hydrate --> scope[Repo Scope Resolver]
-    scope --> graph[GraphStore / Graphify]
-    graph --> planner[Planner Model]
-    planner --> dag[DAG Planner + Approval Gate]
-    dag --> multica[Multica]
-    multica --> hermes[Hermes Runtime]
-    hermes --> github[GitHub App / Clone / Branch / PR]
-    github --> prhook[GitHub PR Webhook]
+    user["User"] --> channels["Linear / Slack / Telegram"]
+    channels --> ingress["Platform Webhooks"]
+    ingress --> session["Session + Task Store"]
+    session --> hydrate["Spec Hydration"]
+    hydrate --> docs["Notion / Google Docs / Figma / Images"]
+    hydrate --> scope["Repo Scope Resolver"]
+    scope --> graphstore["GraphStore / Graphify"]
+    graphstore --> planner["Planner Model"]
+    planner --> dag["DAG Planner + Approval Gate"]
+    dag --> multica["Multica"]
+    multica --> hermes["Hermes Runtime"]
+    hermes --> github_app["GitHub App / Clone / Branch / PR"]
+    github_app --> prhook["GitHub PR Webhook"]
     prhook --> session
     session --> channels
 ```
