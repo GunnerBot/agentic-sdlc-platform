@@ -213,9 +213,17 @@ async def _repo_context(
 ) -> dict[str, object] | None:
     if not repo or graph_store is None:
         return None
+    if settings is not None and not settings.vendor_http_enabled:
+        return bounded_graph_context(
+            status="unavailable",
+            reason="graph store access is disabled",
+        )
     repo_record = await repository.get_repo_by_name(repo)
     if repo_record is None:
-        return None
+        return bounded_graph_context(
+            status="unavailable",
+            reason=f"repository {repo} is not registered",
+        )
     repo_metadata = {
         key: value
         for key, value in dict(repo_record.metadata_json).items()

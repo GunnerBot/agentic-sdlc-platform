@@ -1502,11 +1502,13 @@ class WebhookBridge:
         repo: str,
         task_event: NormalizedTaskEvent,
     ) -> dict[str, object] | None:
-        if (
-            self._graph_store is None
-            or not self._settings.vendor_http_enabled
-        ):
+        if self._graph_store is None:
             return None
+        if not self._settings.vendor_http_enabled:
+            return bounded_graph_context(
+                status="unavailable",
+                reason="graph store access is disabled",
+            )
         question = task_event.title
         if task_event.body:
             question = f"{task_event.title}\n\n{task_event.body}"

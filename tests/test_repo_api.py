@@ -324,7 +324,7 @@ async def test_github_app_install_url_endpoint_returns_github_install_screen() -
 
 
 async def test_github_app_install_url_endpoint_requires_slug() -> None:
-    client = TestClient(create_app(Settings()))
+    client = TestClient(create_app(Settings(_env_file=None)))
 
     response = client.get("/repos/github-app/install-url")
 

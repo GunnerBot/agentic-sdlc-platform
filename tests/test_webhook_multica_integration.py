@@ -49,7 +49,7 @@ async def test_actionable_linear_webhook_creates_multica_task_when_configured() 
     task_orchestrator = FakeTaskOrchestrator()
     client = TestClient(
         create_app(
-            Settings(),
+            Settings(_env_file=None),
             repository=repository,
             task_orchestrator=task_orchestrator,
         )
@@ -103,7 +103,7 @@ async def test_actionable_linear_webhook_creates_multica_task_when_configured() 
         "repo_metadata": {},
         "repo_context": {
             "status": "unavailable",
-            "reason": "graphify CLI query requires graph_path or repo local_path metadata",
+            "reason": "graph store access is disabled",
         },
     }
     assert task.orchestrator_task_id == "multica-task-1"
@@ -134,7 +134,7 @@ async def test_github_pull_request_webhook_updates_existing_multica_task() -> No
     task_orchestrator = FakeTaskOrchestrator()
     client = TestClient(
         create_app(
-            Settings(),
+            Settings(_env_file=None),
             repository=repository,
             task_orchestrator=task_orchestrator,
         )
@@ -226,7 +226,7 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
     task_orchestrator = FakeTaskOrchestrator()
     client = TestClient(
         create_app(
-            Settings(),
+            Settings(_env_file=None),
             repository=repository,
             task_orchestrator=task_orchestrator,
         )
@@ -300,9 +300,13 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
             "execution_policy": {
                 "terminal_command_prefix": "rtk",
                 "repo_context_policy": "graphstore_first_then_narrow_source_verification",
-            "github_write_enabled": False,
-        },
-    }
+                "github_write_enabled": False,
+            },
+            "repo_context": {
+                "status": "unavailable",
+                "reason": "graph store access is disabled",
+            },
+        }
     async with repository._session_factory() as session:
         nodes = (
             await session.scalars(

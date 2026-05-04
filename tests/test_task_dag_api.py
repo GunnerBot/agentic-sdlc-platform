@@ -476,7 +476,7 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
     task_orchestrator = FakeTaskOrchestrator()
     client = TestClient(
         create_app(
-            Settings(),
+            Settings(_env_file=None),
             repository=repository,
             model_provider=model_provider,
             task_orchestrator=task_orchestrator,
@@ -530,6 +530,10 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
             "ordering_strategy": "DAG dependency order, then planner order",
             "branch_pattern": "agent/dag/<dag_id>/<node_key>",
             "body_reference_pattern": "dag/<dag_id>/<node_key>",
+        },
+        "repo_context": {
+            "status": "unavailable",
+            "reason": "graph store access is disabled",
         },
     }
     assert "expected_branch" not in task_orchestrator.requests[0].metadata

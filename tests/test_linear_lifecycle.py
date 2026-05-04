@@ -310,7 +310,7 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(_env_file=None, linear_agent_user_id="agent-user-1"),
             repository=repository,
             task_orchestrator=task_orchestrator,
             issue_tracker=issue_tracker,
@@ -353,7 +353,7 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
                 "repo_metadata": {"linear_team_key": "OS"},
                 "repo_context": {
                     "status": "unavailable",
-                    "reason": "graphify CLI query requires graph_path or repo local_path metadata",
+                    "reason": "graph store access is disabled",
                 },
             },
         )
@@ -386,6 +386,7 @@ async def test_linear_assigned_issue_includes_graphify_repo_context_when_availab
     client = TestClient(
         create_app(
             Settings(
+                _env_file=None,
                 linear_agent_user_id="agent-user-1",
                 linear_plan_approval_required=False,
                 vendor_http_enabled=True,
@@ -1490,7 +1491,7 @@ async def test_linear_assigned_issue_blocks_and_asks_for_repo_when_spec_is_ambig
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(_env_file=None, linear_agent_user_id="agent-user-1"),
             repository=repository,
             task_orchestrator=task_orchestrator,
             issue_tracker=issue_tracker,
@@ -1549,7 +1550,7 @@ async def test_linear_repo_clarification_comment_resumes_blocked_task() -> None:
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(_env_file=None, linear_agent_user_id="agent-user-1"),
             repository=repository,
             task_orchestrator=task_orchestrator,
             issue_tracker=issue_tracker,
@@ -1610,7 +1611,7 @@ async def test_linear_repo_clarification_comment_resumes_blocked_task() -> None:
                 "repo_metadata": {},
                 "repo_context": {
                     "status": "unavailable",
-                    "reason": "graphify CLI query requires graph_path or repo local_path metadata",
+                    "reason": "graph store access is disabled",
                 },
                 "repo_clarification": {
                     "comment_id": "comment-1",
@@ -1647,7 +1648,7 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(_env_file=None, linear_agent_user_id="agent-user-1"),
             repository=repository,
             task_orchestrator=task_orchestrator,
             issue_tracker=issue_tracker,
@@ -1725,7 +1726,7 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
         },
         "repo_context": {
             "status": "unavailable",
-            "reason": "graphify CLI query requires graph_path or repo local_path metadata",
+            "reason": "graph store access is disabled",
         },
         **dry_run_metadata(
             external_id="ENG-1284",
