@@ -1,20 +1,100 @@
 # Agentic SDLC Platform
 
-FastAPI + `uv` scaffold for the composable Agentic SDLC Platform. The service is the glue layer
-between Linear, GitHub, Multica, Hermes, model routing, and deploy automation.
+Self-hosted control plane for turning product requests into planned, approved, repo-scoped agent
+work.
 
-## Initial Scope
+The platform connects Linear, Slack, Telegram, GitHub, Graphify, Multica, Hermes, and model
+providers behind one company-neutral FastAPI service. The open-source repo contains no company
+specific configuration; each organization brings its own GitHub App, Linear workspace, model keys,
+and repo registrations through ignored local config or a secret manager.
 
-- Health/readiness endpoints
-- Linear and GitHub webhook ingress
-- HMAC signature validation primitives
-- Channel routing placeholder
-- DAG decomposition placeholder
-- Auto-merge gate placeholder
-- Cost router placeholder
-- Deploy hook placeholder
+## What It Does
 
-## Local Development
+- Receives work from Linear, Slack, Telegram, or direct API calls.
+- Hydrates request context from issue descriptions, comments, markdown attachments, docs, designs,
+  and images when credentials are configured.
+- Resolves which registered repo or repos the request belongs to.
+- Uses GraphStore-first repo context retrieval, with Graphify as the first real adapter.
+- Produces an implementation plan as a DAG: ordered, repo-scoped nodes with dependencies.
+- Waits for explicit plan approval before write execution.
+- Sends ready nodes to Multica/Hermes for execution.
+- Tracks PR URLs, node state, retry state, conversation context, usage, and cost metadata.
+- Updates task state from GitHub PR webhooks as PRs open, update, merge, or close.
+
+A DAG is the platform's execution plan: a graph of work nodes where each node has a repo, a task,
+and dependencies that must finish before it can run.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    user[User] --> channels[Linear / Slack / Telegram]
+    channels --> ingress[Platform Webhooks]
+    ingress --> session[Session + Task Store]
+    session --> hydrate[Spec Hydration]
+    hydrate --> docs[Notion / Google Docs / Figma / Images]
+    hydrate --> scope[Repo Scope Resolver]
+    scope --> graph[GraphStore<br/>Graphify]
+    graph --> planner[Planner Model]
+    planner --> dag[DAG Planner + Approval Gate]
+    dag --> multica[Multica]
+    multica --> hermes[Hermes Runtime]
+    hermes --> github[GitHub App<br/>Clone / Branch / PR]
+    github --> prhook[GitHub PR Webhook]
+    prhook --> session
+    session --> channels
+```
+
+## Request Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Linear
+    participant Platform
+    participant Graphify
+    participant LLM as Planner Model
+    participant Multica
+    participant Hermes
+    participant GitHub
+
+    User->>Linear: Create or assign issue with spec, repo hints, docs, designs
+    Linear->>Platform: Signed webhook
+    Platform->>Platform: Normalize issue, persist task, append session context
+    Platform->>Platform: Hydrate linked docs/designs/images when configured
+    Platform->>Platform: Resolve registered repo scope
+    alt Repo unclear
+        Platform->>Linear: Ask clarification in same thread
+        User->>Linear: Reply with repo/context
+        Linear->>Platform: Comment webhook
+    end
+    Platform->>Graphify: Query indexed repo context
+    Graphify-->>Platform: Bounded references and summaries
+    Platform->>LLM: Create ordered DAG plan
+    LLM-->>Platform: Repo-scoped nodes and dependencies
+    Platform->>Linear: Post plan and wait for approval
+    User->>Linear: /approve-plan ISSUE-ID
+    Linear->>Platform: Approval comment webhook
+    Platform->>Multica: Create execution task for ready node
+    Multica->>Hermes: Run agent with payload, context, policy, repo target
+    Hermes->>GitHub: Clone, edit, test, branch, open PR
+    GitHub-->>Platform: PR webhook
+    Platform->>Linear: Update node/task status
+```
+
+## Runtime Boundaries
+
+| Component | Responsibility |
+| --- | --- |
+| Platform | Webhooks, auth, session storage, repo registration, planning, approval, DAG state, observability |
+| GraphStore / Graphify | Build and query repo indexes so every agent run starts from bounded code context |
+| Multica | Execution coordination and task/runtime tracking |
+| Hermes | Agent runtime that performs repo work through the selected model/provider |
+| GitHub App | Repo read/write access, branch creation, PR creation, PR webhook updates |
+| Linear / Slack / Telegram | User-facing conversation and task operations |
+
+## Quick Start
 
 ```bash
 uv sync
@@ -23,264 +103,122 @@ make migrate
 uv run agentic-sdlc-platform
 ```
 
-For company self-hosting with Docker Compose, GitHub App onboarding, repo sync, Linear webhooks,
-and the path to EC2, see [Docker Compose Organization Setup](docs/DOCKER_ORG_SETUP.md). For the
-repeatable operator sequence, see
-[Self-Hosted Bootstrap Runbook](docs/SELF_HOSTED_BOOTSTRAP_RUNBOOK.md).
-
-## Environment
-
-Copy `.env.example` to `.env` and use ignored `.env.local` overrides for machine-local secrets.
-Set `ASDLC_CHANNEL_MAPPING_PATH=config/channel-mapping.example.toml` to enforce channel
-allow-lists and repo mapping for Slack and Telegram.
-
-Model-backed planning uses `ASDLC_MODEL_PROVIDER`. For OpenAI, set:
+For Docker-based organization setup:
 
 ```bash
+cp .env.example .env.local
+make compose-real-hermes-up
+```
+
+Then verify:
+
+```bash
+curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
+curl http://localhost:8080/ops/status
+```
+
+Full Docker onboarding is documented in
+[Docker Compose Organization Setup](docs/DOCKER_ORG_SETUP.md). The repeatable operator checklist is
+in [Self-Hosted Bootstrap Runbook](docs/SELF_HOSTED_BOOTSTRAP_RUNBOOK.md).
+
+## Required Setup
+
+Minimum useful setup for an organization:
+
+1. Create one GitHub App for repo access.
+2. Give it repository permissions for `Contents: Read & Write`, `Pull requests: Read & Write`,
+   `Issues: Read & Write`, `Checks: Read`, and metadata read access.
+3. Set its webhook URL to `https://<platform-host>/webhooks/github`.
+4. Install the app into the GitHub organization and select the repos it may access.
+5. Configure Linear webhook delivery to `https://<platform-host>/webhooks/linear`.
+6. Add OpenAI or another model provider key.
+7. Start the Docker stack.
+8. Sync the GitHub App installation into the platform.
+9. Register/index repos.
+10. Assign a Linear issue or create a task through the API.
+
+Secrets belong in `.env.local` for local Docker or in your deployment secret manager. Do not commit
+private keys, API keys, installation tokens, repo indexes, or hydrated artifacts.
+
+## Key Environment Variables
+
+```bash
+# Core
+ASDLC_ENVIRONMENT=local
 ASDLC_VENDOR_HTTP_ENABLED=true
+
+# GitHub App
+ASDLC_GITHUB_APP_SLUG=<github_app_slug>
+ASDLC_GITHUB_APP_ID=<github_app_id>
+ASDLC_GITHUB_APP_INSTALLATION_ID=<installation_id>
+ASDLC_GITHUB_APP_PRIVATE_KEY_PATH=secrets/github-app.pem
+ASDLC_GITHUB_WEBHOOK_SECRET=<github_webhook_secret>
+ASDLC_GITHUB_APP_WRITE_ENABLED_DEFAULT=true
+
+# Linear
+ASDLC_LINEAR_SIGNING_SECRET=<linear_webhook_secret>
 ASDLC_LINEAR_SPEC_PLANNER_ENABLED=true
 ASDLC_LINEAR_PLAN_APPROVAL_REQUIRED=true
+
+# Model routing
 ASDLC_MODEL_PROVIDER=openai
 ASDLC_OPENAI_API_KEY=<openai_api_key>
 ASDLC_OPENAI_DEFAULT_MODEL=gpt-5-mini
 ASDLC_OPENAI_ROUTER_MODEL=gpt-5-nano
 ASDLC_OPENAI_PLANNER_MODEL=gpt-5-mini
-ASDLC_OPENAI_PLANNER_ESCALATION_MODEL=gpt-5
 ASDLC_OPENAI_WRITE_MODEL=gpt-5-mini
 ASDLC_OPENAI_WRITE_ESCALATION_MODEL=gpt-5
-ASDLC_OPENAI_PREMIUM_ESCALATION_MODEL=gpt-5.5
-```
 
-GitHub repo access uses one read/write GitHub App. Configure the app with repository permissions for
-`Contents: Read & Write`, `Pull requests: Read & Write`, `Issues: Read & Write`, `Checks: Read`,
-and metadata read access. Put the App slug, App ID, installation ID, and
-`ASDLC_GITHUB_APP_PRIVATE_KEY_PATH` in ignored `.env.local`, then store the private key in an ignored
-local file such as `secrets/github-app.pem`; do not commit keys.
-
-```bash
-ASDLC_GITHUB_APP_READ_ONLY_ENABLED=true
-ASDLC_GITHUB_APP_SLUG=<github_app_slug>
-ASDLC_GITHUB_APP_WRITE_ENABLED_DEFAULT=true
-ASDLC_GITHUB_APP_ID=<github_app_id>
-ASDLC_GITHUB_APP_INSTALLATION_ID=<installation_id>
-ASDLC_GITHUB_APP_PRIVATE_KEY_PATH=secrets/github-app.pem
-ASDLC_GITHUB_WEBHOOK_SECRET=<webhook_secret>
-```
-
-Public onboarding flow:
-
-1. Send the workspace to `GET /repos/github-app/install-url?workspace_id=<workspace_id>`.
-2. User installs the GitHub App and chooses all or selected repositories in GitHub.
-3. After GitHub returns/sends the installation ID, call `POST /repos/github-app/sync`:
-
-```json
-{
-  "workspace_id": "workspace-1",
-  "installation_id": "123456"
-}
-```
-
-The sync stores the workspace installation, imports only GitHub-granted repositories, marks them
-`read_enabled` and `write_enabled`, and applies platform write guardrails: no direct default-branch
-push, branch prefix `agent/dag/`, plan approval required, and no auto-merge by default.
-
-For private repo checkouts, enable the git credential helper in ignored local config and install the
-targeted helper:
-
-```bash
-ASDLC_GITHUB_APP_GIT_CREDENTIAL_ENABLED=true
-ASDLC_GITHUB_APP_GIT_CREDENTIAL_ALLOWED_OWNERS=acme-corp
-make github-app-git-credential-configure
-```
-
-The helper mints short-lived GitHub App installation tokens at clone/fetch time; do not commit
-tokens or authenticated clone URLs.
-
-Docker Compose includes a local dev service that implements the Hermes and Multica HTTP contracts
-with non-production tokens. This is only for local smoke testing. To run the container against real
-host-local services, use the real overlay:
-
-```bash
-make compose-real-up
-```
-
-The real overlay reads secrets from ignored `.env.local`, keeps Postgres inside Compose, and points
-the app container at host-local services with `host.docker.internal` because `127.0.0.1` inside a
-container means the container itself.
-
-To run the platform with the official self-hosted Hermes gateway instead of the local compatibility
-service, set `ASDLC_HERMES_API_KEY` in ignored `.env.local` and start the Hermes overlay:
-
-```bash
-ASDLC_HERMES_HTTP_ENABLED=true
-ASDLC_HERMES_API_MODE=openai_compatible
-ASDLC_HERMES_API_KEY=<local_hermes_gateway_token>
-ASDLC_HERMES_MODEL=hermes-agent
-ASDLC_HERMES_INFERENCE_PROVIDER=custom
-ASDLC_HERMES_INFERENCE_MODEL=gpt-5-mini
-ASDLC_HERMES_TIMEOUT_SECONDS=120
-make compose-real-hermes-up
-```
-
-The Hermes overlay runs `nousresearch/hermes-agent gateway run`, enables the OpenAI-compatible API
-server on port `8642`, and wires the platform to `POST /v1/responses`. The overlay patches
-Hermes' mounted `/opt/data/config.yaml` at startup so the runtime uses the configured
-OpenAI-compatible endpoint/model through Hermes' `custom` provider.
-
-LLM observability is persisted in task/session metadata as `llm_observability`. Request-side token
-counts are estimated by `ASDLC_OBSERVABILITY_CHARS_PER_TOKEN`; cost estimates use
-`ASDLC_OBSERVABILITY_INPUT_COST_PER_MILLION_USD` and
-`ASDLC_OBSERVABILITY_OUTPUT_COST_PER_MILLION_USD`. Defaults are only estimates; adjust them to the
-active route (`gpt-5-nano`, `gpt-5-mini`, `gpt-5`, or explicit `gpt-5.5`
-escalation) before using the ledger for billing-grade reporting. Per-task totals are exposed at
-`GET /tasks/{task_id}/llm-observability`. Each record also marks whether token counts came from
-provider usage or estimation, and whether cost came from a provider-reported cost or configured
-rate estimate.
-
-Runtime readiness and production guardrails are exposed at `GET /ops/status`. The endpoint reports
-which Notion, Google Docs, Figma, Multica, Hermes, and image-hydration credentials are missing, plus
-API auth/rate-limit status. For production, enable API keys and rate limiting:
-
-```bash
-ASDLC_API_AUTH_ENABLED=true
-ASDLC_API_AUTH_KEYS=<comma_separated_api_keys>
-ASDLC_API_RATE_LIMIT_ENABLED=true
-ASDLC_API_RATE_LIMIT_REQUESTS_PER_MINUTE=120
-```
-
-For real self-hosted Multica, configure the platform with the Multica backend URL, PAT, workspace
-ID, and preferred runtime provider:
-
-```bash
+# Multica + Hermes
 ASDLC_MULTICA_HTTP_ENABLED=true
-ASDLC_MULTICA_BASE_URL=http://127.0.0.1:18080
+ASDLC_MULTICA_BASE_URL=<multica_url>
 ASDLC_MULTICA_API_KEY=<multica_pat>
-ASDLC_MULTICA_WORKSPACE_ID=<workspace_uuid>
-ASDLC_MULTICA_DEFAULT_RUNTIME_PROVIDER=codex
-```
+ASDLC_MULTICA_WORKSPACE_ID=<workspace_id>
+ASDLC_HERMES_HTTP_ENABLED=true
+ASDLC_HERMES_API_KEY=<hermes_api_key>
 
-The adapter creates/reuses a deterministic Multica agent named
-`<ASDLC_MULTICA_AGENT_NAME_PREFIX>-<provider>`, creates an assigned Multica issue for each DAG node,
-then stores the real Multica issue, task, agent, runtime, and provider IDs on the DAG node metadata.
-
-Graph-backed repo questions use the provider-neutral `GraphStore` port. Graphify is the first real
-adapter. By default it runs the official `graphify` CLI, so repo metadata must include either
-`graph_path`, `graphify_graph_path`, `local_path`, `repo_path`, or `workspace_path`:
-
-```bash
-ASDLC_VENDOR_HTTP_ENABLED=true
+# Graphify
 ASDLC_GRAPHIFY_MODE=cli
 ASDLC_GRAPHIFY_COMMAND=graphify
 ```
 
-CLI query mode runs `graphify query <question> --graph <graphify-out/graph.json>`. CLI index mode
-runs `graphify update <repo_path>`. A compatible self-hosted HTTP wrapper can be used
-with `ASDLC_GRAPHIFY_MODE=http` and `ASDLC_GRAPHIFY_BASE_URL`; it must expose `POST /api/index` and
-`POST /api/query` using the internal GraphStore request/response shape.
+See `.env.example` and [Docker Compose Organization Setup](docs/DOCKER_ORG_SETUP.md) for the full
+configuration surface.
 
-Graphify output is generated local index data and must not be committed. The repository ignores
-`graphify-out/` and `.graphify/`; store graph paths in ignored local config or repository metadata,
-not as checked-in artifacts.
+## API Pointers
 
-Linear spec ingestion can read linked Notion pages and Google Docs when configured. Put these in
-ignored local config:
+| Flow | Endpoint |
+| --- | --- |
+| Health | `GET /healthz`, `GET /readyz`, `GET /ops/status` |
+| GitHub App install URL | `GET /repos/github-app/install-url?workspace_id=<id>` |
+| GitHub App repo sync | `POST /repos/github-app/sync` |
+| Register repo | `POST /repos` |
+| Index repo | `POST /repos/{repo_name}/index` |
+| Ask repo question | `POST /repos/{repo_name}/ask` |
+| List tasks | `GET /tasks` |
+| Task details | `GET /tasks/{task_id}` |
+| DAG details | `GET /tasks/{task_id}/dag/{dag_id}` |
+| Usage ledger | `GET /tasks/{task_id}/llm-observability` |
+| Linear webhook | `POST /webhooks/linear` |
+| GitHub webhook | `POST /webhooks/github` |
 
-```bash
-ASDLC_NOTION_HTTP_ENABLED=true
-ASDLC_NOTION_API_KEY=<notion_internal_integration_secret>
-ASDLC_GOOGLE_DOCS_HTTP_ENABLED=true
-ASDLC_GOOGLE_DOCS_BEARER_TOKEN=<optional_google_oauth_token>
-```
-
-Notion links require the integration to be granted access to the page. Google Docs links are fetched
-through the text export endpoint; private docs require a bearer token with access. Hydrated document
-text is treated as an additional spec text source for repo detection, planning, Hermes context, and
-DAG node metadata.
-
-Linear spec ingestion can also hydrate Figma design links when configured:
+## Development
 
 ```bash
-ASDLC_FIGMA_HTTP_ENABLED=true
-ASDLC_FIGMA_API_KEY=<figma_personal_access_token>
+make quality
+make contract
+uv run pytest -q
 ```
 
-Figma links in Linear descriptions, comments, and attachments are fetched through the Figma files
-API. The fetched file or node summary is treated as additional spec text, while the original Figma
-URL remains tracked as a design asset for audit and DAG metadata.
+The project is test-first. Unit tests cover the core orchestration and adapters; Schemathesis
+contract tests exercise the FastAPI OpenAPI surface. See [TDD Workflow](docs/TDD_WORKFLOW.md) for
+the development loop.
 
-Linear image attachments can be hydrated through an explicit OpenAI vision summarization path:
+## Documentation
 
-```bash
-ASDLC_DESIGN_IMAGE_HYDRATION_ENABLED=true
-ASDLC_DESIGN_IMAGE_SUMMARY_PROVIDER=openai
-ASDLC_DESIGN_IMAGE_SUMMARY_MODEL=gpt-5-nano
-ASDLC_DESIGN_IMAGE_MAX_BYTES=5000000
-```
-
-When enabled, image bytes are fetched only long enough to summarize them and are not persisted. The
-stored context contains the generated summary plus metadata such as content type, byte count, and
-summary model.
-
-In the real Docker overlay, host repos are mounted read-only at `/repos` and generated Graphify data
-is written to the Docker-managed `/graphify-data` volume. By default the compose overlay mounts the
-parent directory of this service; set `ASDLC_REPO_HOST_ROOT` when your repo checkouts live elsewhere.
-Example repo metadata for the local `erp-service` checkout:
-
-```json
-{
-  "local_path": "/repos/erp-service"
-}
-```
-
-Indexing copies that read-only repo into `/graphify-data/erp-service/` and creates
-`/graphify-data/erp-service/graphify-out/graph.json`. Nothing is written back to the host repo
-checkout, and nothing under `graphify-out/` is committed.
-
-Linear assignment can ingest markdown specs directly from the issue description and text/markdown
-attachments. When the spec names registered repos, the platform resolves the repo scope before
-creating Multica work:
-
-- Single registered repo: the task is bound to that repo even without a `repo:*` label.
-- Multiple registered repos: the platform creates a `linear-spec` DAG with one ready node per repo.
-- Design inputs: image attachments and Figma links are summarized into Hermes, Multica, DAG node,
-  and audit metadata. Binary/image data is not persisted or stored in the repository.
-- If the webhook payload is partial, the Linear adapter hydrates the full issue context before
-  parsing the spec. If the repo scope is still missing or unregistered, the task is blocked and the
-  bot asks for a registered repo in Linear; a follow-up comment naming one registered repo resumes
-  the task.
-- Linked Notion pages and Google Docs in the Linear description, comments, or text attachments are
-  fetched as additional spec text when the matching document adapter is enabled.
-- Figma links in the Linear description, comments, or attachments are fetched as additional design
-  spec text when the Figma adapter is enabled.
-- Linear image attachments are fetched and summarized as additional design spec text when image
-  hydration is enabled.
-- When `ASDLC_LINEAR_SPEC_PLANNER_ENABLED=true`, hydrated specs are planned through the configured
-  model provider. The planner can create multiple repo-scoped DAG nodes, including multiple nodes
-  for one repo, and invalid model plans fall back to the deterministic one-node-per-repo DAG.
-- When `ASDLC_LINEAR_PLAN_APPROVAL_REQUIRED=true`, the platform persists the planned DAG and waits
-  for `/approve-plan <LINEAR-ID>` in the Linear thread before queueing runnable DAG nodes. Queued
-  node payloads include an RTK-only terminal policy, GraphStore-first repo-context policy, and
-  GitHub write-disabled marker until write-scoped GitHub App access is approved.
-
-Conversation sync can poll Multica-backed sessions and mirror new agent comments back to the
-originating channel. The real Docker overlay enables it by default:
-
-```bash
-ASDLC_CONVERSATION_SYNC_ENABLED=true
-ASDLC_CONVERSATION_SYNC_INTERVAL_SECONDS=15
-ASDLC_CONVERSATION_SYNC_BATCH_SIZE=50
-```
-
-Linear replies use the configured Linear adapter. Slack replies use `ASDLC_SLACK_BOT_TOKEN` and the
-stored Slack thread ID. Telegram replies use `ASDLC_TELEGRAM_BOT_TOKEN` and the stored chat ID.
-
-## Delivery Plan
-
-See `docs/IMPLEMENTATION_BACKLOG.md`.
-
-## Development Discipline
-
-Implementation is test-first. Unit tests and Schemathesis contract tests are part of the default
-quality gate. See `docs/TDD_WORKFLOW.md`.
-
-Agent/runtime instructions are in `AGENTS.md`, `CLAUDE.md`, and `.agent/`.
+- [Docker Compose Organization Setup](docs/DOCKER_ORG_SETUP.md)
+- [Self-Hosted Bootstrap Runbook](docs/SELF_HOSTED_BOOTSTRAP_RUNBOOK.md)
+- [Implementation Backlog](docs/IMPLEMENTATION_BACKLOG.md)
+- [TDD Workflow](docs/TDD_WORKFLOW.md)
+- Agent/runtime instructions: `AGENTS.md`, `CLAUDE.md`, `.agent/`
