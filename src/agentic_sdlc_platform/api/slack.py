@@ -160,7 +160,7 @@ async def slack_events(
         result = await NodeOverrideHandler(request.app.state.repository).handle(
             command=node_override,
             actor=sender_id,
-            channel=channel,
+            channel=_slack_thread_id(channel=channel, event=event),
         )
         return {
             "ok": True,

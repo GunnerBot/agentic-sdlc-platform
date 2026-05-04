@@ -77,6 +77,24 @@ class FakeDagNodeExecution:
     metadata_json = {}
 
 
+class FakeArtifact:
+    id = "artifact-1"
+    task_id = "task-1"
+    dag_id = "dag-1"
+    node_key = "api"
+    execution_id = None
+    kind = "adversarial_review"
+    name = "api:adversarial-review:latest"
+    content_json = {}
+    metadata_json = {
+        "required": True,
+        "status": "approved",
+        "approved": True,
+        "blocking_issue_count": 0,
+        "blocking_issues": [],
+    }
+
+
 class FakeDag:
     id = "dag-1"
     task_id = "task-1"
@@ -194,10 +212,19 @@ class FakeRepository:
         return [FakeDagNodeExecution()]
 
     async def create_task_artifact(self, **kwargs):
-        return None
+        artifact = FakeArtifact()
+        artifact.task_id = kwargs.get("task_id", "task-1")
+        artifact.dag_id = kwargs.get("dag_id")
+        artifact.node_key = kwargs.get("node_key")
+        artifact.execution_id = kwargs.get("execution_id")
+        artifact.kind = kwargs.get("kind", "artifact")
+        artifact.name = kwargs.get("name", "artifact")
+        artifact.content_json = kwargs.get("content", {})
+        artifact.metadata_json = kwargs.get("metadata", {})
+        return artifact
 
     async def list_task_artifacts(self, **kwargs):
-        return []
+        return [FakeArtifact()]
 
 
 class FakeModelProvider:

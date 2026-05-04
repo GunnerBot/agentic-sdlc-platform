@@ -33,6 +33,10 @@ class TaskDagNodeResponse(BaseModel):
     verification_status: str | None = None
     verification_missing: list[str] = Field(default_factory=list)
     follow_up_nodes: list[str] = Field(default_factory=list)
+    adversarial_review_required: bool = False
+    adversarial_review_status: str | None = None
+    adversarial_review_score: float | None = None
+    adversarial_blocking_issue_count: int = 0
     executions: list["DagNodeExecutionResponse"] = Field(default_factory=list)
 
 
@@ -61,6 +65,35 @@ class CompleteDagNodeResponse(BaseModel):
 
 class FailDagNodeRequest(BaseModel):
     error: str = Field(min_length=1)
+
+
+class CreateAdversarialReviewRequest(BaseModel):
+    phase: str | None = None
+    turn: int | None = Field(default=None, ge=1)
+    reviewer: str | None = None
+    require_gate: bool = True
+    checkpoint: dict[str, object] = Field(default_factory=dict)
+    review: dict[str, object] = Field(default_factory=dict)
+    summary: str | None = None
+    blocking_issues: list[dict[str, object] | str] = Field(default_factory=list)
+
+
+class AdversarialReviewResponse(BaseModel):
+    id: str
+    task_id: str
+    dag_id: str
+    node_key: str
+    required: bool
+    status: str
+    phase: str | None = None
+    turn: int | None = None
+    reviewer: str | None = None
+    checkpoint_id: str | None = None
+    score: float | None = None
+    summary: str | None = None
+    approved: bool
+    blocking_issue_count: int
+    blocking_issues: list[dict[str, str]] = Field(default_factory=list)
 
 
 class CreateDagNodeExecutionRequest(BaseModel):

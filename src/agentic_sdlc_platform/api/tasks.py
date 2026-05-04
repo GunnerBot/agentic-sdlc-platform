@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
+from agentic_sdlc_platform.glue.adversarial_review import normalize_adversarial_review
 from agentic_sdlc_platform.glue.conversation_sync import ConversationSyncService
 from agentic_sdlc_platform.glue.dag_completion_verifier import (
     CompletionVerification,
@@ -33,10 +34,12 @@ from agentic_sdlc_platform.glue.quality_gate import (
     quality_gate_metadata,
 )
 from agentic_sdlc_platform.models.tasks import (
+    AdversarialReviewResponse,
     AgentSessionDetailResponse,
     AgentSessionEventResponse,
     AgentSessionStatusResponse,
     CompleteDagNodeResponse,
+    CreateAdversarialReviewRequest,
     CreateDagNodeExecutionRequest,
     CreateTaskDagRequest,
     DagNodeExecutionResponse,
@@ -455,6 +458,75 @@ async def retry_dag_node(
 
 
 @router.post(
+    "/{task_id}/dag/{dag_id}/nodes/{node_key}/adversarial-reviews",
+    response_model=AdversarialReviewResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "DAG not found"}},
+)
+async def create_adversarial_review(
+    task_id: str,
+    dag_id: str,
+    node_key: str,
+    request: Request,
+    body: CreateAdversarialReviewRequest,
+) -> AdversarialReviewResponse:
+    dag = await _require_task_dag(request, task_id, dag_id)
+    node = _node_from_dag(dag, node_key)
+    existing_metadata = dict(getattr(node, "metadata_json", {}) or {})
+    review_required = (
+        body.require_gate or existing_metadata.get("adversarial_review_required") is True
+    )
+    payload = body.model_dump(exclude_none=True)
+    normalized = normalize_adversarial_review(
+        payload,
+        required=review_required,
+    )
+    artifact = await request.app.state.repository.create_task_artifact(
+        task_id=task_id,
+        dag_id=dag_id,
+        node_key=node_key,
+        kind="adversarial_review",
+        name=_adversarial_review_artifact_name(node_key, normalized),
+        content=payload,
+        metadata=normalized,
+    )
+    await request.app.state.repository.update_dag_node_metadata(
+        dag_id=dag_id,
+        node_key=node_key,
+        metadata={
+            "adversarial_review_required": normalized["required"],
+            "adversarial_review": {
+                **normalized,
+                "artifact_id": artifact.id,
+            },
+        },
+    )
+    return _adversarial_review_response(artifact)
+
+
+@router.get(
+    "/{task_id}/dag/{dag_id}/nodes/{node_key}/adversarial-reviews",
+    response_model=list[AdversarialReviewResponse],
+    status_code=status.HTTP_200_OK,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "DAG not found"}},
+)
+async def list_adversarial_reviews(
+    task_id: str,
+    dag_id: str,
+    node_key: str,
+    request: Request,
+) -> list[AdversarialReviewResponse]:
+    await _require_task_dag(request, task_id, dag_id)
+    artifacts = await request.app.state.repository.list_task_artifacts(
+        task_id=task_id,
+        kind="adversarial_review",
+        dag_id=dag_id,
+        node_key=node_key,
+    )
+    return [_adversarial_review_response(artifact) for artifact in artifacts]
+
+
+@router.post(
     "/{task_id}/dag/{dag_id}/nodes/{node_key}/sync-orchestrator",
     response_model=TaskDagNodeResponse,
     status_code=status.HTTP_200_OK,
@@ -856,6 +928,10 @@ def _node_response(node, status_override: str | None = None) -> TaskDagNodeRespo
     completion_verification = (
         completion_verification if isinstance(completion_verification, dict) else {}
     )
+    adversarial_review = metadata.get("adversarial_review")
+    adversarial_review = (
+        adversarial_review if isinstance(adversarial_review, dict) else {}
+    )
     return TaskDagNodeResponse(
         node_key=node.node_key,
         title=node.title,
@@ -880,6 +956,12 @@ def _node_response(node, status_override: str | None = None) -> TaskDagNodeRespo
         verification_status=_str_or_none(completion_verification.get("status")),
         verification_missing=_string_list(completion_verification.get("missing")),
         follow_up_nodes=_string_list(completion_verification.get("follow_up_nodes")),
+        adversarial_review_required=metadata.get("adversarial_review_required") is True,
+        adversarial_review_status=_str_or_none(adversarial_review.get("status")),
+        adversarial_review_score=_float_or_none(adversarial_review.get("score")),
+        adversarial_blocking_issue_count=(
+            _int_or_none(adversarial_review.get("blocking_issue_count")) or 0
+        ),
         executions=[
             _execution_response(execution)
             for execution in node.__dict__.get("executions", [])
@@ -996,6 +1078,14 @@ def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
 
 
+def _float_or_none(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    return None
+
+
 def _node_status_from_orchestrator(status: str) -> str:
     return {
         "pending": "queued",
@@ -1051,3 +1141,43 @@ def _artifact_response(artifact: TaskArtifact) -> TaskArtifactResponse:
         content=dict(artifact.content_json),
         metadata=dict(artifact.metadata_json),
     )
+
+
+def _adversarial_review_artifact_name(
+    node_key: str,
+    metadata: dict[str, object],
+) -> str:
+    turn = metadata.get("turn")
+    suffix = f"turn-{turn}" if isinstance(turn, int) else "latest"
+    return f"{node_key}:adversarial-review:{suffix}"
+
+
+def _adversarial_review_response(artifact: TaskArtifact) -> AdversarialReviewResponse:
+    metadata = dict(artifact.metadata_json)
+    return AdversarialReviewResponse(
+        id=artifact.id,
+        task_id=artifact.task_id,
+        dag_id=artifact.dag_id or "",
+        node_key=artifact.node_key or "",
+        required=metadata.get("required") is True,
+        status=_str_or_none(metadata.get("status")) or "unknown",
+        phase=_str_or_none(metadata.get("phase")),
+        turn=_int_or_none(metadata.get("turn")),
+        reviewer=_str_or_none(metadata.get("reviewer")),
+        checkpoint_id=_str_or_none(metadata.get("checkpoint_id")),
+        score=_float_or_none(metadata.get("score")),
+        summary=_str_or_none(metadata.get("summary")),
+        approved=metadata.get("approved") is True,
+        blocking_issue_count=_int_or_none(metadata.get("blocking_issue_count")) or 0,
+        blocking_issues=_dict_list(metadata.get("blocking_issues")),
+    )
+
+
+def _dict_list(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        {key: item_value for key, item_value in item.items() if isinstance(item_value, str)}
+        for item in value
+        if isinstance(item, dict)
+    ]

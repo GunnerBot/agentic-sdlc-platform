@@ -46,6 +46,7 @@ class FakeNode:
 
 
 class FakeDag:
+    id = "dag-1"
     status = "planned"
     nodes = [FakeNode()]
 
@@ -133,8 +134,16 @@ class FakeTaskOrchestrator:
 
 class FakeRepository:
     def __init__(self) -> None:
+        FakeTask.dags[0].nodes[0].status = "queued"
+        FakeTask.dags[0].nodes[0].orchestrator_task_id = "multica-node-1"
+        FakeTask.dags[0].nodes[0].orchestrator_status = "queued"
+        FakeTask.dags[0].nodes[0].metadata_json = {
+            "expected_pr_reference": "dag/dag-1/design"
+        }
         self.agent_sessions: dict[tuple[str, str], SimpleNamespace] = {}
         self.session_events: list[tuple[str, str, str, str, str | None]] = []
+        self.artifacts: list[dict[str, object]] = []
+        self.audit_events: list[dict[str, object]] = []
 
     async def get_repo_by_name(self, name: str):
         return FakeRepo() if name == "erp-service" else None
@@ -189,6 +198,89 @@ class FakeRepository:
     ):
         self.session_events.append((session_id, direction, event_type, actor, message))
         return SimpleNamespace(id=f"event-{len(self.session_events)}")
+
+    async def update_dag_node_status(
+        self,
+        dag_id,
+        node_key,
+        status,
+        orchestrator_status=None,
+        metadata=None,
+    ):
+        node = FakeTask.dags[0].nodes[0]
+        node.status = status
+        node.orchestrator_status = orchestrator_status
+        if metadata:
+            node.metadata_json.update(metadata)
+        return node
+
+    async def retry_dag_node(self, dag_id, node_key):
+        node = FakeTask.dags[0].nodes[0]
+        node.status = "ready"
+        node.orchestrator_task_id = None
+        node.orchestrator_status = None
+        retry_count = node.metadata_json.get("retry_count", 0)
+        node.metadata_json["retry_count"] = retry_count + 1
+        return node
+
+    async def mark_dag_node_skipped(self, dag_id, node_key):
+        node = FakeTask.dags[0].nodes[0]
+        node.status = "skipped"
+        node.orchestrator_status = "skipped"
+        return node
+
+    async def list_dag_node_executions(self, dag_id, node_key=None):
+        return []
+
+    async def update_dag_node_execution(self, execution_id, status, error=None):
+        return SimpleNamespace(id=execution_id, status=status, error=error)
+
+    async def update_dag_node_metadata(self, dag_id, node_key, metadata):
+        node = FakeTask.dags[0].nodes[0]
+        node.metadata_json.update(metadata)
+        return node
+
+    async def create_task_artifact(
+        self,
+        task_id,
+        kind,
+        name,
+        content,
+        metadata=None,
+        dag_id=None,
+        node_key=None,
+        execution_id=None,
+    ):
+        artifact = {
+            "task_id": task_id,
+            "kind": kind,
+            "name": name,
+            "content": content,
+            "metadata": metadata or {},
+            "dag_id": dag_id,
+            "node_key": node_key,
+            "execution_id": execution_id,
+        }
+        self.artifacts.append(artifact)
+        return SimpleNamespace(id=f"artifact-{len(self.artifacts)}", **artifact)
+
+    async def record_audit_event(
+        self,
+        action,
+        actor,
+        target_type,
+        target_id,
+        metadata=None,
+    ):
+        event = {
+            "action": action,
+            "actor": actor,
+            "target_type": target_type,
+            "target_id": target_id,
+            "metadata": metadata or {},
+        }
+        self.audit_events.append(event)
+        return SimpleNamespace(id=f"audit-{len(self.audit_events)}", **event)
 
 
 async def test_slack_client_fetches_thread_context() -> None:
@@ -727,3 +819,49 @@ def test_slack_app_mention_task_nodes_command_returns_task_info() -> None:
         "- design: queued; repo erp-service; depends_on none; "
         "orchestrator multica-node-1; pr none; failure none"
     )
+
+
+def test_slack_revise_node_records_feedback_and_retries_node() -> None:
+    repository = FakeRepository()
+    body = json.dumps(
+        {
+            "type": "event_callback",
+            "event": {
+                "type": "app_mention",
+                "channel": "C123",
+                "user": "U123",
+                "thread_ts": "1710000000.000000",
+                "text": (
+                    "<@BOT> /revise-node ENG-1284 design "
+                    "Please address the thread feedback before retrying."
+                ),
+            },
+        }
+    ).encode("utf-8")
+    client = TestClient(
+        create_app(
+            Settings(slack_signing_secret="secret"),
+            repository=repository,
+        )
+    )
+
+    response = client.post(
+        "/channels/slack/events",
+        content=body,
+        headers=signed_slack_headers(body, "secret"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "node_override"
+    assert response.json()["command"] == "revise-node"
+    assert response.json()["answer"] == "Node design on ENG-1284 is now ready."
+    assert repository.artifacts[0]["kind"] == "dag_node_revision_request"
+    assert repository.artifacts[0]["content"] == {
+        "external_id": "ENG-1284",
+        "dag_id": "dag-1",
+        "node_key": "design",
+        "feedback": "Please address the thread feedback before retrying.",
+        "actor": "U123",
+        "channel": "C123:1710000000.000000",
+    }
+    assert repository.audit_events[0]["action"] == "human_override.revise-node"

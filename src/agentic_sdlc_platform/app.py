@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from agentic_sdlc_platform.adapters.slack import SlackClient
 from agentic_sdlc_platform.adapters.telegram import TelegramClient
 from agentic_sdlc_platform.api.channels import router as channel_router
+from agentic_sdlc_platform.api.dashboard import router as dashboard_router
 from agentic_sdlc_platform.api.health import router as health_router
 from agentic_sdlc_platform.api.repos import router as repo_router
 from agentic_sdlc_platform.api.slack import router as slack_router
@@ -116,6 +117,7 @@ def create_app(
     app.include_router(telegram_router, prefix="/channels/telegram")
     app.include_router(task_router, prefix="/tasks")
     app.include_router(webhook_router, prefix="/webhooks")
+    app.include_router(dashboard_router, prefix="/dashboard")
     return app
 
 

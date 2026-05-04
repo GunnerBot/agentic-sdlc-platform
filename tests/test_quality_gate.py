@@ -62,3 +62,33 @@ def test_quality_gate_accepts_complete_test_evidence() -> None:
 
     assert result.status == "satisfied"
     assert result.missing == ()
+
+
+def test_quality_gate_blocks_required_adversarial_review_without_approval() -> None:
+    result = evaluate_completion_quality_gate(
+        metadata={
+            "adversarial_review_required": True,
+            "adversarial_review": {
+                "status": "revise",
+                "blocking_issue_count": 1,
+            },
+        }
+    )
+
+    assert result.status == "blocked"
+    assert result.missing == ("adversarial review must approve this DAG node",)
+
+
+def test_quality_gate_accepts_required_adversarial_review_with_approval() -> None:
+    result = evaluate_completion_quality_gate(
+        metadata={
+            "adversarial_review_required": True,
+            "adversarial_review": {
+                "status": "approved",
+                "blocking_issue_count": 0,
+            },
+        }
+    )
+
+    assert result.status == "satisfied"
+    assert result.missing == ()

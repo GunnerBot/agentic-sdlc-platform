@@ -162,6 +162,41 @@ class NodeOverrideHandler:
                 dag_id=dag.id,
                 node_key=command.node_key,
             )
+        elif command.command == "revise-node":
+            await self._cancel_active_executions(dag.id, command.node_key, command.reason)
+            node = await self._repository.retry_dag_node(
+                dag_id=dag.id,
+                node_key=command.node_key,
+            )
+            revision_request = {
+                "external_id": command.external_id,
+                "dag_id": dag.id,
+                "node_key": command.node_key,
+                "feedback": command.reason,
+                "actor": actor,
+                "channel": channel,
+            }
+            await self._repository.create_task_artifact(
+                task_id=task.id,
+                dag_id=dag.id,
+                node_key=command.node_key,
+                kind="dag_node_revision_request",
+                name=f"{command.node_key}:revision-request",
+                content=revision_request,
+                metadata={
+                    "source": "channel",
+                    "status": node.status,
+                    "retry_count": _retry_count(node),
+                },
+            )
+            node = await self._repository.update_dag_node_metadata(
+                dag_id=dag.id,
+                node_key=command.node_key,
+                metadata={
+                    "latest_revision_request": revision_request,
+                    "revision_requested": True,
+                },
+            )
         else:
             node = await self._repository.mark_dag_node_skipped(
                 dag_id=dag.id,
@@ -244,7 +279,7 @@ def parse_task_info(text: str) -> TaskInfoCommand | None:
 
 def parse_node_override(text: str) -> NodeOverrideCommand | None:
     match = re.match(
-        r"^/(?P<command>pause-node|retry-node|skip-node)\s+"
+        r"^/(?P<command>pause-node|retry-node|skip-node|revise-node)\s+"
         r"(?P<external_id>[A-Z][A-Z0-9]+-\d+)\s+"
         r"(?P<node_key>[A-Za-z0-9_.-]+)"
         r"(?:\s+(?P<reason>.+))?$",
@@ -260,6 +295,12 @@ def parse_node_override(text: str) -> NodeOverrideCommand | None:
         node_key=match.group("node_key"),
         reason=reason.strip() if reason else None,
     )
+
+
+def _retry_count(node) -> int:
+    metadata = getattr(node, "metadata_json", {}) or {}
+    value = metadata.get("retry_count") if isinstance(metadata, dict) else None
+    return value if isinstance(value, int) else 0
 
 
 def parse_plan_approval(text: str) -> PlanApprovalCommand | None:

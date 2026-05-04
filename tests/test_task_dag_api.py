@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.glue.dag_decomposer import Subtask
+from agentic_sdlc_platform.glue.llm_observability import LLM_COST_LEDGER_ARTIFACT_KIND
 from agentic_sdlc_platform.persistence.models import Base, TaskDag
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.agent_executor import (
@@ -605,6 +606,114 @@ async def test_complete_dag_node_endpoint_requires_quality_evidence_for_pr_nodes
     assert node["status"] == "ready"
 
 
+async def test_adversarial_review_endpoint_gates_node_completion() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    client = TestClient(
+        create_app(
+            Settings(_env_file=None),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+
+    review = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/adversarial-reviews",
+        json={
+            "phase": "implementation",
+            "turn": 1,
+            "reviewer": "adversarial-supervisor",
+            "require_gate": True,
+            "checkpoint": {"id": "api-checkpoint", "title": "API checkpoint"},
+            "review": {
+                "verdict": "revise",
+                "score": {"overall": 58},
+                "summary": "No focused API tests were added.",
+                "issues": [
+                    {
+                        "id": "missing-tests",
+                        "blocking": True,
+                        "description": "Add API tests before completion.",
+                    }
+                ],
+            },
+        },
+    )
+    blocked = client.post(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/complete")
+    artifacts = client.get(
+        f"/tasks/{task_id}/artifacts",
+        params={
+            "kind": "adversarial_review",
+            "dag_id": dag_id,
+            "node_key": "api",
+        },
+    )
+    task = client.get(f"/tasks/{task_id}")
+
+    assert review.status_code == 201
+    assert review.json()["status"] == "revise"
+    assert review.json()["approved"] is False
+    assert review.json()["blocking_issue_count"] == 1
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == {
+        "message": "DAG node quality gate is not satisfied",
+        "missing": ["adversarial review must approve this DAG node"],
+    }
+    assert artifacts.status_code == 200
+    assert artifacts.json()[0]["kind"] == "adversarial_review"
+    assert artifacts.json()[0]["metadata"]["status"] == "revise"
+    node = task.json()["dags"][0]["nodes"][0]
+    assert node["adversarial_review_required"] is True
+    assert node["adversarial_review_status"] == "revise"
+    assert node["adversarial_blocking_issue_count"] == 1
+
+
+async def test_approved_adversarial_review_allows_node_completion() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    client = TestClient(
+        create_app(
+            Settings(_env_file=None),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+
+    review = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/adversarial-reviews",
+        json={
+            "phase": "verification",
+            "turn": 2,
+            "reviewer": "adversarial-supervisor",
+            "require_gate": True,
+            "review": {
+                "verdict": "approved",
+                "score": {"overall": 94},
+                "summary": "Ready to complete.",
+            },
+        },
+    )
+    completed = client.post(
+        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/complete",
+        params={"enqueue_ready": "false"},
+    )
+
+    assert review.status_code == 201
+    assert review.json()["approved"] is True
+    assert completed.status_code == 200
+    assert completed.json()["completed_node"] == "api"
+
+
 async def test_fail_skip_and_retry_dag_node_endpoints() -> None:
     repository = await build_repository()
     task_id = await create_parent_task(repository)
@@ -1021,3 +1130,81 @@ async def test_dag_node_execution_api_requires_write_confirmation() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "write_pr execution requires confirm_write_pr=true"
+
+
+async def test_dashboard_views_render_tasks_dags_prs_cost_artifacts_and_conversations() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag_id,
+        node_key="api",
+        orchestrator_task_id="multica-task-1",
+        orchestrator_status="queued",
+        metadata={
+            "pr_url": "https://github.com/acme/erp-api/pull/17",
+            "pr_number": 17,
+            "expected_pr_reference": f"dag/{dag_id}/api",
+        },
+    )
+    session = await repository.create_agent_session(
+        task_id=task_id,
+        provider="slack",
+        external_thread_id="C123:1710000000.000000",
+        hermes_session_id="hermes-session-1",
+        repo="erp-service",
+    )
+    await repository.record_session_event(
+        session_id=session.id,
+        direction="inbound",
+        event_type="comment",
+        actor="slack:U123",
+        message="Please revise the API plan.",
+    )
+    await repository.create_task_artifact(
+        task_id=task_id,
+        kind="hydrated_spec",
+        name="ENG-1284:dag-planning-spec",
+        content={"hydrated_spec_markdown": "# Spec"},
+        metadata={"status": "hydrated"},
+    )
+    await repository.create_task_artifact(
+        task_id=task_id,
+        kind=LLM_COST_LEDGER_ARTIFACT_KIND,
+        name="cost-ledger",
+        content={
+            "source": "test",
+            "input_tokens": 1200,
+            "output_tokens": 80,
+            "total_tokens": 1280,
+            "estimated_cost_usd": 0.00046,
+        },
+    )
+
+    dashboard = client.get("/dashboard")
+    detail = client.get(f"/dashboard/tasks/{task_id}")
+
+    assert dashboard.status_code == 200
+    assert dashboard.headers["content-type"].startswith("text/html")
+    assert "ENG-1284" in dashboard.text
+    assert detail.status_code == 200
+    assert "DAGs" in detail.text
+    assert "PRs" in detail.text
+    assert "Cost" in detail.text
+    assert "Artifacts" in detail.text
+    assert "Conversations" in detail.text
+    assert "https://github.com/acme/erp-api/pull/17" in detail.text
+    assert "ENG-1284:dag-planning-spec" in detail.text
+    assert "Please revise the API plan." in detail.text
+    assert "$0.000460" in detail.text
