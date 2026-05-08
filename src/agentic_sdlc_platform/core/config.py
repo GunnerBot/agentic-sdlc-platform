@@ -108,6 +108,8 @@ class Settings(BaseSettings):
     graphify_max_retries: int = 2
     graphify_context_max_chars: int = 4000
     graphify_context_max_references: int = 10
+    repo_cache_root: str | None = None
+    repo_cache_clone_timeout_seconds: float = 300.0
 
     notion_http_enabled: bool = False
     notion_base_url: str = "https://api.notion.com"

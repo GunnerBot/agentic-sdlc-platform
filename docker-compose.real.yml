@@ -23,5 +23,10 @@ services:
       ASDLC_GRAPHIFY_COMMAND: ${ASDLC_GRAPHIFY_COMMAND:-uv run --no-dev graphify}
       ASDLC_GRAPHIFY_OUTPUT_ROOT: ${ASDLC_GRAPHIFY_OUTPUT_ROOT:-/graphify-data}
       ASDLC_GRAPHIFY_TIMEOUT_SECONDS: ${ASDLC_GRAPHIFY_TIMEOUT_SECONDS:-300}
+      ASDLC_REPO_CACHE_ROOT: ${ASDLC_REPO_CACHE_ROOT:-/repo-cache}
+      ASDLC_REPO_CACHE_CLONE_TIMEOUT_SECONDS: ${ASDLC_REPO_CACHE_CLONE_TIMEOUT_SECONDS:-300}
     volumes:
-      - ${ASDLC_REPO_HOST_ROOT:-..}:/repos:ro
+      - repo-cache:/repo-cache
+
+volumes:
+  repo-cache:

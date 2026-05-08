@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -11,6 +13,12 @@ async def test_graphify_store_blocks_when_disabled() -> None:
 
     with pytest.raises(GraphStoreError, match="disabled"):
         await store.query(GraphQuery(repo="repo", question="question"))
+
+
+def _seed_cloned_repo(repo_path: Path, content: str = "print('hello')") -> None:
+    repo_path.mkdir(parents=True)
+    (repo_path / ".git").mkdir()
+    (repo_path / "app.py").write_text(content, encoding="utf-8")
 
 
 async def test_graphify_cli_query_uses_real_graphify_command(tmp_path) -> None:
@@ -118,6 +126,139 @@ async def test_graphify_cli_index_copies_repo_to_output_root(tmp_path) -> None:
     copied_repo_path = output_root / "acme-corp__erp-service"
     assert (copied_repo_path / "app.py").read_text(encoding="utf-8") == "print('hello')"
     assert captured_commands == [["graphify", "update", str(copied_repo_path)]]
+    assert result.external_index_id == str(copied_graph_path)
+
+
+async def test_graphify_cli_index_clones_repo_to_cache_when_local_path_is_missing(
+    tmp_path,
+) -> None:
+    cache_root = tmp_path / "repo-cache"
+    output_root = tmp_path / "graphify-data"
+    copied_graph_path = (
+        output_root / "acme-corp__erp-service" / "graphify-out" / "graph.json"
+    )
+    captured_git_commands: list[tuple[list[str], dict[str, str] | None]] = []
+    captured_graphify_commands: list[list[str]] = []
+
+    async def token_provider(installation_id: str) -> str:
+        assert installation_id == "installation-1"
+        return "installation-token"
+
+    async def git_runner(
+        command: list[str],
+        command_timeout: float,
+        env: dict[str, str] | None,
+    ) -> str:
+        captured_git_commands.append((command, env))
+        assert command_timeout == 300.0
+        assert "installation-token" not in " ".join(command)
+        assert env is not None
+        assert env["GIT_CONFIG_VALUE_0"].startswith("Authorization: Basic ")
+        assert "installation-token" not in env["GIT_CONFIG_VALUE_0"]
+        _seed_cloned_repo(Path(command[-1]))
+        return "cloned"
+
+    async def runner(command: list[str], command_timeout: float) -> str:
+        captured_graphify_commands.append(command)
+        copied_graph_path.parent.mkdir(parents=True)
+        copied_graph_path.write_text("{}", encoding="utf-8")
+        return "indexed"
+
+    store = GraphifyGraphStore(
+        Settings(
+            vendor_http_enabled=True,
+            graphify_command="graphify",
+            graphify_output_root=str(output_root),
+            repo_cache_root=str(cache_root),
+        ),
+        runner=runner,
+        git_runner=git_runner,
+        installation_token_provider=token_provider,
+    )
+
+    result = await store.index(
+        GraphIndexRequest(
+            repo="acme-corp/erp-service",
+            clone_url="https://github.com/acme-corp/erp-service.git",
+            default_branch="main",
+            metadata={"github_app_installation_id": "installation-1"},
+        )
+    )
+
+    cached_repo_path = cache_root / "acme-corp" / "erp-service"
+    copied_repo_path = output_root / "acme-corp__erp-service"
+    assert captured_git_commands[0][0] == [
+        "git",
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        "main",
+        "https://github.com/acme-corp/erp-service.git",
+        str(cached_repo_path),
+    ]
+    assert captured_graphify_commands == [["graphify", "update", str(copied_repo_path)]]
+    assert (copied_repo_path / "app.py").read_text(encoding="utf-8") == "print('hello')"
+    assert result.external_index_id == str(copied_graph_path)
+
+
+async def test_graphify_cli_index_fetches_existing_cached_repo(tmp_path) -> None:
+    cache_root = tmp_path / "repo-cache"
+    cached_repo_path = cache_root / "acme-corp" / "erp-service"
+    (cached_repo_path / ".git").mkdir(parents=True)
+    (cached_repo_path / "app.py").write_text("print('old')", encoding="utf-8")
+    output_root = tmp_path / "graphify-data"
+    copied_graph_path = (
+        output_root / "acme-corp__erp-service" / "graphify-out" / "graph.json"
+    )
+    captured_git_commands: list[list[str]] = []
+
+    async def token_provider(installation_id: str) -> str:
+        return "installation-token"
+
+    async def git_runner(
+        command: list[str],
+        command_timeout: float,
+        env: dict[str, str] | None,
+    ) -> str:
+        captured_git_commands.append(command)
+        if "reset" in command:
+            (cached_repo_path / "app.py").write_text("print('new')", encoding="utf-8")
+        return "ok"
+
+    async def runner(command: list[str], command_timeout: float) -> str:
+        copied_graph_path.parent.mkdir(parents=True)
+        copied_graph_path.write_text("{}", encoding="utf-8")
+        return "indexed"
+
+    store = GraphifyGraphStore(
+        Settings(
+            vendor_http_enabled=True,
+            graphify_command="graphify",
+            graphify_output_root=str(output_root),
+            repo_cache_root=str(cache_root),
+        ),
+        runner=runner,
+        git_runner=git_runner,
+        installation_token_provider=token_provider,
+    )
+
+    result = await store.index(
+        GraphIndexRequest(
+            repo="acme-corp/erp-service",
+            clone_url="https://github.com/acme-corp/erp-service.git",
+            default_branch="main",
+            metadata={"github_app_installation_id": "installation-1"},
+        )
+    )
+
+    assert captured_git_commands == [
+        ["git", "-C", str(cached_repo_path), "fetch", "--depth", "1", "origin", "main"],
+        ["git", "-C", str(cached_repo_path), "reset", "--hard", "FETCH_HEAD"],
+        ["git", "-C", str(cached_repo_path), "clean", "-fdx"],
+    ]
+    copied_repo_path = output_root / "acme-corp__erp-service"
+    assert (copied_repo_path / "app.py").read_text(encoding="utf-8") == "print('new')"
     assert result.external_index_id == str(copied_graph_path)
 
 

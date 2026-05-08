@@ -205,13 +205,12 @@ onboarding path for large installations.
 
 ## Repo Context And Graphify
 
-For local Docker trials, mount checked-out company repos read-only into the app container:
+Selected indexing clones repositories into the Docker-managed `/repo-cache` volume using the
+GitHub App installation token. Graphify then indexes the cached checkout and writes generated graph
+data to `/graphify-data`. No host repository mount is required.
 
-```bash
-ASDLC_REPO_HOST_ROOT=/path/to/company/repos
-```
-
-The real Compose overlay mounts that path at `/repos`. Example registered repo metadata:
+Local checkout paths are still supported as a developer override when you explicitly register repo
+metadata such as:
 
 ```json
 {
@@ -219,8 +218,8 @@ The real Compose overlay mounts that path at `/repos`. Example registered repo m
 }
 ```
 
-Graphify generated indexes are written to the Docker volume at `/graphify-data`. They are generated
-runtime data and should never be committed.
+Those paths are runtime metadata only. Cached checkouts and Graphify indexes are generated runtime
+data and should never be committed.
 
 ## Connect Linear
 

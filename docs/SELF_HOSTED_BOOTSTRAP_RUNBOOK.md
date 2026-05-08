@@ -135,10 +135,11 @@ curl -X POST http://localhost:8080/repos/github-app/sync \
 
 This stores only the repositories granted by GitHub for that installation.
 
-## 7. Register Local Checkout Aliases When Needed
+## 7. Register Local Checkout Aliases Only For Dev Overrides
 
-For local Docker trials, repository aliases and local paths are runtime data. Register them through
-the API or a private seed process, not committed source:
+Selected indexing normally clones repositories into Docker-managed `/repo-cache` using the GitHub
+App installation token. No host checkout or `/repos` mount is required. Local paths are only a
+developer override when you intentionally want to index an already-mounted checkout.
 
 ```bash
 curl -X POST http://localhost:8080/repos \
@@ -158,12 +159,6 @@ curl -X POST http://localhost:8080/repos \
 ## 8. Index Repositories
 
 ```bash
-curl -X POST http://localhost:8080/repos/erp-service/index
-```
-
-or:
-
-```bash
 curl -X POST http://localhost:8080/repos/index \
   -H "Content-Type: application/json" \
   -d '{"repos":["atlas-tech-inc/keychain-os-erp","atlas-tech-inc/webapp-monorepo"]}'
@@ -172,7 +167,8 @@ curl -X POST http://localhost:8080/repos/index \
 Use `POST /repos/index-all` only for deliberate bulk indexing after every imported repo has an
 available checkout/indexing source.
 
-Generated Graphify data belongs in Docker-managed volumes or ignored local paths.
+Cached repository checkouts are stored in the Docker-managed `/repo-cache` volume. Generated
+Graphify data is stored in the Docker-managed `/graphify-data` volume. Neither should be committed.
 
 ## 9. Connect Linear And Channels
 

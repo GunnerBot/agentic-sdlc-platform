@@ -1,11 +1,14 @@
 import asyncio
+import base64
+import os
 import shlex
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
 import httpx
 
+from agentic_sdlc_platform.adapters.github_app import GitHubAppSourceControl
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.ports.graph_store import (
     GraphIndexRequest,
@@ -16,6 +19,8 @@ from agentic_sdlc_platform.ports.graph_store import (
 )
 
 CommandRunner = Callable[[list[str], float], Awaitable[str]]
+GitCommandRunner = Callable[[list[str], float, dict[str, str] | None], Awaitable[str]]
+InstallationTokenProvider = Callable[[str], Awaitable[str]]
 
 
 class GraphifyGraphStore:
@@ -32,10 +37,16 @@ class GraphifyGraphStore:
         self,
         settings: Settings,
         runner: CommandRunner | None = None,
+        git_runner: GitCommandRunner | None = None,
+        installation_token_provider: InstallationTokenProvider | None = None,
         transport: httpx.AsyncBaseTransport | httpx.BaseTransport | None = None,
     ) -> None:
         self._settings = settings
         self._runner = runner or _run_command
+        self._git_runner = git_runner or _run_git_command
+        self._installation_token_provider = (
+            installation_token_provider or self._github_installation_token
+        )
         self._transport = transport
 
     async def index(self, request: GraphIndexRequest) -> GraphIndexResult:
@@ -45,9 +56,7 @@ class GraphifyGraphStore:
 
         source_path = self._repo_path(request.metadata)
         if source_path is None:
-            raise GraphStoreError(
-                "graphify CLI indexing requires repo metadata local_path or repo_path"
-            )
+            source_path = await self._cached_repo_path(request)
         repo_path = self._index_path(request.repo, source_path)
 
         command = [
@@ -192,8 +201,88 @@ class GraphifyGraphStore:
         for key in ("local_path", "repo_path", "workspace_path"):
             value = metadata.get(key)
             if value:
-                return Path(value).expanduser()
+                repo_path = Path(value).expanduser()
+                if repo_path.exists():
+                    return repo_path
         return None
+
+    async def _cached_repo_path(self, request: GraphIndexRequest) -> Path:
+        if not self._settings.repo_cache_root:
+            raise GraphStoreError(
+                "graphify CLI indexing requires repo metadata local_path, repo_path, "
+                "or repo cache root"
+            )
+        if not request.clone_url:
+            raise GraphStoreError("repo clone URL is required for repo cache indexing")
+
+        target_path = self._repo_cache_path(request.repo)
+        token = await self._installation_token(request.metadata)
+        env = _git_auth_env(token) if token else None
+        if (target_path / ".git").exists():
+            await self._fetch_cached_repo(
+                repo_path=target_path,
+                default_branch=request.default_branch,
+                env=env,
+            )
+            return target_path
+
+        if target_path.exists():
+            shutil.rmtree(target_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        await self._git_runner(
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "--branch",
+                request.default_branch,
+                request.clone_url,
+                str(target_path),
+            ],
+            self._settings.repo_cache_clone_timeout_seconds,
+            env,
+        )
+        return target_path
+
+    async def _fetch_cached_repo(
+        self,
+        *,
+        repo_path: Path,
+        default_branch: str,
+        env: dict[str, str] | None,
+    ) -> None:
+        timeout = self._settings.repo_cache_clone_timeout_seconds
+        await self._git_runner(
+            ["git", "-C", str(repo_path), "fetch", "--depth", "1", "origin", default_branch],
+            timeout,
+            env,
+        )
+        await self._git_runner(
+            ["git", "-C", str(repo_path), "reset", "--hard", "FETCH_HEAD"],
+            timeout,
+            env,
+        )
+        await self._git_runner(
+            ["git", "-C", str(repo_path), "clean", "-fdx"],
+            timeout,
+            env,
+        )
+
+    async def _installation_token(self, metadata: dict[str, str]) -> str | None:
+        installation_id = metadata.get("github_app_installation_id")
+        if not installation_id:
+            return None
+        return await self._installation_token_provider(installation_id)
+
+    async def _github_installation_token(self, installation_id: str) -> str:
+        try:
+            return await GitHubAppSourceControl(
+                self._settings,
+                transport=self._transport,
+            ).installation_token(installation_id)
+        except Exception as exc:
+            raise GraphStoreError("github app installation token request failed") from exc
 
     def _graph_path(self, repo: str, metadata: dict[str, str]) -> Path | None:
         graph_path = metadata.get("graph_path") or metadata.get("graphify_graph_path")
@@ -242,13 +331,26 @@ class GraphifyGraphStore:
             raise GraphStoreError("graphify output root is not configured")
         return Path(self._settings.graphify_output_root).expanduser() / _safe_repo_name(repo)
 
+    def _repo_cache_path(self, repo: str) -> Path:
+        if not self._settings.repo_cache_root:
+            raise GraphStoreError("repo cache root is not configured")
+        return Path(self._settings.repo_cache_root).expanduser() / _safe_repo_path(repo)
 
-async def _run_command(command: list[str], command_timeout: float) -> str:
+
+async def _run_command(
+    command: list[str],
+    command_timeout: float,
+    env: Mapping[str, str] | None = None,
+) -> str:
     try:
+        process_env = None
+        if env is not None:
+            process_env = {**os.environ, **env}
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=process_env,
         )
     except OSError as exc:
         raise GraphStoreError(f"graphify command failed to start: {command[0]}") from exc
@@ -265,12 +367,55 @@ async def _run_command(command: list[str], command_timeout: float) -> str:
 
     if process.returncode != 0:
         error_text = stderr.decode("utf-8", errors="replace").strip()
+        error_text = _redact_env_values(error_text, env)
         raise GraphStoreError(error_text or "graphify command failed")
     return stdout.decode("utf-8", errors="replace")
 
 
+async def _run_git_command(
+    command: list[str],
+    command_timeout: float,
+    env: dict[str, str] | None,
+) -> str:
+    return await _run_command(command, command_timeout, env=env)
+
+
+def _git_auth_env(token: str) -> dict[str, str]:
+    basic_token = base64.b64encode(f"x-access-token:{token}".encode()).decode(
+        "ascii"
+    )
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic_token}",
+    }
+
+
+def _redact_env_values(error_text: str, env: Mapping[str, str] | None) -> str:
+    if env is None:
+        return error_text
+    redacted = error_text
+    for key, value in env.items():
+        if not value:
+            continue
+        if "TOKEN" in key or "KEY" in key or "SECRET" in key or "VALUE" in key:
+            redacted = redacted.replace(value, "<redacted>")
+    return redacted
+
+
 def _safe_repo_name(repo: str) -> str:
     return repo.replace("/", "__")
+
+
+def _safe_repo_path(repo: str) -> Path:
+    parts = [part for part in repo.split("/") if part]
+    if len(parts) < 2:
+        return Path(_safe_repo_name(repo))
+    return Path(*[_safe_path_part(part) for part in parts])
+
+
+def _safe_path_part(value: str) -> str:
+    return "".join(char if char.isalnum() or char in "._-" else "_" for char in value)
 
 
 def _references_from_output(output: str) -> list[str]:

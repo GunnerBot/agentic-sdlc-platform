@@ -181,6 +181,8 @@ ASDLC_HERMES_API_KEY=<hermes_api_key>
 # Graphify
 ASDLC_GRAPHIFY_MODE=cli
 ASDLC_GRAPHIFY_COMMAND=graphify
+ASDLC_GRAPHIFY_OUTPUT_ROOT=/graphify-data
+ASDLC_REPO_CACHE_ROOT=/repo-cache
 ```
 
 See `.env.example` and [Docker Compose Organization Setup](docs/DOCKER_ORG_SETUP.md) for the full
