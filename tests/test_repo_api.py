@@ -174,6 +174,80 @@ async def test_index_repo_endpoint_creates_graphify_index_job() -> None:
     ]
 
 
+async def test_index_selected_repos_endpoint_indexes_only_requested_repos() -> None:
+    repository = await build_repository()
+    graph_store = FakeGraphStore()
+    client = TestClient(create_app(Settings(), repository=repository, graph_store=graph_store))
+    for repo_name in [
+        "atlas-tech-inc/keychain-os-erp",
+        "atlas-tech-inc/webapp-monorepo",
+        "atlas-tech-inc/qa-automation",
+    ]:
+        local_name = repo_name.split("/", maxsplit=1)[1]
+        client.post(
+            "/repos",
+            json={
+                "name": repo_name,
+                "provider": "github",
+                "clone_url": f"https://github.com/{repo_name}.git",
+                "default_branch": "main",
+                "metadata": {"local_path": f"/repos/{local_name}"},
+            },
+        )
+
+    response = client.post(
+        "/repos/index",
+        json={
+            "repos": [
+                "atlas-tech-inc/keychain-os-erp",
+                "atlas-tech-inc/keychain-os-erp",
+                "atlas-tech-inc/webapp-monorepo",
+            ]
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["total"] == 2
+    assert response.json()["indexed"] == 2
+    assert response.json()["failed"] == 0
+    assert [job["repo_name"] for job in response.json()["jobs"]] == [
+        "atlas-tech-inc/keychain-os-erp",
+        "atlas-tech-inc/webapp-monorepo",
+    ]
+    assert [request.repo for request in graph_store.index_requests] == [
+        "atlas-tech-inc/keychain-os-erp",
+        "atlas-tech-inc/webapp-monorepo",
+    ]
+
+
+async def test_index_selected_repos_endpoint_rejects_unknown_repos() -> None:
+    repository = await build_repository()
+    graph_store = FakeGraphStore()
+    client = TestClient(create_app(Settings(), repository=repository, graph_store=graph_store))
+    client.post(
+        "/repos",
+        json={
+            "name": "atlas-tech-inc/keychain-os-erp",
+            "provider": "github",
+            "default_branch": "main",
+        },
+    )
+
+    response = client.post(
+        "/repos/index",
+        json={
+            "repos": [
+                "atlas-tech-inc/keychain-os-erp",
+                "atlas-tech-inc/missing-repo",
+            ]
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == {"missing_repos": ["atlas-tech-inc/missing-repo"]}
+    assert graph_store.index_requests == []
+
+
 async def test_ask_repo_endpoint_queries_graph_store_with_repo_metadata() -> None:
     repository = await build_repository()
     graph_store = FakeGraphStore()

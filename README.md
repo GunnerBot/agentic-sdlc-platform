@@ -194,7 +194,9 @@ configuration surface.
 | GitHub App install URL | `GET /repos/github-app/install-url?workspace_id=<id>` |
 | GitHub App repo sync | `POST /repos/github-app/sync` |
 | Register repo | `POST /repos` |
+| Index selected repos | `POST /repos/index` |
 | Index repo | `POST /repos/{repo_name}/index` |
+| Index all repos | `POST /repos/index-all` |
 | Ask repo question | `POST /repos/{repo_name}/ask` |
 | List tasks | `GET /tasks` |
 | Task details | `GET /tasks/{task_id}` |

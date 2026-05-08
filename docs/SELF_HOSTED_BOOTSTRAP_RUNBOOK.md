@@ -108,7 +108,8 @@ docker compose --env-file .env.local exec agentic-sdlc-platform \
 ## 5. Verify Runtime Health
 
 ```bash
-curl http://localhost:8080/erp/health
+curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
 curl http://localhost:8080/ops/status
 ```
 
@@ -163,8 +164,13 @@ curl -X POST http://localhost:8080/repos/erp-service/index
 or:
 
 ```bash
-curl -X POST http://localhost:8080/repos/index-all
+curl -X POST http://localhost:8080/repos/index \
+  -H "Content-Type: application/json" \
+  -d '{"repos":["atlas-tech-inc/keychain-os-erp","atlas-tech-inc/webapp-monorepo"]}'
 ```
+
+Use `POST /repos/index-all` only for deliberate bulk indexing after every imported repo has an
+available checkout/indexing source.
 
 Generated Graphify data belongs in Docker-managed volumes or ignored local paths.
 

@@ -1,4 +1,8 @@
+from typing import Annotated
+
 from pydantic import BaseModel, Field
+
+RepoName = Annotated[str, Field(min_length=1, pattern=r".*\S.*")]
 
 
 class UpsertRepoRequest(BaseModel):
@@ -28,6 +32,10 @@ class RepoIndexJobResponse(BaseModel):
     status: str
     error: str | None = None
     metadata: dict[str, object]
+
+
+class RepoIndexSelectedRequest(BaseModel):
+    repos: list[RepoName] = Field(min_length=1)
 
 
 class RepoIndexAllResponse(BaseModel):

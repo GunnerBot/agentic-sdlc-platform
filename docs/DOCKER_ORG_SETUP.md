@@ -160,7 +160,8 @@ docker compose --env-file .env.local exec agentic-sdlc-platform uv run alembic u
 Health checks:
 
 ```bash
-curl http://localhost:8080/erp/health
+curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
 curl http://localhost:8080/ops/status
 ```
 
@@ -190,6 +191,17 @@ The platform stores the workspace installation and imports the granted repositor
 - no direct default-branch push.
 - plan approval required before queued implementation work.
 - no auto-merge by default.
+
+Index only the repositories you want to onboard for context:
+
+```bash
+curl -X POST http://localhost:8080/repos/index \
+  -H "Content-Type: application/json" \
+  -d '{"repos":["atlas-tech-inc/keychain-os-erp","atlas-tech-inc/webapp-monorepo"]}'
+```
+
+`POST /repos/index-all` remains available for deliberate bulk indexing, but it is not the default
+onboarding path for large installations.
 
 ## Repo Context And Graphify
 

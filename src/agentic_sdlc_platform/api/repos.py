@@ -9,6 +9,7 @@ from agentic_sdlc_platform.models.repos import (
     GitHubAppRepositoryResponse,
     RepoIndexAllResponse,
     RepoIndexJobResponse,
+    RepoIndexSelectedRequest,
     RepoQuestionRequest,
     RepoQuestionResponse,
     RepoResponse,
@@ -60,12 +61,46 @@ async def list_repos(
 async def index_all_repos(request: Request) -> RepoIndexAllResponse:
     repos = await request.app.state.repository.list_repos(status="active")
     jobs = [await _index_repo_record(repo, request) for repo in repos]
-    return RepoIndexAllResponse(
-        total=len(jobs),
-        indexed=len([job for job in jobs if job.status == "indexed"]),
-        failed=len([job for job in jobs if job.status == "failed"]),
-        jobs=[_index_job_response(job) for job in jobs],
-    )
+    return _repo_index_response(jobs)
+
+
+@router.post(
+    "/index",
+    response_model=RepoIndexAllResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Malformed request body"},
+        status.HTTP_404_NOT_FOUND: {"description": "Requested repositories not found"},
+    },
+)
+async def index_selected_repos(
+    body: RepoIndexSelectedRequest,
+    request: Request,
+) -> RepoIndexAllResponse:
+    repo_names = _normalize_repo_names(body.repos)
+    if not repo_names:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one non-empty repository name is required",
+        )
+
+    repos = []
+    missing_repos = []
+    for repo_name in repo_names:
+        repo = await request.app.state.repository.get_repo_by_name(repo_name)
+        if repo is None:
+            missing_repos.append(repo_name)
+        else:
+            repos.append(repo)
+
+    if missing_repos:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"missing_repos": missing_repos},
+        )
+
+    jobs = [await _index_repo_record(repo, request) for repo in repos]
+    return _repo_index_response(jobs)
 
 
 @router.get(
@@ -202,15 +237,12 @@ async def reject_get_index_all() -> None:
     )
 
 
-@router.get("/{repo_name}", response_model=RepoResponse)
-async def get_repo(repo_name: str, request: Request) -> RepoResponse:
-    repo = await request.app.state.repository.get_repo_by_name(repo_name)
-    if repo is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Repository not found",
-        )
-    return _repo_response(repo)
+@router.get("/index", include_in_schema=False)
+async def reject_get_index() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        headers={"Allow": "POST"},
+    )
 
 
 @router.post(
@@ -279,6 +311,21 @@ async def list_repo_index_jobs(repo_name: str, request: Request) -> list[RepoInd
     return [_index_job_response(job) for job in jobs]
 
 
+@router.get(
+    "/{repo_name}",
+    response_model=RepoResponse,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Repository not found"}},
+)
+async def get_repo(repo_name: str, request: Request) -> RepoResponse:
+    repo = await request.app.state.repository.get_repo_by_name(repo_name)
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Repository not found",
+        )
+    return _repo_response(repo)
+
+
 def _repo_response(repo: RepositoryRecord) -> RepoResponse:
     return RepoResponse(
         id=repo.id,
@@ -289,6 +336,27 @@ def _repo_response(repo: RepositoryRecord) -> RepoResponse:
         status=repo.status,
         metadata=repo.metadata_json,
     )
+
+
+def _repo_index_response(jobs: list[RepoIndexJob]) -> RepoIndexAllResponse:
+    return RepoIndexAllResponse(
+        total=len(jobs),
+        indexed=len([job for job in jobs if job.status == "indexed"]),
+        failed=len([job for job in jobs if job.status == "failed"]),
+        jobs=[_index_job_response(job) for job in jobs],
+    )
+
+
+def _normalize_repo_names(repo_names: list[str]) -> list[str]:
+    normalized = []
+    seen = set()
+    for repo_name in repo_names:
+        repo_name = repo_name.strip()
+        if not repo_name or repo_name in seen:
+            continue
+        seen.add(repo_name)
+        normalized.append(repo_name)
+    return normalized
 
 
 async def _github_app_installation(
