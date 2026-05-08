@@ -1,4 +1,4 @@
-.PHONY: sync lint test contract agent-gates quality run migrate github-app-git-credential-configure compose-real-up compose-real-hermes-up compose-real-down compose-real-logs
+.PHONY: sync lint test contract agent-gates quality run migrate github-app-git-credential-configure compose-dev-up compose-dev-down compose-dev-logs compose-real-up compose-real-hermes-up compose-real-down compose-real-logs
 
 sync:
 	uv sync
@@ -28,6 +28,15 @@ github-app-git-credential-configure:
 	git config --global --add credential.https://github.com.helper "!uv --directory $(CURDIR) run agentic-sdlc-github-app-credential"
 	git config --global --add credential.https://github.com.helper "!/opt/homebrew/bin/gh auth git-credential"
 	git config --global credential.https://github.com.useHttpPath true
+
+compose-dev-up:
+	docker compose --env-file .env.local --profile dev up -d --build
+
+compose-dev-down:
+	docker compose --env-file .env.local --profile dev down
+
+compose-dev-logs:
+	docker compose --env-file .env.local --profile dev logs -f agentic-sdlc-platform dev-agent-services
 
 compose-real-up:
 	docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.real.yml up -d --build

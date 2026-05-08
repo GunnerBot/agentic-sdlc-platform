@@ -83,8 +83,11 @@ ASDLC_HERMES_API_KEY=<hermes_gateway_key>
 For the fastest local smoke setup with compatible dev runtime services:
 
 ```bash
-docker compose --env-file .env.local up -d --build
+make compose-dev-up
 ```
+
+That enables the Compose `dev` profile and starts the local `dev-agent-services` simulator. Real
+organization testing should use one of the real compose targets below.
 
 For real host-local Multica plus platform container:
 

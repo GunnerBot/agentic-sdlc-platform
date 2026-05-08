@@ -133,11 +133,14 @@ ASDLC_HERMES_TIMEOUT_SECONDS=120
 
 ## Start Docker Compose
 
-For the fastest local company trial with compatible dev runtime services:
+For the fastest local smoke setup with compatible dev runtime services:
 
 ```bash
-docker compose --env-file .env.local up -d --build
+make compose-dev-up
 ```
+
+That starts the `dev-agent-services` simulator through the Compose `dev` profile. It is useful for
+cheap platform wiring tests, but it is not real Multica or Hermes.
 
 For real host-local Multica services:
 

@@ -23,19 +23,18 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      dev-agent-services:
-        condition: service_started
     environment:
       ASDLC_ENVIRONMENT: local
       ASDLC_HOST: 0.0.0.0
       ASDLC_PORT: 8080
       ASDLC_DATABASE_URL: postgresql+asyncpg://agentic_sdlc:agentic_sdlc@postgres:5432/agentic_sdlc
-      ASDLC_HERMES_HTTP_ENABLED: "true"
-      ASDLC_HERMES_BASE_URL: http://dev-agent-services:8090
-      ASDLC_HERMES_API_KEY: local-dev-hermes-key
-      ASDLC_MULTICA_HTTP_ENABLED: "true"
-      ASDLC_MULTICA_BASE_URL: http://dev-agent-services:8090
-      ASDLC_MULTICA_API_KEY: local-dev-multica-key
+      ASDLC_HERMES_HTTP_ENABLED: ${ASDLC_HERMES_HTTP_ENABLED:-true}
+      ASDLC_HERMES_BASE_URL: ${ASDLC_HERMES_BASE_URL:-http://dev-agent-services:8090}
+      ASDLC_HERMES_API_KEY: ${ASDLC_HERMES_API_KEY:-local-dev-hermes-key}
+      ASDLC_MULTICA_HTTP_ENABLED: ${ASDLC_MULTICA_HTTP_ENABLED:-true}
+      ASDLC_MULTICA_BASE_URL: ${ASDLC_MULTICA_BASE_URL:-http://dev-agent-services:8090}
+      ASDLC_MULTICA_API_KEY: ${ASDLC_MULTICA_API_KEY:-local-dev-multica-key}
+      ASDLC_MULTICA_WORKSPACE_ID: ${ASDLC_MULTICA_WORKSPACE_ID:-local-dev-workspace}
     ports:
       - "8080:8080"
     volumes:
@@ -43,6 +42,8 @@ services:
       - graphify-data:/graphify-data
 
   dev-agent-services:
+    profiles:
+      - dev
     build: .
     command: >
       uv run --no-dev uvicorn agentic_sdlc_platform.dev_services:app
