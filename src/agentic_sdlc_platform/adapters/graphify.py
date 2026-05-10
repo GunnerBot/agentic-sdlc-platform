@@ -381,9 +381,7 @@ async def _run_git_command(
 
 
 def _git_auth_env(token: str) -> dict[str, str]:
-    basic_token = base64.b64encode(f"x-access-token:{token}".encode()).decode(
-        "ascii"
-    )
+    basic_token = base64.b64encode(f"x-access-token:{token}".encode()).decode("ascii")
     return {
         "GIT_CONFIG_COUNT": "1",
         "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",

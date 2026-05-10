@@ -130,9 +130,7 @@ def bounded_graph_context(
         original_chars = len(answer)
         safe_limit = max(0, max_chars)
         context["answer"] = (
-            answer
-            if original_chars <= safe_limit
-            else f"{answer[:safe_limit]}\n...[truncated]"
+            answer if original_chars <= safe_limit else f"{answer[:safe_limit]}\n...[truncated]"
         )
         context["answer_chars"] = min(original_chars, safe_limit)
         context["original_answer_chars"] = original_chars

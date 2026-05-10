@@ -61,9 +61,7 @@ class MulticaWorkspaceRepoRegistry(RuntimeRepoRegistryPort):
             for item in _json_list(updated.get("repos"), "updated Multica workspace repos")
             if isinstance(item.get("url"), str)
         }
-        required_canonical_urls = {
-            _canonical_repo_url(item["url"]) for item in required_repos
-        }
+        required_canonical_urls = {_canonical_repo_url(item["url"]) for item in required_repos}
         synced_canonical_urls = {_canonical_repo_url(url) for url in synced_urls}
         missing_urls = sorted(required_canonical_urls - synced_canonical_urls)
         if missing_urls:

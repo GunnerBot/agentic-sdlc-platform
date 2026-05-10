@@ -2,11 +2,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-SCRIPT_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "scripts"
-    / "enforce_agent_quality_gates.py"
-)
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "enforce_agent_quality_gates.py"
 SPEC = importlib.util.spec_from_file_location(
     "enforce_agent_quality_gates",
     SCRIPT_PATH,

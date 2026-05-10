@@ -288,8 +288,7 @@ def test_openapi_contract_includes_adversarial_review_node_operation() -> None:
     raw_schema = contract_app.openapi()
 
     assert (
-        "/tasks/{task_id}/dag/{dag_id}/nodes/{node_key}/adversarial-reviews"
-        in raw_schema["paths"]
+        "/tasks/{task_id}/dag/{dag_id}/nodes/{node_key}/adversarial-reviews" in raw_schema["paths"]
     )
 
 
@@ -306,9 +305,7 @@ def test_openapi_contract_exposes_dag_node_user_status_contract() -> None:
     sync_response_schema = raw_schema["paths"][
         "/tasks/{task_id}/dag/{dag_id}/nodes/{node_key}/sync-orchestrator"
     ]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
-    assert sync_response_schema == {
-        "$ref": "#/components/schemas/TaskDagNodeResponse"
-    }
+    assert sync_response_schema == {"$ref": "#/components/schemas/TaskDagNodeResponse"}
 
 
 @schema.parametrize()

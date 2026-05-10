@@ -40,8 +40,7 @@ def normalize_adversarial_review(
 def adversarial_review_required(metadata: dict[str, object]) -> bool:
     review = _dict(metadata.get("adversarial_review"))
     return bool(
-        metadata.get("adversarial_review_required") is True
-        or review.get("required") is True
+        metadata.get("adversarial_review_required") is True or review.get("required") is True
     )
 
 
@@ -53,9 +52,7 @@ def adversarial_review_approved(metadata: dict[str, object]) -> bool:
     blocking_issue_count = _int(review.get("blocking_issue_count"))
     if blocking_issue_count is None:
         blocking_issue_count = len(_list(review.get("blocking_issues")))
-    approved_marker = (
-        review.get("approved") is True or status in APPROVED_REVIEW_STATUSES
-    )
+    approved_marker = review.get("approved") is True or status in APPROVED_REVIEW_STATUSES
     return approved_marker and blocking_issue_count == 0
 
 
@@ -64,9 +61,7 @@ def _blocking_issues(
     review: dict[str, object],
 ) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
-    for value in _list(payload.get("blocking_issues")) + _list(
-        review.get("blocking_issues")
-    ):
+    for value in _list(payload.get("blocking_issues")) + _list(review.get("blocking_issues")):
         issue = _issue_summary(value)
         if issue:
             issues.append(issue)

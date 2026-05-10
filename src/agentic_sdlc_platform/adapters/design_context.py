@@ -163,10 +163,7 @@ class OpenAIImageDesignContextAdapter:
         title: str | None,
         url: str,
     ) -> str:
-        image_url = (
-            f"data:{content_type};base64,"
-            f"{base64.b64encode(image_bytes).decode('ascii')}"
-        )
+        image_url = f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
         prompt = "\n".join(
             [
                 "Summarize this Linear design/image attachment for an engineering agent.",

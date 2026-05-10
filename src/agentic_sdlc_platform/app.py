@@ -198,8 +198,7 @@ def _rate_limit_retry_after(request: Request) -> int | None:
 
 def _path_is_exempt(path: str, prefixes_csv: str) -> bool:
     return any(
-        path == prefix or path.startswith(f"{prefix}/")
-        for prefix in _csv_values(prefixes_csv)
+        path == prefix or path.startswith(f"{prefix}/") for prefix in _csv_values(prefixes_csv)
     )
 
 
@@ -208,10 +207,7 @@ def _csv_values(value: str) -> set[str]:
 
 
 async def _start_conversation_sync_loop(app: FastAPI) -> None:
-    if (
-        not app.state.settings.conversation_sync_enabled
-        or app.state.task_orchestrator is None
-    ):
+    if not app.state.settings.conversation_sync_enabled or app.state.task_orchestrator is None:
         return
     stop_event = asyncio.Event()
     app.state.conversation_sync_stop_event = stop_event

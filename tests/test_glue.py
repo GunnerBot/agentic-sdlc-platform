@@ -66,6 +66,4 @@ async def test_deploy_hook_follows_trunk_based_branches() -> None:
     hook = DeployHook()
 
     assert await hook.trigger(DeployRequest(repo="repo", branch="main", sha="abc"))
-    assert not await hook.trigger(
-        DeployRequest(repo="repo", branch="agent-staging", sha="abc")
-    )
+    assert not await hook.trigger(DeployRequest(repo="repo", branch="agent-staging", sha="abc"))

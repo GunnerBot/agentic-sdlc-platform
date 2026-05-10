@@ -207,9 +207,7 @@ def linear_design_references(
             normalized = url.rstrip(".,")
             if normalized not in seen:
                 seen.add(normalized)
-                references.append(
-                    DesignReference(kind="figma", title="Figma link", url=normalized)
-                )
+                references.append(DesignReference(kind="figma", title="Figma link", url=normalized))
     for attachment in _linear_attachments(payload):
         title = _attachment_title(attachment)
         url = _str_value(attachment.get("url") or attachment.get("sourceUrl"))
@@ -467,11 +465,7 @@ def _is_figma_url(url: str) -> bool:
 def _is_supported_doc_url(url: str) -> bool:
     parsed = urlparse(url)
     host = parsed.netloc.lower()
-    return (
-        host.endswith("notion.so")
-        or host.endswith("notion.site")
-        or host == "docs.google.com"
-    )
+    return host.endswith("notion.so") or host.endswith("notion.site") or host == "docs.google.com"
 
 
 def _node_key(repo: str) -> str:

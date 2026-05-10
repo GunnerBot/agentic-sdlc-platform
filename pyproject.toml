@@ -23,6 +23,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "aiosqlite>=0.22.1",
+    "bandit>=1.9.4",
+    "mypy>=2.0.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.25.0",
     "ruff>=0.9.0",
@@ -47,3 +49,26 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/agentic_sdlc_platform"]
+pretty = true
+show_error_codes = true
+warn_unused_ignores = true
+disable_error_code = [
+    "arg-type",
+    "assignment",
+    "attr-defined",
+    "call-arg",
+    "index",
+    "list-item",
+    "operator",
+    "return-value",
+    "union-attr",
+    "var-annotated",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = ["B104", "B105", "B108", "B404", "B603", "B608"]

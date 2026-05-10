@@ -10,10 +10,12 @@ from agentic_sdlc_platform.core.config import Settings
 
 
 def test_notion_page_id_extracts_slugged_page_id() -> None:
-    assert notion_page_id(
-        "https://acme.notion.site/Dynamic-form-titles-"
-        "1234567890abcdef1234567890abcdef?pvs=4"
-    ) == "1234567890abcdef1234567890abcdef"
+    assert (
+        notion_page_id(
+            "https://acme.notion.site/Dynamic-form-titles-1234567890abcdef1234567890abcdef?pvs=4"
+        )
+        == "1234567890abcdef1234567890abcdef"
+    )
 
 
 def test_google_doc_id_extracts_document_id() -> None:
@@ -32,28 +34,18 @@ async def test_notion_adapter_fetches_page_title_and_block_text() -> None:
                     "results": [
                         {
                             "type": "heading_2",
-                            "heading_2": {
-                                "rich_text": [{"plain_text": "Repositories"}]
-                            },
+                            "heading_2": {"rich_text": [{"plain_text": "Repositories"}]},
                         },
                         {
                             "type": "bulleted_list_item",
-                            "bulleted_list_item": {
-                                "rich_text": [{"plain_text": "erp-service"}]
-                            },
+                            "bulleted_list_item": {"rich_text": [{"plain_text": "erp-service"}]},
                         },
                     ]
                 },
             )
         return httpx.Response(
             status_code=200,
-            json={
-                "properties": {
-                    "title": {
-                        "title": [{"plain_text": "Dynamic form titles"}]
-                    }
-                }
-            },
+            json={"properties": {"title": {"title": [{"plain_text": "Dynamic form titles"}]}}},
         )
 
     adapter = NotionDocumentContextAdapter(

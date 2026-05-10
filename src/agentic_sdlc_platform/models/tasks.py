@@ -110,9 +110,7 @@ class CreateDagNodeExecutionRequest(BaseModel):
 
 
 class UpdateDagNodeExecutionRequest(BaseModel):
-    status: str = Field(
-        pattern="^(queued|running|needs_input|pr_open|completed|failed|cancelled)$"
-    )
+    status: str = Field(pattern="^(queued|running|needs_input|pr_open|completed|failed|cancelled)$")
     external_execution_id: str | None = None
     branch_name: str | None = None
     pr_url: str | None = None

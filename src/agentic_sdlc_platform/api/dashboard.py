@@ -189,8 +189,7 @@ def _table(headers: list[str], rows: list[list[str]], *, empty: str = "") -> str
         return f"<p>{_text(empty)}</p>"
     header_html = "".join(f"<th>{_text(header)}</th>" for header in headers)
     rows_html = "".join(
-        "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>"
-        for row in rows
+        "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows
     )
     return f"<table><thead><tr>{header_html}</tr></thead><tbody>{rows_html}</tbody></table>"
 

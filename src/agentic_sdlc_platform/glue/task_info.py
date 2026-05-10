@@ -165,9 +165,7 @@ def running_reply(task) -> str:
                     if execution.status in {"queued", "running", "needs_input"}
                 ]
                 execution_summary = (
-                    f"{executions[-1].id} ({executions[-1].status})"
-                    if executions
-                    else "none"
+                    f"{executions[-1].id} ({executions[-1].status})" if executions else "none"
                 )
                 lines.append(
                     "- "

@@ -63,8 +63,7 @@ async def test_linear_adapter_posts_agent_queued_comment() -> None:
     assert payload["variables"] == {
         "issueId": "issue-id-1",
         "body": (
-            "Agent task queued for ENG-1284. "
-            "Internal task: task-1. Multica task: multica-task-1."
+            "Agent task queued for ENG-1284. Internal task: task-1. Multica task: multica-task-1."
         ),
     }
 

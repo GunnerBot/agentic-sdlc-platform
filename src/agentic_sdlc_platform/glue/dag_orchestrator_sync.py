@@ -84,9 +84,7 @@ class DagNodeOrchestratorSyncService:
         results: list[DagNodeSyncResult] = []
         for node in nodes:
             try:
-                results.append(
-                    await self.sync_node(dag_id=node.dag_id, node_key=node.node_key)
-                )
+                results.append(await self.sync_node(dag_id=node.dag_id, node_key=node.node_key))
             except Exception as exc:  # pragma: no cover - defensive background isolation
                 await self._repository.record_audit_event(
                     action="task.dag_node_sync_failed",
@@ -215,9 +213,7 @@ class DagNodeOrchestratorSyncService:
                             verification=verification,
                             quality_gate=quality_gate,
                         ),
-                        "previous_completion_verification": metadata[
-                            "completion_verification"
-                        ],
+                        "previous_completion_verification": metadata["completion_verification"],
                         "previous_quality_gate": metadata["quality_gate"],
                     },
                 )
@@ -544,11 +540,7 @@ def _synced_node_status(
         return "blocked_external"
     if (
         verification is not None
-        and (
-            not verification.satisfied
-            or quality_gate is not None
-            and not quality_gate.satisfied
-        )
+        and (not verification.satisfied or quality_gate is not None and not quality_gate.satisfied)
         and not verification.followups
     ):
         return "needs_changes"
@@ -581,9 +573,8 @@ def _user_state_metadata(
         return {
             "user_status": "needs_changes",
             "status_reason": "quality_gate_blocked",
-            "status_detail": "; ".join(_dedupe(missing)) or (
-                "The node completed, but required completion evidence is missing."
-            ),
+            "status_detail": "; ".join(_dedupe(missing))
+            or ("The node completed, but required completion evidence is missing."),
             "next_action": (
                 "Continue or retry the same DAG node until the PR, expected branch, "
                 "and required test evidence are present."

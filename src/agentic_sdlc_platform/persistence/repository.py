@@ -509,9 +509,7 @@ class PersistenceRepository:
     async def list_ready_dag_nodes_for_dag(self, dag_id: str) -> list[TaskDagNode]:
         async with self._session_factory() as session:
             result = await session.execute(
-                select(TaskDag)
-                .where(TaskDag.id == dag_id)
-                .options(selectinload(TaskDag.nodes))
+                select(TaskDag).where(TaskDag.id == dag_id).options(selectinload(TaskDag.nodes))
             )
             dag = result.scalars().first()
             if dag is None:
@@ -936,10 +934,12 @@ class PersistenceRepository:
     ) -> AgentSession | None:
         async with self._session_factory() as session:
             result = await session.execute(
-                select(AgentSession).where(
+                select(AgentSession)
+                .where(
                     AgentSession.provider == provider,
                     AgentSession.external_thread_id == external_thread_id,
-                ).options(selectinload(AgentSession.events))
+                )
+                .options(selectinload(AgentSession.events))
             )
             return result.scalars().first()
 
@@ -1030,9 +1030,7 @@ class PersistenceRepository:
 
     async def _get_task_dag(self, session: AsyncSession, dag_id: str) -> TaskDag:
         result = await session.execute(
-            select(TaskDag)
-            .where(TaskDag.id == dag_id)
-            .options(selectinload(TaskDag.nodes))
+            select(TaskDag).where(TaskDag.id == dag_id).options(selectinload(TaskDag.nodes))
         )
         return result.scalar_one()
 
@@ -1067,11 +1065,7 @@ class PersistenceRepository:
 
 
 def _completed_dependency_keys(nodes: list[TaskDagNode]) -> set[str]:
-    return {
-        node.node_key
-        for node in nodes
-        if node.status in DEPENDENCY_COMPLETE_STATUSES
-    }
+    return {node.node_key for node in nodes if node.status in DEPENDENCY_COMPLETE_STATUSES}
 
 
 def _execution_snapshot(execution: DagNodeExecution) -> dict[str, object]:

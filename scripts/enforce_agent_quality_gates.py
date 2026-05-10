@@ -33,9 +33,7 @@ def evaluate_changed_files(paths: list[str]) -> GateResult:
     missing: list[str] = []
 
     if production_files and not test_files:
-        missing.append(
-            "Production code changed without same-PR tests. Add/update relevant tests."
-        )
+        missing.append("Production code changed without same-PR tests. Add/update relevant tests.")
     if api_contract_files and not contract_test_files:
         missing.append(
             "API/schema/webhook contract changed without same-PR Schemathesis contract tests."
@@ -102,8 +100,7 @@ def _is_contract_test_file(path: str) -> bool:
 
 def _is_api_contract_file(path: str) -> bool:
     return path in API_CONTRACT_FILES or any(
-        path.startswith(prefix) and Path(path).suffix == ".py"
-        for prefix in API_CONTRACT_PREFIXES
+        path.startswith(prefix) and Path(path).suffix == ".py" for prefix in API_CONTRACT_PREFIXES
     )
 
 

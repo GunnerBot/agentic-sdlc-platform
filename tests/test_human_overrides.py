@@ -64,8 +64,7 @@ def test_plan_approval_accepts_real_and_smoke_external_ids() -> None:
 
 def test_plan_revision_accepts_multiline_feedback() -> None:
     command = parse_plan_revision(
-        "/revise-plan ENG-1284 split API and worker changes\n"
-        "Keep contract tests with the API node."
+        "/revise-plan ENG-1284 split API and worker changes\nKeep contract tests with the API node."
     )
 
     assert command is not None

@@ -137,9 +137,7 @@ async def get_task_llm_observability(
         task_id=task.id,
         kind=LLM_COST_LEDGER_ARTIFACT_KIND,
     )
-    records: list[dict[str, object]] = usage_records_from_ledger_artifacts(
-        ledger_artifacts
-    )
+    records: list[dict[str, object]] = usage_records_from_ledger_artifacts(ledger_artifacts)
     if records:
         summary = summarize_usage_records(records)
         response_records = enrich_usage_records(records)
@@ -763,8 +761,7 @@ async def _hydrated_spec_markdown(
     for comment in issue_context.comments or []:
         if comment.body:
             sections.append(
-                f"# Linear comment: {comment.id or comment.actor or 'comment'}\n"
-                f"{comment.body}"
+                f"# Linear comment: {comment.id or comment.actor or 'comment'}\n{comment.body}"
             )
     hydrated = "\n\n".join(section for section in sections if section)
     await request.app.state.repository.create_task_artifact(
@@ -824,9 +821,7 @@ def _node_response(node, status_override: str | None = None) -> TaskDagNodeRespo
         completion_verification if isinstance(completion_verification, dict) else {}
     )
     adversarial_review = metadata.get("adversarial_review")
-    adversarial_review = (
-        adversarial_review if isinstance(adversarial_review, dict) else {}
-    )
+    adversarial_review = adversarial_review if isinstance(adversarial_review, dict) else {}
     return TaskDagNodeResponse(
         node_key=node.node_key,
         title=node.title,
@@ -862,8 +857,7 @@ def _node_response(node, status_override: str | None = None) -> TaskDagNodeRespo
             _int_or_none(adversarial_review.get("blocking_issue_count")) or 0
         ),
         executions=[
-            _execution_response(execution)
-            for execution in node.__dict__.get("executions", [])
+            _execution_response(execution) for execution in node.__dict__.get("executions", [])
         ],
     )
 
@@ -918,9 +912,7 @@ def _dag_summary_response(dag: TaskDag) -> TaskDagSummaryResponse:
     skipped_nodes = [node for node in dag.nodes if node.status == "skipped"]
     failed_nodes = [node for node in dag.nodes if node.status == "failed"]
     completed_node_keys = {node.node_key for node in completed_nodes}
-    completed_or_skipped_node_keys = completed_node_keys | {
-        node.node_key for node in skipped_nodes
-    }
+    completed_or_skipped_node_keys = completed_node_keys | {node.node_key for node in skipped_nodes}
     ready_nodes = [
         node
         for node in dag.nodes

@@ -30,8 +30,7 @@ async def build_dag_node_execution_metadata(
     completed_dependencies = [
         dependency.node_key
         for dependency in dag.nodes
-        if dependency.node_key in node.depends_on
-        and dependency.status in {"completed", "skipped"}
+        if dependency.node_key in node.depends_on and dependency.status in {"completed", "skipped"}
     ]
     sessions = list(task.__dict__.get("sessions", []))
     active_session = next(
@@ -45,11 +44,7 @@ async def build_dag_node_execution_metadata(
     )
     acceptance_criteria_value = node_metadata.get("acceptance_criteria")
     acceptance_criteria = (
-        [
-            item
-            for item in acceptance_criteria_value
-            if isinstance(item, str) and item.strip()
-        ]
+        [item for item in acceptance_criteria_value if isinstance(item, str) and item.strip()]
         if isinstance(acceptance_criteria_value, list)
         else []
     )
@@ -204,10 +199,9 @@ def _default_execution_mode_for_node(node) -> str:
 
 
 def _branch_segment(value: str) -> str:
-    normalized = "".join(
-        char.lower() if char.isalnum() else "-"
-        for char in value.strip()
-    ).strip("-")
+    normalized = "".join(char.lower() if char.isalnum() else "-" for char in value.strip()).strip(
+        "-"
+    )
     while "--" in normalized:
         normalized = normalized.replace("--", "-")
     return normalized or "task"

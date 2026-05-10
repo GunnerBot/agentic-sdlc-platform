@@ -54,11 +54,7 @@ mutation AgentIssueCreate($teamId: String!, $title: String!, $description: Strin
         except httpx.HTTPError as exc:
             raise IssueTrackerError("linear create_issue failed") from exc
 
-        issue = (
-            response_payload.get("data", {})
-            .get("issueCreate", {})
-            .get("issue", {})
-        )
+        issue = response_payload.get("data", {}).get("issueCreate", {}).get("issue", {})
         issue_id = issue.get("id")
         external_id = issue.get("identifier")
         url = issue.get("url")
@@ -74,8 +70,7 @@ mutation AgentIssueCreate($teamId: String!, $title: String!, $description: Strin
         self._ensure_configured()
 
         body = (
-            f"Agent task queued for {update.external_id}. "
-            f"Internal task: {update.internal_task_id}."
+            f"Agent task queued for {update.external_id}. Internal task: {update.internal_task_id}."
         )
         if update.orchestrator_task_id:
             body += f" Multica task: {update.orchestrator_task_id}."

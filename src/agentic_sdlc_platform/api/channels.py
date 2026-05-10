@@ -92,8 +92,7 @@ async def accept_channel_message(
             command=result.command,
             external_id=node_override.external_id,
             answer=(
-                f"Node {result.node_key} on {node_override.external_id} "
-                f"is now {result.status}."
+                f"Node {result.node_key} on {node_override.external_id} is now {result.status}."
             ),
         )
 

@@ -301,14 +301,10 @@ class MulticaTaskOrchestrator:
         runtime_provider: str,
     ) -> dict[str, object]:
         provider_runtimes = [
-            runtime
-            for runtime in runtimes
-            if _str(runtime.get("provider")) == runtime_provider
+            runtime for runtime in runtimes if _str(runtime.get("provider")) == runtime_provider
         ]
         online = [
-            runtime
-            for runtime in provider_runtimes
-            if _str(runtime.get("status")) == "online"
+            runtime for runtime in provider_runtimes if _str(runtime.get("status")) == "online"
         ]
         selected = (online or provider_runtimes or [None])[0]
         if selected is None:
@@ -435,11 +431,7 @@ class MulticaTaskOrchestrator:
         )
         acceptance_criteria_value = metadata.get("acceptance_criteria")
         acceptance_criteria = (
-            [
-                item
-                for item in acceptance_criteria_value
-                if isinstance(item, str) and item.strip()
-            ]
+            [item for item in acceptance_criteria_value if isinstance(item, str) and item.strip()]
             if isinstance(acceptance_criteria_value, list)
             else []
         )
@@ -607,9 +599,7 @@ class MulticaTaskOrchestrator:
                         return response
                     if attempt == attempts - 1:
                         response.raise_for_status()
-                    await self._sleep(
-                        self._settings.multica_retry_backoff_seconds * (2**attempt)
-                    )
+                    await self._sleep(self._settings.multica_retry_backoff_seconds * (2**attempt))
         except httpx.HTTPError as exc:
             raise TaskOrchestratorError(failure_message) from exc
         raise TaskOrchestratorError(failure_message)
@@ -648,17 +638,13 @@ def _task_result_usage_metadata(
     settings: Settings,
 ) -> dict[str, object] | None:
     result = _dict_value(task.get("result"))
-    usage = _dict_value(result.get("llm_observability")) or _dict_value(
-        result.get("usage")
-    )
+    usage = _dict_value(result.get("llm_observability")) or _dict_value(result.get("usage"))
     if not usage:
         usage = _dict_value(task.get("llm_observability")) or _dict_value(task.get("usage"))
     if not usage:
         return None
 
-    input_tokens = _int_value(usage.get("input_tokens")) or _int_value(
-        usage.get("prompt_tokens")
-    )
+    input_tokens = _int_value(usage.get("input_tokens")) or _int_value(usage.get("prompt_tokens"))
     output_tokens = _int_value(usage.get("output_tokens")) or _int_value(
         usage.get("completion_tokens")
     )

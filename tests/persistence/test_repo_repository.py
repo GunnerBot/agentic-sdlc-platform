@@ -90,8 +90,6 @@ async def test_upsert_and_list_github_installations_by_workspace() -> None:
     installations = await repository.list_github_installations(workspace_id="workspace-1")
 
     assert updated.id == created.id
-    assert [installation.installation_id for installation in installations] == [
-        "installation-1"
-    ]
+    assert [installation.installation_id for installation in installations] == ["installation-1"]
     assert installations[0].permissions_json == {"contents": "write"}
     assert installations[0].metadata_json == {"repo_count": 3}

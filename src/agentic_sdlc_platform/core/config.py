@@ -22,8 +22,7 @@ class Settings(BaseSettings):
     api_auth_keys: str = Field(default="", repr=False)
     allow_unsigned_webhooks: bool = False
     api_auth_exempt_path_prefixes: str = (
-        "/healthz,/readyz,/openapi.json,/docs,/redoc,/webhooks,"
-        "/channels/slack,/channels/telegram"
+        "/healthz,/readyz,/openapi.json,/docs,/redoc,/webhooks,/channels/slack,/channels/telegram"
     )
     api_rate_limit_enabled: bool = False
     api_rate_limit_requests_per_minute: int = 120

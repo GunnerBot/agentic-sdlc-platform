@@ -17,9 +17,7 @@ class LocalAgentExecutor:
     ) -> AgentExecutionResponse:
         workspace_root = self._settings.agent_executor_workspace_root.rstrip("/")
         workspace_path = (
-            f"{workspace_root}/{request.dag_id}/{request.node_key}"
-            if workspace_root
-            else None
+            f"{workspace_root}/{request.dag_id}/{request.node_key}" if workspace_root else None
         )
         return AgentExecutionResponse(
             external_execution_id=f"local:{request.execution_id}",

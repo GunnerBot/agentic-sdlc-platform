@@ -137,9 +137,7 @@ class FakeRepository:
         FakeTask.dags[0].nodes[0].status = "queued"
         FakeTask.dags[0].nodes[0].orchestrator_task_id = "multica-node-1"
         FakeTask.dags[0].nodes[0].orchestrator_status = "queued"
-        FakeTask.dags[0].nodes[0].metadata_json = {
-            "expected_pr_reference": "dag/dag-1/design"
-        }
+        FakeTask.dags[0].nodes[0].metadata_json = {"expected_pr_reference": "dag/dag-1/design"}
         self.agent_sessions: dict[tuple[str, str], SimpleNamespace] = {}
         self.session_events: list[tuple[str, str, str, str, str | None]] = []
         self.artifacts: list[dict[str, object]] = []
@@ -316,8 +314,7 @@ async def test_slack_client_fetches_thread_context() -> None:
 
     assert captured_request is not None
     assert str(captured_request.url) == (
-        "https://slack.local/api/conversations.replies?"
-        "channel=C123&ts=1710000000.000000"
+        "https://slack.local/api/conversations.replies?channel=C123&ts=1710000000.000000"
     )
     assert captured_request.headers["authorization"] == "Bearer xoxb-token"
     assert context is not None
@@ -718,8 +715,7 @@ def test_slack_bare_create_ticket_uses_thread_context(monkeypatch) -> None:
         return TicketThreadContext(
             title="FEFO allocation picks wrong lot",
             transcript=(
-                "U111: FEFO allocation picks wrong lot.\n"
-                "U222: Expected oldest expiring lot."
+                "U111: FEFO allocation picks wrong lot.\nU222: Expected oldest expiring lot."
             ),
             message_count=2,
         )

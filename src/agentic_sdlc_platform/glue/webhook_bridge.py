@@ -449,8 +449,7 @@ class WebhookBridge:
             channel="linear",
         )
         reply_body = (
-            f"Command /{result.command} applied. "
-            f"Task {command.external_id} is now {result.status}."
+            f"Command /{result.command} applied. Task {command.external_id} is now {result.status}."
         )
         await self._repository.record_session_event(
             session_id=agent_session_id,
@@ -461,9 +460,7 @@ class WebhookBridge:
             metadata={"command": result.command, "status": result.status},
         )
         if self._issue_tracker is not None:
-            await self._issue_tracker.reply(
-                IssueTrackerReply(issue_id=issue_id, body=reply_body)
-            )
+            await self._issue_tracker.reply(IssueTrackerReply(issue_id=issue_id, body=reply_body))
         return result.task_id
 
     async def _handle_linear_info_command(
@@ -496,9 +493,7 @@ class WebhookBridge:
             metadata={"command": command.command, "external_id": command.external_id},
         )
         if self._issue_tracker is not None:
-            await self._issue_tracker.reply(
-                IssueTrackerReply(issue_id=issue_id, body=reply_body)
-            )
+            await self._issue_tracker.reply(IssueTrackerReply(issue_id=issue_id, body=reply_body))
         await self._repository.record_audit_event(
             action=f"agent_session.{command.command}_requested",
             actor=actor,
@@ -582,7 +577,9 @@ class WebhookBridge:
             metadata={
                 "comment_id": comment_id,
                 "resolved_repo": repo_name,
-            } if comment_id else {"resolved_repo": repo_name},
+            }
+            if comment_id
+            else {"resolved_repo": repo_name},
         )
         task = await self._repository.update_task_repo_and_status(
             task_id=task.id,
@@ -679,9 +676,7 @@ class WebhookBridge:
                 )
             elif self._task_orchestrator is not None:
                 ready_nodes = [
-                    node
-                    for node in dag.nodes
-                    if node.status == "ready" and not node.depends_on
+                    node for node in dag.nodes if node.status == "ready" and not node.depends_on
                 ]
                 queued_nodes = await self._enqueue_ready_dag_nodes(
                     dag=dag,
@@ -792,9 +787,7 @@ class WebhookBridge:
                 )
             )
             reply_body = f"Thanks, I will use {repo_name} and start {task.external_id}."
-            await self._issue_tracker.reply(
-                IssueTrackerReply(issue_id=issue_id, body=reply_body)
-            )
+            await self._issue_tracker.reply(IssueTrackerReply(issue_id=issue_id, body=reply_body))
             await self._repository.record_session_event(
                 session_id=agent_session_id,
                 direction="outbound",
@@ -893,9 +886,7 @@ class WebhookBridge:
             },
         )
         if self._issue_tracker is not None:
-            await self._issue_tracker.reply(
-                IssueTrackerReply(issue_id=issue_id, body=reply_body)
-            )
+            await self._issue_tracker.reply(IssueTrackerReply(issue_id=issue_id, body=reply_body))
         await self._repository.record_audit_event(
             action="task.plan_approved",
             actor=actor,
@@ -1062,9 +1053,7 @@ class WebhookBridge:
             },
         )
         if self._issue_tracker is not None:
-            await self._issue_tracker.reply(
-                IssueTrackerReply(issue_id=issue_id, body=reply_body)
-            )
+            await self._issue_tracker.reply(IssueTrackerReply(issue_id=issue_id, body=reply_body))
         await self._repository.record_audit_event(
             action="task.plan_revised",
             actor=actor,
@@ -1267,12 +1256,14 @@ class WebhookBridge:
                     )
                 return task.id
 
-            task_metadata.update({
-                "repo_provider": repo.provider,
-                "repo_clone_url": repo.clone_url,
-                "repo_default_branch": repo.default_branch,
-                "repo_metadata": dict(repo.metadata_json),
-            })
+            task_metadata.update(
+                {
+                    "repo_provider": repo.provider,
+                    "repo_clone_url": repo.clone_url,
+                    "repo_default_branch": repo.default_branch,
+                    "repo_metadata": dict(repo.metadata_json),
+                }
+            )
             repo_context = await self._repo_context_for_task(repo.name, task_event)
             if repo_context is not None:
                 task_metadata["repo_context"] = repo_context
@@ -1365,9 +1356,7 @@ class WebhookBridge:
                     "provider": self._task_orchestrator.provider,
                     "external_task_id": external_task.external_task_id,
                     "status": external_task.status,
-                    "llm_observability": (external_task.metadata or {}).get(
-                        "llm_observability"
-                    ),
+                    "llm_observability": (external_task.metadata or {}).get("llm_observability"),
                 },
             )
         elif parent_orchestration_deferred:
@@ -1390,11 +1379,7 @@ class WebhookBridge:
                     ),
                 },
             )
-        if (
-            source == "linear"
-            and task_event.issue_id
-            and self._issue_tracker is not None
-        ):
+        if source == "linear" and task_event.issue_id and self._issue_tracker is not None:
             await self._issue_tracker.mark_task_queued(
                 IssueTrackerUpdate(
                     issue_id=task_event.issue_id,
@@ -1573,9 +1558,7 @@ class WebhookBridge:
                 )
             elif self._task_orchestrator is not None:
                 ready_nodes = [
-                    node
-                    for node in dag.nodes
-                    if node.status == "ready" and not node.depends_on
+                    node for node in dag.nodes if node.status == "ready" and not node.depends_on
                 ]
                 queued_nodes = await self._enqueue_ready_dag_nodes(
                     dag=dag,
@@ -2044,11 +2027,7 @@ class WebhookBridge:
         task,
         extra_metadata: dict[str, object] | None = None,
     ) -> tuple[str, str] | tuple[None, None]:
-        ready_nodes = [
-            node
-            for node in dag.nodes
-            if node.status == "ready" and not node.depends_on
-        ]
+        ready_nodes = [node for node in dag.nodes if node.status == "ready" and not node.depends_on]
         if not ready_nodes:
             return None, None
         node = ready_nodes[0]
@@ -2399,9 +2378,7 @@ class WebhookBridge:
             quality_gate = evaluate_completion_quality_gate(
                 metadata=dict(node.metadata_json) if node.metadata_json else {},
                 external_metadata=task_update.metadata or {},
-                expected_pr_reference=(
-                    f"dag/{task_update.dag_id}/{task_update.dag_node_key}"
-                ),
+                expected_pr_reference=(f"dag/{task_update.dag_id}/{task_update.dag_node_key}"),
             )
             if quality_gate.satisfied and task_update.status == "merged":
                 orchestration_status = "completed"
@@ -2451,9 +2428,7 @@ class WebhookBridge:
             dag = await self._repository.get_task_dag(task_update.dag_id)
             if dag is None:
                 return None
-            ready_nodes = await self._repository.list_ready_dag_nodes_for_dag(
-                task_update.dag_id
-            )
+            ready_nodes = await self._repository.list_ready_dag_nodes_for_dag(task_update.dag_id)
             if self._task_orchestrator is not None:
                 await self._enqueue_ready_dag_nodes(
                     dag=dag,
@@ -2639,11 +2614,7 @@ def _linear_assignment_reply(
     revision_feedback: str | None = None,
 ) -> str:
     lines = [
-        (
-            f"Revised plan for {external_id}."
-            if revision_feedback
-            else f"Accepted {external_id}."
-        ),
+        (f"Revised plan for {external_id}." if revision_feedback else f"Accepted {external_id}."),
         f"Repo: {repo or 'none'}.",
     ]
     if revision_feedback:
@@ -2658,15 +2629,11 @@ def _linear_assignment_reply(
     else:
         lines.append("DAG template: none.")
     if planned_node_keys:
-        lines.append(
-            f"Planned nodes: {len(planned_node_keys)} ({', '.join(planned_node_keys)})."
-        )
+        lines.append(f"Planned nodes: {len(planned_node_keys)} ({', '.join(planned_node_keys)}).")
     if dag_plan is not None:
         lines.append(f"Planning strategy: {dag_plan.strategy}.")
         if dag_plan.node_quality_gates_enabled:
-            lines.append(
-                "Validation: each node is quality-gated before downstream nodes run."
-            )
+            lines.append("Validation: each node is quality-gated before downstream nodes run.")
         if dag_plan.fallback_reason:
             lines.append(f"Fallback reason: {dag_plan.fallback_reason}.")
         if dag_plan.validation_errors:
@@ -2933,10 +2900,7 @@ def _linear_spec_planning_question(
 
 
 def _truncated_spec_text(spec_bundle: SpecIngestionBundle, limit: int = 6000) -> str:
-    text = "\n\n".join(
-        f"# {source.title}\n{source.text}"
-        for source in spec_bundle.text_sources
-    )
+    text = "\n\n".join(f"# {source.title}\n{source.text}" for source in spec_bundle.text_sources)
     if len(text) <= limit:
         return text
     return f"{text[:limit]}\n...[truncated]"
@@ -2976,20 +2940,14 @@ def _planned_subtasks_validation_error(
         return f"invalid_node_keys: {', '.join(invalid)}"
     if any(subtask.repo not in allowed_repos for subtask in subtasks):
         invalid_repos = sorted(
-            {
-                str(subtask.repo)
-                for subtask in subtasks
-                if subtask.repo not in allowed_repos
-            }
+            {str(subtask.repo) for subtask in subtasks if subtask.repo not in allowed_repos}
         )
         return f"repo_outside_allowed_set: {', '.join(invalid_repos)}"
     node_id_set = set(node_ids)
     for subtask in subtasks:
         if any(dependency not in node_id_set for dependency in subtask.depends_on):
             missing = [
-                dependency
-                for dependency in subtask.depends_on
-                if dependency not in node_id_set
+                dependency for dependency in subtask.depends_on if dependency not in node_id_set
             ]
             return f"missing_dependencies_for_{subtask.id}: {', '.join(missing)}"
         if subtask.id in subtask.depends_on:
@@ -3187,9 +3145,7 @@ def _deterministic_linear_spec_subtasks(
             depends_on=tuple(implementation_node_ids),
             metadata={
                 **fallback_metadata,
-                "reasoning": (
-                    "Performs final integration after repo-local PRs are available."
-                ),
+                "reasoning": ("Performs final integration after repo-local PRs are available."),
                 "expected_changes": (
                     "Wire the cross-repo behavior or contracts in the owning integration repo."
                 ),
@@ -3246,9 +3202,7 @@ def _test_node_merge_target(test_node: Subtask, subtasks: list[Subtask]) -> Subt
         for subtask in subtasks
         if not _is_test_only_node(subtask) and not _is_exploration_node(subtask)
     ]
-    same_repo = [
-        subtask for subtask in implementation_nodes if subtask.repo == test_node.repo
-    ]
+    same_repo = [subtask for subtask in implementation_nodes if subtask.repo == test_node.repo]
     candidates = same_repo if test_node.repo else implementation_nodes
     if not candidates:
         return None
@@ -3283,11 +3237,7 @@ def _merge_test_node_into_target(*, target: Subtask, test_node: Subtask) -> Subt
     depends_on = _dedupe(
         [
             *target.depends_on,
-            *[
-                dependency
-                for dependency in test_node.depends_on
-                if dependency != target.id
-            ],
+            *[dependency for dependency in test_node.depends_on if dependency != target.id],
         ]
     )
     title = target.title
@@ -3399,10 +3349,7 @@ def _append_unique(values: list[str], value: str) -> None:
 def _has_split_test_nodes(subtasks: list[Subtask]) -> bool:
     if len(subtasks) < 2:
         return False
-    has_implementation = any(
-        _is_implementation_node(subtask)
-        for subtask in subtasks
-    )
+    has_implementation = any(_is_implementation_node(subtask) for subtask in subtasks)
     if not has_implementation:
         return False
     return any(
@@ -3726,16 +3673,12 @@ def _merge_linear_issue_context(
     if issue_context.attachments:
         data["attachments"] = {
             "nodes": [
-                _linear_attachment_payload(attachment)
-                for attachment in issue_context.attachments
+                _linear_attachment_payload(attachment) for attachment in issue_context.attachments
             ]
         }
     if issue_context.comments:
         data["comments"] = {
-            "nodes": [
-                _linear_comment_payload(comment)
-                for comment in issue_context.comments
-            ]
+            "nodes": [_linear_comment_payload(comment) for comment in issue_context.comments]
         }
     merged["data"] = data
     return merged

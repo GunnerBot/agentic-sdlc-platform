@@ -175,10 +175,7 @@ def test_multica_description_keeps_branch_reference_only_in_write_mode() -> None
     assert "contract/Schemathesis tests" in description
     assert "feature flag or equivalent compatibility gate" in description
     assert "Checkout URL: https://github.com/acme-corp/platform-service" in description
-    assert (
-        "`multica repo checkout https://github.com/acme-corp/platform-service`"
-        in description
-    )
+    assert "`multica repo checkout https://github.com/acme-corp/platform-service`" in description
     assert '"repo_checkout_url": "https://github.com/acme-corp/platform-service"' in description
     assert "agent/dag/dag-1/design" in description
     assert "Preserve the full Linear request body." in description
@@ -351,9 +348,7 @@ async def test_multica_adapter_extracts_pr_url_from_completed_task_output() -> N
         )
     )
 
-    assert response.metadata["pr_url"] == (
-        "https://github.com/acme-corp/erp-service/pull/1318"
-    )
+    assert response.metadata["pr_url"] == ("https://github.com/acme-corp/erp-service/pull/1318")
     assert response.metadata["pr_number"] == 1318
     assert response.metadata["llm_observability"] == {
         "operation": "hermes.multica_task_execution",

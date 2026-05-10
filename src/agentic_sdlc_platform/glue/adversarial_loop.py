@@ -180,8 +180,7 @@ async def run_adversarial_review_loop(
 
 def _loop_enabled(settings: Settings, node_metadata: dict[str, object]) -> bool:
     return bool(
-        settings.adversarial_review_loop_enabled
-        or adversarial_review_required(node_metadata)
+        settings.adversarial_review_loop_enabled or adversarial_review_required(node_metadata)
     )
 
 
@@ -224,9 +223,7 @@ def _review_prompt(
         },
         "turn": turn,
         "runtime_result": external_metadata,
-        "previous_adversarial_feedback": node_metadata.get(
-            "latest_adversarial_feedback"
-        ),
+        "previous_adversarial_feedback": node_metadata.get("latest_adversarial_feedback"),
     }
     return (
         "You are an adversarial supervisor reviewing a completed implementation DAG node. "

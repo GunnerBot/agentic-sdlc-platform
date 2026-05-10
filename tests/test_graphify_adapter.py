@@ -95,9 +95,7 @@ async def test_graphify_cli_index_copies_repo_to_output_root(tmp_path) -> None:
     source_repo_path.mkdir()
     (source_repo_path / "app.py").write_text("print('hello')", encoding="utf-8")
     output_root = tmp_path / "graphify-data"
-    copied_graph_path = (
-        output_root / "acme-corp__erp-service" / "graphify-out" / "graph.json"
-    )
+    copied_graph_path = output_root / "acme-corp__erp-service" / "graphify-out" / "graph.json"
     captured_commands: list[list[str]] = []
 
     async def runner(command: list[str], command_timeout: float) -> str:
@@ -134,9 +132,7 @@ async def test_graphify_cli_index_clones_repo_to_cache_when_local_path_is_missin
 ) -> None:
     cache_root = tmp_path / "repo-cache"
     output_root = tmp_path / "graphify-data"
-    copied_graph_path = (
-        output_root / "acme-corp__erp-service" / "graphify-out" / "graph.json"
-    )
+    copied_graph_path = output_root / "acme-corp__erp-service" / "graphify-out" / "graph.json"
     captured_git_commands: list[tuple[list[str], dict[str, str] | None]] = []
     captured_graphify_commands: list[list[str]] = []
 
@@ -208,9 +204,7 @@ async def test_graphify_cli_index_fetches_existing_cached_repo(tmp_path) -> None
     (cached_repo_path / ".git").mkdir(parents=True)
     (cached_repo_path / "app.py").write_text("print('old')", encoding="utf-8")
     output_root = tmp_path / "graphify-data"
-    copied_graph_path = (
-        output_root / "acme-corp__erp-service" / "graphify-out" / "graph.json"
-    )
+    copied_graph_path = output_root / "acme-corp__erp-service" / "graphify-out" / "graph.json"
     captured_git_commands: list[list[str]] = []
 
     async def token_provider(installation_id: str) -> str:
@@ -267,9 +261,7 @@ async def test_graphify_cli_index_ignores_dangling_symlinks(tmp_path) -> None:
     source_repo_path.mkdir()
     (source_repo_path / "app.py").write_text("print('hello')", encoding="utf-8")
     (source_repo_path / "public").mkdir()
-    (source_repo_path / "public" / "_next-video").symlink_to(
-        source_repo_path / "missing-target"
-    )
+    (source_repo_path / "public" / "_next-video").symlink_to(source_repo_path / "missing-target")
     output_root = tmp_path / "graphify-data"
     copied_graph_path = output_root / "frontend-monorepo" / "graphify-out" / "graph.json"
 

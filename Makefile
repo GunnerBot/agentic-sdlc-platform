@@ -1,10 +1,25 @@
-.PHONY: sync lint test contract agent-gates quality run migrate github-app-git-credential-configure compose-dev-up compose-dev-down compose-dev-logs compose-real-up compose-real-hermes-up compose-real-down compose-real-logs
+.PHONY: sync format format-check lint lint-fix typecheck security test contract agent-gates precommit prepush install-hooks quality run migrate github-app-git-credential-configure compose-dev-up compose-dev-down compose-dev-logs compose-real-up compose-real-hermes-up compose-real-down compose-real-logs
 
 sync:
 	uv sync
 
+format:
+	uv run ruff format .
+
+format-check:
+	uv run ruff format --check .
+
 lint:
 	uv run ruff check .
+
+lint-fix:
+	uv run ruff check --fix .
+
+typecheck:
+	uv run mypy
+
+security:
+	uv run bandit -c pyproject.toml -r src scripts -q
 
 test:
 	uv run pytest tests --ignore=tests/contracts
@@ -15,7 +30,15 @@ contract:
 agent-gates:
 	uv run python scripts/enforce_agent_quality_gates.py
 
-quality: agent-gates lint test contract
+precommit: format-check lint typecheck security agent-gates
+
+prepush: precommit test contract
+
+install-hooks:
+	git config core.hooksPath .git-hooks
+	chmod +x .git-hooks/pre-commit .git-hooks/pre-push
+
+quality: prepush
 
 run:
 	uv run agentic-sdlc-platform

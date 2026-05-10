@@ -58,9 +58,7 @@ def estimated_llm_usage(
         )
     )
     resolved_total_tokens = (
-        total_tokens
-        if total_tokens is not None
-        else resolved_input_tokens + resolved_output_tokens
+        total_tokens if total_tokens is not None else resolved_input_tokens + resolved_output_tokens
     )
     return {
         "operation": operation,
@@ -99,9 +97,7 @@ def usage_from_openai_payload(
             output_text=response_output_text,
         )
 
-    input_tokens = _int_value(usage.get("input_tokens")) or _int_value(
-        usage.get("prompt_tokens")
-    )
+    input_tokens = _int_value(usage.get("input_tokens")) or _int_value(usage.get("prompt_tokens"))
     output_tokens = _int_value(usage.get("output_tokens")) or _int_value(
         usage.get("completion_tokens")
     )
@@ -191,8 +187,7 @@ def usage_records_from_ledger_artifacts(artifacts: list[object]) -> list[dict[st
             {
                 **content,
                 "source": _str_value(content.get("source")) or "ledger",
-                "source_id": _str_value(content.get("source_id"))
-                or getattr(artifact, "id", None),
+                "source_id": _str_value(content.get("source_id")) or getattr(artifact, "id", None),
             }
         )
     return records

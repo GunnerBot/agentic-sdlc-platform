@@ -9,9 +9,7 @@ from agentic_sdlc_platform.core.config import Settings
 
 
 def test_figma_reference_extracts_file_and_node_id() -> None:
-    reference = figma_reference(
-        "https://www.figma.com/design/abc123/Form-title-flow?node-id=1%3A2"
-    )
+    reference = figma_reference("https://www.figma.com/design/abc123/Form-title-flow?node-id=1%3A2")
 
     assert reference is not None
     assert reference.file_key == "abc123"
@@ -50,9 +48,7 @@ async def test_figma_adapter_fetches_file_metadata() -> None:
         transport=httpx.MockTransport(handler),
     )
 
-    context = await adapter.fetch(
-        "https://www.figma.com/file/abc123/Form-title-flow?node-id=1%3A2"
-    )
+    context = await adapter.fetch("https://www.figma.com/file/abc123/Form-title-flow?node-id=1%3A2")
 
     assert context is not None
     assert context.provider == "figma"

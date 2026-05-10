@@ -331,10 +331,7 @@ async def test_create_task_dag_hydrates_linear_context_and_uses_generic_fallback
             "Backend contract, domain model, persistence, and service logic "
             "implement the requested behavior."
         ),
-        (
-            "Create, update, read, and list paths preserve the requested behavior "
-            "where applicable."
-        ),
+        ("Create, update, read, and list paths preserve the requested behavior where applicable."),
         "Relevant automated tests are included in the same PR.",
     ]
     assert artifacts.status_code == 200
@@ -569,9 +566,7 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
             "repo_context_policy": "graphstore_first_then_narrow_source_verification",
             "github_write_enabled": True,
         },
-        "code_generation_policy": task_orchestrator.requests[0].metadata[
-            "code_generation_policy"
-        ],
+        "code_generation_policy": task_orchestrator.requests[0].metadata["code_generation_policy"],
         "pr_plan": {
             "planned_pr_count": 2,
             "current_pr_index": 2,
@@ -588,12 +583,8 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
             "reason": "graph store access is disabled",
         },
     }
-    assert task_orchestrator.requests[0].metadata["expected_branch"].endswith(
-        f"/{dag_id}/web"
-    )
-    assert task_orchestrator.requests[0].metadata["expected_pr_reference"] == (
-        f"dag/{dag_id}/web"
-    )
+    assert task_orchestrator.requests[0].metadata["expected_branch"].endswith(f"/{dag_id}/web")
+    assert task_orchestrator.requests[0].metadata["expected_pr_reference"] == (f"dag/{dag_id}/web")
 
 
 async def test_complete_dag_node_endpoint_syncs_runtime_repo_at_enqueue() -> None:
@@ -695,10 +686,10 @@ async def test_complete_dag_node_endpoint_requires_quality_evidence_for_pr_nodes
     assert response.status_code == 409
     assert response.json()["detail"] == {
         "message": "DAG node quality gate is not satisfied",
-            "missing": [
-                "GitHub PR URL is required for approved write execution",
-                "test_evidence",
-            ],
+        "missing": [
+            "GitHub PR URL is required for approved write execution",
+            "test_evidence",
+        ],
     }
     node = task.json()["dags"][0]["nodes"][0]
     assert node["status"] == "ready"
@@ -878,9 +869,7 @@ async def test_sync_dag_node_orchestrator_state_polls_task_run() -> None:
         metadata={"multica_issue_id": "issue-1"},
     )
 
-    response = client.post(
-        f"/tasks/{task_id}/dag/{dag_id}/nodes/api/sync-orchestrator"
-    )
+    response = client.post(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/sync-orchestrator")
 
     assert response.status_code == 200
     assert response.json()["status"] == "running"
@@ -1089,9 +1078,7 @@ async def test_sync_completed_node_exposes_external_quota_failure() -> None:
         "The model provider rejected the run because the configured OpenAI "
         "key has no available quota."
     )
-    assert response.json()["next_action"] == (
-        "Fix the OpenAI key/quota, then retry this DAG node."
-    )
+    assert response.json()["next_action"] == ("Fix the OpenAI key/quota, then retry this DAG node.")
     assert response.json()["pr_url"] is None
     assert issue_tracker.replies == [
         IssueTrackerReply(
@@ -1161,9 +1148,7 @@ async def test_sync_completed_node_runs_adversarial_loop_and_requeues_on_revisio
         metadata={"multica_issue_id": "issue-1"},
     )
 
-    response = client.post(
-        f"/tasks/{task_id}/dag/{dag.id}/nodes/backend_tests/sync-orchestrator"
-    )
+    response = client.post(f"/tasks/{task_id}/dag/{dag.id}/nodes/backend_tests/sync-orchestrator")
     artifacts = client.get(
         f"/tasks/{task_id}/artifacts",
         params={
@@ -1203,9 +1188,9 @@ async def test_sync_completed_node_runs_adversarial_loop_and_requeues_on_revisio
     assert task_orchestrator.requests[0].metadata["adversarial_review"]["status"] == "revise"
     assert task_orchestrator.requests[0].metadata["adversarial_review_turn_count"] == 1
     assert (
-        task_orchestrator.requests[0].metadata["latest_adversarial_feedback"][
-            "blocking_issues"
-        ][0]["description"]
+        task_orchestrator.requests[0].metadata["latest_adversarial_feedback"]["blocking_issues"][0][
+            "description"
+        ]
         == "Add focused tests before completion."
     )
     assert artifacts.status_code == 200
@@ -1481,9 +1466,7 @@ async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> No
     assert "dag_node_execution_input" in artifact_kinds
     assert "dag_node_execution_result" in artifact_kinds
     input_artifact = next(
-        artifact
-        for artifact in artifacts.json()
-        if artifact["kind"] == "dag_node_execution_input"
+        artifact for artifact in artifacts.json() if artifact["kind"] == "dag_node_execution_input"
     )
     result_artifact = next(
         artifact

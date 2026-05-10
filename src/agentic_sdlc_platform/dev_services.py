@@ -232,11 +232,7 @@ async def list_multica_agent_tasks(
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, object]]:
     _require_bearer(authorization, DEV_MULTICA_API_KEY)
-    return [
-        task
-        for task in _tasks.values()
-        if task.get("agent_id") == agent_id
-    ]
+    return [task for task in _tasks.values() if task.get("agent_id") == agent_id]
 
 
 @app.post("/api/issues", status_code=status.HTTP_201_CREATED)
@@ -281,11 +277,7 @@ async def list_multica_issue_task_runs(
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, object]]:
     _require_bearer(authorization, DEV_MULTICA_API_KEY)
-    return [
-        task
-        for task in _tasks.values()
-        if task.get("issue_id") == issue_id
-    ]
+    return [task for task in _tasks.values() if task.get("issue_id") == issue_id]
 
 
 @app.get("/api/issues/{issue_id}/comments", status_code=status.HTTP_200_OK)

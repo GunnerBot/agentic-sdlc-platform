@@ -169,8 +169,7 @@ async def slack_events(
             "external_id": node_override.external_id,
             "command": result.command,
             "answer": (
-                f"Node {result.node_key} on {node_override.external_id} "
-                f"is now {result.status}."
+                f"Node {result.node_key} on {node_override.external_id} is now {result.status}."
             ),
             "session_id": None,
             "message_id": None,
@@ -191,9 +190,7 @@ async def slack_events(
             "message_id": None,
         }
 
-    route = ChannelRouter().route(
-        ChannelMessage(channel=channel, text=text, sender_id=sender_id)
-    )
+    route = ChannelRouter().route(ChannelMessage(channel=channel, text=text, sender_id=sender_id))
     session_id = None
     message_id = None
     if route == RouteTarget.GRAPH_REPO_QUERY:

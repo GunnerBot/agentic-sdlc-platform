@@ -52,9 +52,7 @@ class FakeTaskOrchestrator:
         self.created.append(request)
         index = len(self.created) - 1
         external_task_id = (
-            self._task_ids[index]
-            if index < len(self._task_ids)
-            else f"multica-task-{index + 1}"
+            self._task_ids[index] if index < len(self._task_ids) else f"multica-task-{index + 1}"
         )
         metadata = None
         if self._include_multica_metadata:
@@ -366,18 +364,18 @@ async def test_linear_assigned_issue_uses_registered_repo_metadata() -> None:
         TaskRequest(
             source="linear",
             external_id="ENG-1284",
-                title="Build webhook bridge",
-                repo="erp-service",
-                inbound_event_id=task_orchestrator.created[0].inbound_event_id,
-                metadata={
-                    **dry_run_metadata(
-                        external_id="ENG-1284",
-                        issue_id="issue-id-1",
-                        title="Build webhook bridge",
-                    ),
-                    "repo_provider": "github",
-                    "repo_clone_url": "https://github.com/acme-corp/erp-service.git",
-                    "repo_default_branch": "develop",
+            title="Build webhook bridge",
+            repo="erp-service",
+            inbound_event_id=task_orchestrator.created[0].inbound_event_id,
+            metadata={
+                **dry_run_metadata(
+                    external_id="ENG-1284",
+                    issue_id="issue-id-1",
+                    title="Build webhook bridge",
+                ),
+                "repo_provider": "github",
+                "repo_clone_url": "https://github.com/acme-corp/erp-service.git",
+                "repo_default_branch": "develop",
                 "repo_metadata": {"linear_team_key": "OS"},
                 "repo_context": {
                     "status": "unavailable",
@@ -497,9 +495,7 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
         metadata={},
     )
     graph_store = FakeGraphStore()
-    task_orchestrator = FakeTaskOrchestrator(
-        task_ids=["multica-os-node", "multica-web-node"]
-    )
+    task_orchestrator = FakeTaskOrchestrator(task_ids=["multica-os-node", "multica-web-node"])
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
@@ -541,9 +537,7 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
 
     assert response.status_code == 202
     async with repository._session_factory() as session:
-        dag = (
-            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
-        ).one()
+        dag = (await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))).one()
         spec_event = (
             await session.scalars(
                 select(AuditEvent).where(AuditEvent.action == "task.spec_ingested")
@@ -571,9 +565,7 @@ async def test_linear_assigned_issue_ingests_multirepo_markdown_spec() -> None:
         ],
         "unknown_repos": [],
     }
-    assert task_orchestrator.created[0].metadata["planning_strategy"] == (
-        "semantic_fallback"
-    )
+    assert task_orchestrator.created[0].metadata["planning_strategy"] == ("semantic_fallback")
     assert [query.repo for query in graph_store.queries] == ["erp-service"]
     assert spec_event.metadata_json["repo_scope"]["scope"] == "multi_repo"
     assert issue_tracker.replies[-1].issue_id == "issue-id-1"
@@ -668,13 +660,9 @@ async def test_linear_assigned_issue_uses_model_planner_for_spec_dag() -> None:
 
     assert response.status_code == 202
     async with repository._session_factory() as session:
-        dag = (
-            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
-        ).one()
+        dag = (await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))).one()
         planned_event = (
-            await session.scalars(
-                select(AuditEvent).where(AuditEvent.action == "task.dag_planned")
-            )
+            await session.scalars(select(AuditEvent).where(AuditEvent.action == "task.dag_planned"))
         ).one()
 
     assert [node.node_key for node in dag.nodes] == [
@@ -782,13 +770,9 @@ async def test_linear_model_planner_uses_semantic_fallback_for_unknown_repo() ->
 
     assert response.status_code == 202
     async with repository._session_factory() as session:
-        dag = (
-            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
-        ).one()
+        dag = (await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))).one()
         planned_event = (
-            await session.scalars(
-                select(AuditEvent).where(AuditEvent.action == "task.dag_planned")
-            )
+            await session.scalars(select(AuditEvent).where(AuditEvent.action == "task.dag_planned"))
         ).one()
 
     assert [node.node_key for node in dag.nodes] == [
@@ -801,9 +785,7 @@ async def test_linear_model_planner_uses_semantic_fallback_for_unknown_repo() ->
     assert planned_event.metadata_json["fallback_reason"] == "invalid_model_plan"
     assert planned_event.metadata_json["planner_attempts"] == 3
     assert planned_event.metadata_json["validation_node_added"] is False
-    assert task_orchestrator.created[0].metadata["planning_strategy"] == (
-        "semantic_fallback"
-    )
+    assert task_orchestrator.created[0].metadata["planning_strategy"] == ("semantic_fallback")
 
 
 async def test_linear_model_planner_retries_once_with_validation_error() -> None:
@@ -878,13 +860,9 @@ async def test_linear_model_planner_retries_once_with_validation_error() -> None
 
     assert response.status_code == 202
     async with repository._session_factory() as session:
-        dag = (
-            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
-        ).one()
+        dag = (await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))).one()
         planned_event = (
-            await session.scalars(
-                select(AuditEvent).where(AuditEvent.action == "task.dag_planned")
-            )
+            await session.scalars(select(AuditEvent).where(AuditEvent.action == "task.dag_planned"))
         ).one()
 
     assert [node.node_key for node in dag.nodes] == [
@@ -970,25 +948,17 @@ async def test_linear_model_planner_repairs_when_plan_splits_tests_from_code() -
 
     assert response.status_code == 202
     async with repository._session_factory() as session:
-        dag = (
-            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
-        ).one()
+        dag = (await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))).one()
         planned_event = (
-            await session.scalars(
-                select(AuditEvent).where(AuditEvent.action == "task.dag_planned")
-            )
+            await session.scalars(select(AuditEvent).where(AuditEvent.action == "task.dag_planned"))
         ).one()
 
     assert [node.node_key for node in dag.nodes] == [
         "add_settings_persistence",
     ]
     assert dag.nodes[0].title == "Add settings persistence with tests"
-    assert dag.nodes[0].metadata_json["planner_repair"] == (
-        "merged_test_nodes_into_implementation"
-    )
-    assert dag.nodes[0].metadata_json["merged_test_nodes"] == [
-        "settings_persistence_quality"
-    ]
+    assert dag.nodes[0].metadata_json["planner_repair"] == ("merged_test_nodes_into_implementation")
+    assert dag.nodes[0].metadata_json["merged_test_nodes"] == ["settings_persistence_quality"]
     assert planned_event.metadata_json["strategy"] == "model"
     assert planned_event.metadata_json["fallback_reason"] is None
     assert planned_event.metadata_json["validation_error"] is None
@@ -1065,13 +1035,9 @@ async def test_linear_model_planner_uses_semantic_fallback_when_plan_has_depende
 
     assert response.status_code == 202
     async with repository._session_factory() as session:
-        dag = (
-            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
-        ).one()
+        dag = (await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))).one()
         planned_event = (
-            await session.scalars(
-                select(AuditEvent).where(AuditEvent.action == "task.dag_planned")
-            )
+            await session.scalars(select(AuditEvent).where(AuditEvent.action == "task.dag_planned"))
         ).one()
 
     assert [node.node_key for node in dag.nodes] == [
@@ -1082,9 +1048,7 @@ async def test_linear_model_planner_uses_semantic_fallback_when_plan_has_depende
     assert planned_event.metadata_json["strategy"] == "semantic_fallback"
     assert planned_event.metadata_json["fallback_reason"] == "invalid_model_plan"
     assert planned_event.metadata_json["planner_attempts"] == 3
-    assert task_orchestrator.created[0].metadata["planning_strategy"] == (
-        "semantic_fallback"
-    )
+    assert task_orchestrator.created[0].metadata["planning_strategy"] == ("semantic_fallback")
 
 
 async def test_linear_model_planner_rejects_scope_only_plan() -> None:
@@ -1149,13 +1113,9 @@ async def test_linear_model_planner_rejects_scope_only_plan() -> None:
 
     assert response.status_code == 202
     async with repository._session_factory() as session:
-        dag = (
-            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
-        ).one()
+        dag = (await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))).one()
         planned_event = (
-            await session.scalars(
-                select(AuditEvent).where(AuditEvent.action == "task.dag_planned")
-            )
+            await session.scalars(select(AuditEvent).where(AuditEvent.action == "task.dag_planned"))
         ).one()
 
     assert [node.node_key for node in dag.nodes] == [
@@ -1165,9 +1125,7 @@ async def test_linear_model_planner_rejects_scope_only_plan() -> None:
     ]
     assert planned_event.metadata_json["strategy"] == "semantic_fallback"
     assert planned_event.metadata_json["fallback_reason"] == "invalid_model_plan"
-    assert "missing_implementation_nodes" in planned_event.metadata_json[
-        "validation_errors"
-    ]
+    assert "missing_implementation_nodes" in planned_event.metadata_json["validation_errors"]
     assert len(planning_model.requests) == 3
 
 
@@ -1239,9 +1197,7 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
     assert task.status == "needs_plan_approval"
     assert task_orchestrator.created == []
     assert issue_tracker.replies[-1].issue_id == "issue-id-1"
-    assert "Planned nodes: 1 (backend_contract)." in (
-        issue_tracker.replies[-1].body
-    )
+    assert "Planned nodes: 1 (backend_contract)." in (issue_tracker.replies[-1].body)
     assert "Validation: each node is quality-gated" in issue_tracker.replies[-1].body
     assert "Plan detail:" in issue_tracker.replies[-1].body
     assert "reply /approve-plan ENG-2446" in issue_tracker.replies[-1].body
@@ -1271,9 +1227,7 @@ async def test_linear_spec_plan_waits_for_approval_before_node_execution() -> No
     ]
     assert task_orchestrator.created[0].metadata["plan_approved"] is True
     assert task_orchestrator.created[0].metadata["execution_mode"] == "write_pr"
-    assert [repo.name for repo in runtime_repo_registry.sync_requests[0]] == [
-        "erp-service"
-    ]
+    assert [repo.name for repo in runtime_repo_registry.sync_requests[0]] == ["erp-service"]
     assert task_orchestrator.created[0].metadata["runtime_repo_sync"] == {
         "provider": "multica",
         "workspace_id": "runtime-workspace-1",
@@ -1391,10 +1345,7 @@ async def test_linear_revise_plan_comment_replans_before_approval() -> None:
             "action": "create",
             "data": {
                 "id": "comment-revise-1",
-                "body": (
-                    "/revise-plan ENG-2450 add an explicit audit node before "
-                    "implementation"
-                ),
+                "body": ("/revise-plan ENG-2450 add an explicit audit node before implementation"),
                 "user": {"id": "user-1"},
                 "issue": {"id": "issue-id-1", "identifier": "ENG-2450"},
             },
@@ -1538,9 +1489,7 @@ async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None
         default_branch="main",
         metadata={},
     )
-    task_orchestrator = FakeTaskOrchestrator(
-        task_ids=["multica-os-node", "multica-web-node"]
-    )
+    task_orchestrator = FakeTaskOrchestrator(task_ids=["multica-os-node", "multica-web-node"])
     issue_tracker = FakeIssueTracker(
         hydrated_issues={
             "issue-id-1": IssueContext(
@@ -1597,9 +1546,7 @@ async def test_linear_assigned_issue_hydrates_missing_spec_from_linear() -> None
     assert response.status_code == 202
     assert issue_tracker.hydrated_issue_ids == ["issue-id-1"]
     async with repository._session_factory() as session:
-        dag = (
-            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
-        ).one()
+        dag = (await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))).one()
         spec_event = (
             await session.scalars(
                 select(AuditEvent).where(AuditEvent.action == "task.spec_ingested")
@@ -1628,10 +1575,7 @@ async def test_linear_assigned_issue_hydrates_notion_doc_from_description() -> N
         default_branch="main",
         metadata={},
     )
-    notion_url = (
-        "https://acme.notion.site/Dynamic-form-titles-"
-        "1234567890abcdef1234567890abcdef"
-    )
+    notion_url = "https://acme.notion.site/Dynamic-form-titles-1234567890abcdef1234567890abcdef"
     document_context = FakeDocumentContext(
         {
             notion_url: DocumentContext(
@@ -1778,9 +1722,7 @@ async def test_linear_assigned_issue_hydrates_figma_design_from_description() ->
         source["kind"] == "attachment"
         and source["title"] == "Form title frame"
         and source["length"] > 0
-        for source in task_orchestrator.created[0].metadata["spec_ingestion"][
-            "text_sources"
-        ]
+        for source in task_orchestrator.created[0].metadata["spec_ingestion"]["text_sources"]
     )
     assert task_orchestrator.created[0].metadata["spec_ingestion"]["design_assets"] == [
         {
@@ -2009,10 +1951,7 @@ async def test_linear_repo_clarification_comment_resumes_blocked_task() -> None:
                 "id": "issue-id-1",
                 "identifier": "ENG-3003",
                 "title": "Support dynamic form titles",
-                "description": (
-                    "## Acceptance\n"
-                    "- Implement the feature end to end."
-                ),
+                "description": ("## Acceptance\n- Implement the feature end to end."),
                 "assignee": {"id": "agent-user-1"},
             },
         },
@@ -2100,9 +2039,7 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
 
     assert response.status_code == 202
     async with repository._session_factory() as session:
-        dag = (
-            await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))
-        ).one()
+        dag = (await session.scalars(select(TaskDag).options(selectinload(TaskDag.nodes)))).one()
         dag_created_event = (
             await session.scalars(
                 select(AuditEvent).where(AuditEvent.action == "task.dag_template_created")
@@ -2132,9 +2069,7 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
         "context_session_id": None,
         "hermes_session_id": None,
         "orchestrator_idempotency_key": f"{dag.id}:reproduce:0",
-        "code_generation_policy": task_orchestrator.created[0].metadata[
-            "code_generation_policy"
-        ],
+        "code_generation_policy": task_orchestrator.created[0].metadata["code_generation_policy"],
         "pr_plan": {
             "planned_pr_count": 4,
             "current_pr_index": 1,
@@ -2143,7 +2078,7 @@ async def test_linear_assigned_issue_with_type_label_creates_dag_template() -> N
             "depends_on_prs": [],
             "unlocks_prs": ["fix"],
             "ordering_strategy": "DAG dependency order, then planner order",
-                "branch_pattern": "agent/dag/<external_id>/<dag_id>/<node_key>",
+            "branch_pattern": "agent/dag/<external_id>/<dag_id>/<node_key>",
             "body_reference_pattern": "dag/<dag_id>/<node_key>",
         },
         "repo_context": {
@@ -2339,9 +2274,7 @@ async def test_linear_assigned_issue_records_hermes_start_failure_without_aborti
         "estimation_method": "chars_per_token_request",
         "failed": True,
     }
-    observability_response = client.get(
-        f"/tasks/{response.json()['task_id']}/llm-observability"
-    )
+    observability_response = client.get(f"/tasks/{response.json()['task_id']}/llm-observability")
     assert observability_response.status_code == 200
     observability = observability_response.json()
     assert observability["total_input_tokens"] == 12
@@ -3009,8 +2942,6 @@ async def test_linear_agents_comment_replies_with_session_and_orchestrator_state
     reply = issue_tracker.replies[-1]
     assert reply.issue_id == "issue-id-1"
     assert reply.body.startswith(
-        "Task ENG-1284 agents:\n"
-        "Orchestrator: multica-task-1 (queued)\n"
-        "- linear session "
+        "Task ENG-1284 agents:\nOrchestrator: multica-task-1 (queued)\n- linear session "
     )
     assert ": status active, repo none, hermes hermes-session-1, events 2" in reply.body

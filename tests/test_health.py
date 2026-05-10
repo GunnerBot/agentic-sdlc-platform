@@ -67,17 +67,12 @@ def test_ops_status_reports_missing_enabled_integrations() -> None:
 
 
 def test_api_auth_can_protect_non_exempt_routes() -> None:
-    client = TestClient(
-        create_app(Settings(api_auth_enabled=True, api_auth_keys="secret"))
-    )
+    client = TestClient(create_app(Settings(api_auth_enabled=True, api_auth_keys="secret")))
 
     assert client.get("/healthz").status_code == 200
     assert client.get("/ops/status").status_code == 401
     assert client.get("/ops/status", headers={"X-API-Key": "secret"}).status_code == 200
-    assert (
-        client.get("/ops/status", headers={"Authorization": "Bearer secret"}).status_code
-        == 200
-    )
+    assert client.get("/ops/status", headers={"Authorization": "Bearer secret"}).status_code == 200
 
 
 def test_api_auth_fails_closed_when_enabled_without_keys() -> None:

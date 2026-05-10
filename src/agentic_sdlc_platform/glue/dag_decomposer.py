@@ -207,10 +207,7 @@ def _backend_acceptance_criteria(text: str) -> tuple[str, ...]:
             "Backend contract, domain model, persistence, and service logic "
             "implement the requested behavior."
         ),
-        (
-            "Create, update, read, and list paths preserve the requested behavior "
-            "where applicable."
-        ),
+        ("Create, update, read, and list paths preserve the requested behavior where applicable."),
         "Relevant automated tests are included in the same PR.",
     ]
     if _mentions_schema(text):

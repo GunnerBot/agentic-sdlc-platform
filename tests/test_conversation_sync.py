@@ -164,9 +164,7 @@ async def test_conversation_sync_service_records_and_mirrors_new_comments_once()
     async with repository._session_factory() as db_session:
         audit = (
             await db_session.scalars(
-                select(AuditEvent).where(
-                    AuditEvent.action == "agent_session.conversation_synced"
-                )
+                select(AuditEvent).where(AuditEvent.action == "agent_session.conversation_synced")
             )
         ).one()
     assert audit.metadata_json["new_messages"] == 1
@@ -248,8 +246,10 @@ async def test_conversation_sync_service_advances_completed_dag_nodes() -> None:
     assert nodes["implement_sync_client"].orchestrator_task_id == "next-multica-task"
     assert orchestrator.requests[0].metadata["execution_mode"] == "write_pr"
     assert orchestrator.requests[0].metadata["execution_policy"]["github_write_enabled"] is True
-    assert orchestrator.requests[0].metadata["expected_branch"].startswith(
-        f"agent/dag/eng-1284/{dag.id}/implement_sync_client"
+    assert (
+        orchestrator.requests[0]
+        .metadata["expected_branch"]
+        .startswith(f"agent/dag/eng-1284/{dag.id}/implement_sync_client")
     )
 
 
@@ -276,9 +276,7 @@ async def test_conversation_sync_service_mirrors_slack_thread_replies() -> None:
     result = await service.sync_session(session.id)
 
     assert result.new_messages == 1
-    assert slack_client.replies == [
-        ("C123", "1710000000.000000", "Agent found the answer.")
-    ]
+    assert slack_client.replies == [("C123", "1710000000.000000", "Agent found the answer.")]
 
 
 async def test_conversation_sync_service_mirrors_telegram_messages() -> None:

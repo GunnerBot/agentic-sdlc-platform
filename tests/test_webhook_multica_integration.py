@@ -230,9 +230,7 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
                 "focused_tests_passed": True,
                 "smoke_tests_required": False,
                 "contract_tests_required": False,
-                "production_files_changed": [
-                    "src/agentic_sdlc_platform/glue/webhook_bridge.py"
-                ],
+                "production_files_changed": ["src/agentic_sdlc_platform/glue/webhook_bridge.py"],
                 "test_files_changed": ["tests/test_webhook_multica_integration.py"],
             },
         },
@@ -330,9 +328,7 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
         "expected_branch": f"agent/dag/eng-1284/{dag.id}/implement",
         "expected_pr_reference": f"dag/{dag.id}/implement",
         "expected_pr_body_marker": f"dag/{dag.id}/implement",
-        "code_generation_policy": task_orchestrator.requests[0].metadata[
-            "code_generation_policy"
-        ],
+        "code_generation_policy": task_orchestrator.requests[0].metadata["code_generation_policy"],
         "pr_plan": {
             "planned_pr_count": 2,
             "current_pr_index": 2,
@@ -355,11 +351,7 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
         },
     }
     async with repository._session_factory() as session:
-        nodes = (
-            await session.scalars(
-                select(TaskDagNode).order_by(TaskDagNode.position)
-            )
-        ).all()
+        nodes = (await session.scalars(select(TaskDagNode).order_by(TaskDagNode.position))).all()
         audit_actions = {
             event.action for event in (await session.scalars(select(AuditEvent))).all()
         }

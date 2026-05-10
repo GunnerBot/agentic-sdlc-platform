@@ -47,9 +47,7 @@ def evaluate_completion_quality_gate(
     missing: list[str] = []
     if write_quality_applies:
         expected_branch = _str(merged.get("expected_branch"))
-        expected_pr_reference = expected_pr_reference or _str(
-            merged.get("expected_pr_reference")
-        )
+        expected_pr_reference = expected_pr_reference or _str(merged.get("expected_pr_reference"))
         if not _pr_url_present(evidence=evidence, external_metadata=external_metadata):
             missing.append("GitHub PR URL is required for approved write execution")
         if expected_branch and not _branch_matches(
@@ -77,10 +75,7 @@ def evaluate_completion_quality_gate(
                     missing.append(label)
 
             smoke_required = evidence.get("smoke_tests_required", True)
-            if (
-                smoke_required is not False
-                and evidence.get("smoke_tests_passed") is not True
-            ):
+            if smoke_required is not False and evidence.get("smoke_tests_passed") is not True:
                 missing.append("configured smoke tests must pass")
 
             contract_required = (
@@ -89,9 +84,7 @@ def evaluate_completion_quality_gate(
                 or bool(_string_list(evidence.get("api_contract_files_changed")))
             )
             if contract_required and evidence.get("contract_tests_passed") is not True:
-                missing.append(
-                    "contract tests must pass for endpoint/schema/webhook changes"
-                )
+                missing.append("contract tests must pass for endpoint/schema/webhook changes")
 
             production_files = _string_list(evidence.get("production_files_changed"))
             test_files = _string_list(evidence.get("test_files_changed"))
@@ -100,9 +93,7 @@ def evaluate_completion_quality_gate(
             if not test_files:
                 missing.append("relevant test files must be reported")
             if production_files and not test_files:
-                missing.append(
-                    "changed production files must have relevant tests in the same PR"
-                )
+                missing.append("changed production files must have relevant tests in the same PR")
 
             if expected_pr_reference and not _pr_body_has_reference(
                 evidence=evidence,
@@ -229,8 +220,7 @@ def _failing_test_evidence_present(evidence: dict[str, object]) -> bool:
     ):
         return True
     return bool(
-        _str(evidence.get("failing_test_command"))
-        and _str(evidence.get("failing_test_output"))
+        _str(evidence.get("failing_test_command")) and _str(evidence.get("failing_test_output"))
     )
 
 
