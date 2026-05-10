@@ -1776,7 +1776,11 @@ async def test_linear_assigned_issue_hydrates_image_attachment_summary() -> None
     issue_tracker = FakeIssueTracker()
     client = TestClient(
         create_app(
-            Settings(linear_agent_user_id="agent-user-1"),
+            Settings(
+                _env_file=None,
+                linear_agent_user_id="agent-user-1",
+                linear_plan_approval_required=True,
+            ),
             repository=repository,
             task_orchestrator=task_orchestrator,
             design_context=design_context,
