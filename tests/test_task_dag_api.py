@@ -14,6 +14,10 @@ from agentic_sdlc_platform.ports.agent_executor import (
 )
 from agentic_sdlc_platform.ports.issue_tracker import IssueContext, IssueTrackerReply
 from agentic_sdlc_platform.ports.model_provider import ModelRequest, ModelResponse
+from agentic_sdlc_platform.ports.runtime_repo_registry import (
+    RuntimeRepository,
+    RuntimeRepoSyncResult,
+)
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskCommentRequest,
     TaskCommentResponse,
@@ -106,6 +110,25 @@ class FakeTaskOrchestrator:
             comment_id="multica-comment-1",
             status="commented",
             metadata={"commented": True},
+        )
+
+
+class FakeRuntimeRepoRegistry:
+    provider = "multica"
+
+    def __init__(self) -> None:
+        self.sync_requests: list[list[RuntimeRepository]] = []
+
+    async def sync_repositories(
+        self,
+        repositories: list[RuntimeRepository],
+    ) -> RuntimeRepoSyncResult:
+        self.sync_requests.append(list(repositories))
+        return RuntimeRepoSyncResult(
+            provider=self.provider,
+            workspace_id="runtime-workspace-1",
+            repo_count=len(repositories),
+            urls=tuple(repo.clone_url or repo.name for repo in repositories),
         )
 
 
@@ -537,11 +560,14 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
         "context_session_id": None,
         "hermes_session_id": None,
         "orchestrator_idempotency_key": f"{dag_id}:web:0",
-        "execution_mode": "dry_run",
+        "execution_mode": "write_pr",
+        "expected_branch": f"agent/dag/eng-1284/{dag_id}/web",
+        "expected_pr_reference": f"dag/{dag_id}/web",
+        "expected_pr_body_marker": f"dag/{dag_id}/web",
         "execution_policy": {
             "terminal_command_prefix": "rtk",
             "repo_context_policy": "graphstore_first_then_narrow_source_verification",
-            "github_write_enabled": False,
+            "github_write_enabled": True,
         },
         "code_generation_policy": task_orchestrator.requests[0].metadata[
             "code_generation_policy"
@@ -554,7 +580,7 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
             "depends_on_prs": ["api"],
             "unlocks_prs": [],
             "ordering_strategy": "DAG dependency order, then planner order",
-            "branch_pattern": "agent/dag/<dag_id>/<node_key>",
+            "branch_pattern": "agent/dag/<external_id>/<dag_id>/<node_key>",
             "body_reference_pattern": "dag/<dag_id>/<node_key>",
         },
         "repo_context": {
@@ -562,8 +588,52 @@ async def test_complete_dag_node_endpoint_enqueues_newly_ready_nodes() -> None:
             "reason": "graph store access is disabled",
         },
     }
-    assert "expected_branch" not in task_orchestrator.requests[0].metadata
-    assert "expected_pr_reference" not in task_orchestrator.requests[0].metadata
+    assert task_orchestrator.requests[0].metadata["expected_branch"].endswith(
+        f"/{dag_id}/web"
+    )
+    assert task_orchestrator.requests[0].metadata["expected_pr_reference"] == (
+        f"dag/{dag_id}/web"
+    )
+
+
+async def test_complete_dag_node_endpoint_syncs_runtime_repo_at_enqueue() -> None:
+    repository = await build_repository()
+    await repository.upsert_repo(
+        name="erp-web",
+        provider="github",
+        clone_url="https://github.com/acme-corp/erp-web.git",
+        default_branch="main",
+        metadata={"github_html_url": "https://github.com/acme-corp/erp-web"},
+    )
+    task_id = await create_parent_task(repository)
+    model_provider = FakePlannerModel()
+    task_orchestrator = FakeTaskOrchestrator()
+    runtime_repo_registry = FakeRuntimeRepoRegistry()
+    client = TestClient(
+        create_app(
+            Settings(_env_file=None),
+            repository=repository,
+            model_provider=model_provider,
+            task_orchestrator=task_orchestrator,
+            runtime_repo_registry=runtime_repo_registry,
+        )
+    )
+    created = client.post(
+        f"/tasks/{task_id}/dag",
+        json={"spec_markdown": "# Feature\nBuild cross-repo workflow."},
+    )
+    dag_id = created.json()["id"]
+
+    response = client.post(f"/tasks/{task_id}/dag/{dag_id}/nodes/api/complete")
+
+    assert response.status_code == 200
+    assert [repo.name for repo in runtime_repo_registry.sync_requests[0]] == ["erp-web"]
+    assert task_orchestrator.requests[0].metadata["runtime_repo_sync"] == {
+        "provider": "multica",
+        "workspace_id": "runtime-workspace-1",
+        "repo_count": 1,
+        "urls": ["https://github.com/acme-corp/erp-web.git"],
+    }
 
 
 async def test_complete_dag_node_endpoint_can_skip_auto_enqueue() -> None:
@@ -625,7 +695,10 @@ async def test_complete_dag_node_endpoint_requires_quality_evidence_for_pr_nodes
     assert response.status_code == 409
     assert response.json()["detail"] == {
         "message": "DAG node quality gate is not satisfied",
-        "missing": ["test_evidence"],
+            "missing": [
+                "GitHub PR URL is required for approved write execution",
+                "test_evidence",
+            ],
     }
     node = task.json()["dags"][0]["nodes"][0]
     assert node["status"] == "ready"
@@ -951,6 +1024,86 @@ async def test_sync_completed_node_requires_same_pr_rework_when_incomplete() -> 
     assert task_orchestrator.requests == []
 
 
+async def test_sync_completed_node_exposes_external_quota_failure() -> None:
+    repository = await build_repository()
+    task_id = await create_parent_task(repository)
+    task_orchestrator = FakeTaskOrchestrator(
+        read_status="completed",
+        read_metadata={
+            "multica_task_status": "completed",
+            "multica_runtime_provider": "hermes",
+            "result_output": (
+                "API call failed after 3 retries: You exceeded your current quota, "
+                "please check your plan and billing details."
+            ),
+        },
+    )
+    issue_tracker = FakeIssueTracker()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            model_provider=FakePlannerModel(),
+            task_orchestrator=task_orchestrator,
+            issue_tracker=issue_tracker,
+        )
+    )
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask(
+                "implement_eng_1284_with_tests",
+                "Implement ENG-1284 with focused unit tests",
+                repo="platform-service",
+                metadata={
+                    "execution_mode": "write_pr",
+                    "expected_branch": "agent/dag/eng-1284/dag-1/implement_eng_1284_with_tests",
+                    "expected_pr_reference": "dag/dag-1/implement_eng_1284_with_tests",
+                    "linear_task": {"issue_id": "linear-issue-id-1"},
+                },
+            )
+        ],
+    )
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag.id,
+        node_key="implement_eng_1284_with_tests",
+        orchestrator_task_id="multica-task-1",
+        orchestrator_status="queued",
+        metadata={
+            "execution_mode": "write_pr",
+            "expected_branch": "agent/dag/eng-1284/dag-1/implement_eng_1284_with_tests",
+            "expected_pr_reference": "dag/dag-1/implement_eng_1284_with_tests",
+            "linear_task": {"issue_id": "linear-issue-id-1"},
+        },
+    )
+
+    response = client.post(
+        f"/tasks/{task_id}/dag/{dag.id}/nodes/implement_eng_1284_with_tests/sync-orchestrator",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked_external"
+    assert response.json()["user_status"] == "blocked_external"
+    assert response.json()["status_reason"] == "openai_quota_exceeded"
+    assert response.json()["next_action"] == (
+        "Fix the OpenAI key/quota, then retry this DAG node."
+    )
+    assert response.json()["pr_url"] is None
+    assert issue_tracker.replies == [
+        IssueTrackerReply(
+            issue_id="linear-issue-id-1",
+            body=(
+                "DAG node `implement_eng_1284_with_tests` is `blocked_external` "
+                "for `ENG-1284`.\n"
+                "Reason: `openai_quota_exceeded`.\n"
+                "The model provider rejected the run because the configured OpenAI "
+                "key has no available quota.\n"
+                "Next action: Fix the OpenAI key/quota, then retry this DAG node."
+            ),
+        )
+    ]
+
+
 async def test_sync_completed_node_runs_adversarial_loop_and_requeues_on_revision() -> None:
     repository = await build_repository()
     task_id = await create_parent_task(repository)
@@ -1203,7 +1356,7 @@ async def test_get_task_detail_returns_rich_dag_node_metadata() -> None:
         orchestrator_task_id="multica-task-1",
         orchestrator_status="queued",
         metadata={
-            "expected_branch": f"agent/dag/{dag_id}/api",
+            "expected_branch": f"agent/dag/eng-1284/{dag_id}/api",
             "expected_pr_reference": f"dag/{dag_id}/api",
             "multica_issue_id": "issue-1",
             "multica_task_id": "multica-task-1",
@@ -1217,7 +1370,7 @@ async def test_get_task_detail_returns_rich_dag_node_metadata() -> None:
     node = response.json()["dags"][0]["nodes"][0]
     assert node["orchestrator_task_id"] == "multica-task-1"
     assert node["orchestrator_status"] == "queued"
-    assert node["expected_branch"] == f"agent/dag/{dag_id}/api"
+    assert node["expected_branch"] == f"agent/dag/eng-1284/{dag_id}/api"
     assert node["expected_pr_reference"] == f"dag/{dag_id}/api"
     assert node["multica_issue_id"] == "issue-1"
     assert node["multica_task_id"] == "multica-task-1"
@@ -1263,7 +1416,7 @@ async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> No
     assert created_execution.json()["status"] == "running"
     assert created_execution.json()["executor_provider"] == "fake-executor"
     assert created_execution.json()["external_execution_id"] == "exec-api"
-    assert agent_executor.requests[0].branch_name == f"agent/dag/{dag_id}/api"
+    assert agent_executor.requests[0].branch_name == f"agent/dag/eng-1284/{dag_id}/api"
     assert agent_executor.requests[0].pr_reference == f"dag/{dag_id}/api"
     assert agent_executor.requests[0].metadata["code_generation_policy"] == {
         "branching_model": "trunk_based_development",
@@ -1276,17 +1429,26 @@ async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> No
         ),
         "feature_flag_required_for_common_code": True,
         "tests_policy": "implementation_and_relevant_tests_same_pr",
+        "tdd_loop_required": True,
         "test_first_required": True,
         "test_first_policy": (
-            "For write-capable DAG nodes, create or update relevant tests before "
-            "production code edits, then keep tests and implementation in the same PR."
+            "For write-capable DAG nodes, first create or update the focused unit, "
+            "regression, or contract tests and run them to capture a failing red step. "
+            "Then make production code changes in the same PR and rerun the focused "
+            "and configured test gates to green."
+        ),
+        "separate_test_node_policy": (
+            "Do not split implementation and its tests into separate DAG nodes or PRs. "
+            "Each implementation node must contain its own test-first loop. Only "
+            "explicit test-hardening work may be test-only."
         ),
         "changed_file_test_gate": True,
         "contract_tests_required_for_api_changes": True,
         "open_pr_allowed_only_after_tests_passing": True,
         "completion_gate": (
-            "Do not mark a node completed or fixed until unit, focused, contract-when-relevant, "
-            "and configured smoke checks pass, and test evidence is persisted."
+            "Do not mark a node completed or fixed until failing test evidence, "
+            "unit/focused passing evidence, contract-when-relevant evidence, and "
+            "configured smoke evidence are persisted."
         ),
         "merge_order_policy": (
             "merge PRs in DAG dependency order; do not merge a dependent PR first"
@@ -1300,7 +1462,7 @@ async def test_dag_node_execution_api_starts_executor_and_tracks_updates() -> No
         "depends_on_prs": [],
         "unlocks_prs": ["web"],
         "ordering_strategy": "DAG dependency order, then planner order",
-        "branch_pattern": "agent/dag/<dag_id>/<node_key>",
+        "branch_pattern": "agent/dag/<external_id>/<dag_id>/<node_key>",
         "body_reference_pattern": "dag/<dag_id>/<node_key>",
     }
     assert listed.status_code == 200

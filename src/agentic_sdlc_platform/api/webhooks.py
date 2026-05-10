@@ -29,6 +29,7 @@ async def linear_webhook(
         design_context=request.app.state.design_context,
         agent_executor=request.app.state.agent_executor,
         model_provider=request.app.state.model_provider,
+        runtime_repo_registry=request.app.state.runtime_repo_registry,
     )
     payload = await request.body()
     return await bridge.accept_linear(
@@ -60,6 +61,7 @@ async def github_webhook(
         design_context=request.app.state.design_context,
         agent_executor=request.app.state.agent_executor,
         model_provider=request.app.state.model_provider,
+        runtime_repo_registry=request.app.state.runtime_repo_registry,
     )
     payload = await request.body()
     return await bridge.accept_github(

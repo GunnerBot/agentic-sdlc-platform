@@ -2,25 +2,22 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
-from agentic_sdlc_platform.glue.adversarial_loop import run_adversarial_review_loop
 from agentic_sdlc_platform.glue.adversarial_review import normalize_adversarial_review
 from agentic_sdlc_platform.glue.conversation_sync import ConversationSyncService
-from agentic_sdlc_platform.glue.dag_completion_verifier import (
-    CompletionVerification,
-    verify_node_completion,
-)
 from agentic_sdlc_platform.glue.dag_decomposer import DagDecomposer
 from agentic_sdlc_platform.glue.dag_execution import (
     build_dag_node_execution_metadata,
     create_or_start_execution,
 )
+from agentic_sdlc_platform.glue.dag_orchestrator_sync import (
+    DagNodeOrchestratorSyncService,
+    node_status_from_orchestrator,
+)
 from agentic_sdlc_platform.glue.dag_templates import build_dag_template
 from agentic_sdlc_platform.glue.execution_policy import (
     DRY_RUN,
     WRITE_PR,
-    execution_policy_metadata,
     normalize_execution_mode,
-    sanitize_write_metadata,
 )
 from agentic_sdlc_platform.glue.llm_observability import (
     LLM_COST_LEDGER_ARTIFACT_KIND,
@@ -62,7 +59,7 @@ from agentic_sdlc_platform.persistence.models import (
     TaskArtifact,
     TaskDag,
 )
-from agentic_sdlc_platform.ports.task_orchestrator import TaskReadRequest, TaskRequest
+from agentic_sdlc_platform.ports.task_orchestrator import TaskReadRequest
 
 router = APIRouter(tags=["tasks"])
 
@@ -262,7 +259,7 @@ async def sync_session_orchestrator_comments(
         )
         await request.app.state.repository.update_task_status(
             task_id=task.id,
-            status=_node_status_from_orchestrator(external_task.status),
+            status=node_status_from_orchestrator(external_task.status),
         )
         await _record_synced_task_usage(
             request=request,
@@ -539,131 +536,22 @@ async def sync_dag_node_orchestrator_state(
     node_key: str,
     request: Request,
 ) -> TaskDagNodeResponse:
-    dag = await _require_task_dag(request, task_id, dag_id)
-    node = _node_from_dag(dag, node_key)
-    if not node.orchestrator_task_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="DAG node has no orchestrator task",
-        )
+    await _require_task_dag(request, task_id, dag_id)
     read_task = getattr(request.app.state.task_orchestrator, "read_task", None)
     if read_task is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Task orchestrator does not support status sync",
         )
-    external_task = await read_task(
-        TaskReadRequest(
-            external_task_id=node.orchestrator_task_id,
-            metadata=dict(node.metadata_json),
-        )
-    )
-    status_from_orchestrator = _node_status_from_orchestrator(external_task.status)
-    metadata = external_task.metadata
-    verification: CompletionVerification | None = None
-    quality_gate = None
-    if status_from_orchestrator == "completed":
-        node_metadata = dict(node.metadata_json)
-        verification = verify_node_completion(
-            node_key=node.node_key,
-            node_title=node.title,
-            repo=node.repo,
-            metadata=node_metadata,
-            external_metadata=metadata or {},
-        )
-        if verification.satisfied:
-            adversarial_loop = await run_adversarial_review_loop(
-                task=dag.task,
-                dag=dag,
-                node=node,
-                repository=request.app.state.repository,
-                model_provider=request.app.state.model_provider,
-                task_orchestrator=request.app.state.task_orchestrator,
-                settings=request.app.state.settings,
-                external_metadata=metadata or {},
-            )
-            metadata = {
-                **(metadata or {}),
-                **adversarial_loop.node_metadata,
-            }
-            if adversarial_loop.should_requeue:
-                await _record_synced_task_usage(
-                    request=request,
-                    task_id=task_id,
-                    dag_id=dag_id,
-                    node_key=node_key,
-                    external_task=external_task,
-                )
-                return _node_response(
-                    await _requeue_node_after_adversarial_revision(
-                        request=request,
-                        task_id=task_id,
-                        dag_id=dag_id,
-                        node_key=node_key,
-                    )
-                )
-            if adversarial_loop.human_intervention_required:
-                synced_node = await request.app.state.repository.update_dag_node_status(
-                    dag_id=dag_id,
-                    node_key=node_key,
-                    status="needs_input",
-                    orchestrator_status="needs_input",
-                    metadata=metadata,
-                )
-                await _record_synced_task_usage(
-                    request=request,
-                    task_id=task_id,
-                    dag_id=dag_id,
-                    node_key=node_key,
-                    external_task=external_task,
-                )
-                return _node_response(synced_node)
-            node_metadata = {
-                **node_metadata,
-                **adversarial_loop.node_metadata,
-            }
-        quality_gate = evaluate_completion_quality_gate(
-            metadata=node_metadata,
-            external_metadata=metadata or {},
-            expected_pr_reference=f"dag/{dag_id}/{node_key}",
-        )
-        metadata = {
-            **(metadata or {}),
-            "completion_verification": {
-                "status": verification.status,
-                "missing": list(verification.missing),
-                "follow_up_nodes": [followup.id for followup in verification.followups],
-                "evidence": verification.evidence,
-            },
-            "quality_gate": quality_gate_metadata(quality_gate),
-        }
-    synced_node = await request.app.state.repository.update_dag_node_status(
-        dag_id=dag_id,
-        node_key=node_key,
-        status=(
-            "needs_changes"
-            if verification is not None
-            and (
-                not verification.satisfied
-                or quality_gate is not None
-                and not quality_gate.satisfied
-            )
-            and not verification.followups
-            else status_from_orchestrator
-        ),
-        orchestrator_status=external_task.status,
-        metadata=metadata,
-    )
-    await _record_synced_task_usage(
-        request=request,
-        task_id=task_id,
-        dag_id=dag_id,
-        node_key=node_key,
-        external_task=external_task,
-    )
-    if synced_node.status in {"completed", "failed", "skipped"}:
-        await request.app.state.repository.refresh_dag_completion_status(dag_id)
-    return _node_response(synced_node)
+    try:
+        await _dag_sync_service(request).sync_node(dag_id=dag_id, node_key=node_key)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    refreshed = await _require_task_dag(request, task_id, dag_id)
+    return _node_response(_node_from_dag(refreshed, node_key))
 
 
 @router.post(
@@ -767,100 +655,30 @@ async def _enqueue_ready_nodes(
     task,
     ready_nodes,
 ):
-    queued_nodes = []
-    for node in ready_nodes:
-        if node.orchestrator_task_id:
-            queued_nodes.append(node)
-            continue
-        metadata = await build_dag_node_execution_metadata(
+    try:
+        return await _dag_sync_service(request).enqueue_ready_nodes(
             dag=dag,
             task=task,
-            node=node,
-            repository=request.app.state.repository,
-            graph_store=request.app.state.graph_store,
-            settings=request.app.state.settings,
+            ready_nodes=ready_nodes,
         )
-        execution_mode = normalize_execution_mode(
-            metadata.get("execution_mode"),
-            default=request.app.state.settings.agent_default_execution_mode,
-        )
-        metadata["execution_mode"] = execution_mode
-        metadata["execution_policy"] = execution_policy_metadata(execution_mode)
-        metadata["orchestrator_idempotency_key"] = _dag_node_idempotency_key(
-            dag_id=dag.id,
-            node_key=node.node_key,
-            metadata=metadata,
-        )
-        task_metadata = sanitize_write_metadata(
-            metadata,
-            execution_mode=execution_mode,
-        )
-        external_task = await request.app.state.task_orchestrator.create_task(
-            TaskRequest(
-                source="dag",
-                external_id=f"{dag.id}:{node.node_key}",
-                title=node.title,
-                repo=node.repo,
-                metadata=task_metadata,
-            )
-        )
-        persisted_metadata = {
-            **task_metadata,
-            **(external_task.metadata or {}),
-        }
-        queued_nodes.append(
-            await request.app.state.repository.mark_dag_node_orchestrated(
-                dag_id=dag.id,
-                node_key=node.node_key,
-                orchestrator_task_id=external_task.external_task_id,
-                orchestrator_status=external_task.status,
-                metadata=persisted_metadata,
-            )
-        )
-        await create_or_start_execution(
-            repository=request.app.state.repository,
-            agent_executor=request.app.state.agent_executor,
-            dag=dag,
-            task=task,
-            node=node,
-            metadata=persisted_metadata,
-        )
-    return queued_nodes
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
 
 
-async def _requeue_node_after_adversarial_revision(
-    *,
-    request: Request,
-    task_id: str,
-    dag_id: str,
-    node_key: str,
-):
-    await request.app.state.repository.retry_dag_node(
-        dag_id=dag_id,
-        node_key=node_key,
+def _dag_sync_service(request: Request) -> DagNodeOrchestratorSyncService:
+    return DagNodeOrchestratorSyncService(
+        repository=request.app.state.repository,
+        task_orchestrator=request.app.state.task_orchestrator,
+        issue_tracker=request.app.state.issue_tracker,
+        graph_store=request.app.state.graph_store,
+        model_provider=request.app.state.model_provider,
+        settings=request.app.state.settings,
+        agent_executor=request.app.state.agent_executor,
+        runtime_repo_registry=getattr(request.app.state, "runtime_repo_registry", None),
     )
-    dag = await _require_task_dag(request, task_id, dag_id)
-    node = _node_from_dag(dag, node_key)
-    if request.app.state.task_orchestrator is None:
-        return node
-    queued = await _enqueue_ready_nodes(
-        request=request,
-        dag=dag,
-        task=dag.task,
-        ready_nodes=[node],
-    )
-    return queued[0] if queued else node
-
-
-def _dag_node_idempotency_key(
-    *,
-    dag_id: str,
-    node_key: str,
-    metadata: dict[str, object],
-) -> str:
-    retry_count = metadata.get("retry_count")
-    attempt = retry_count if isinstance(retry_count, int) else 0
-    return f"{dag_id}:{node_key}:{attempt}"
 
 
 async def _record_synced_task_usage(
@@ -1015,6 +833,10 @@ def _node_response(node, status_override: str | None = None) -> TaskDagNodeRespo
         repo=node.repo,
         depends_on=list(node.depends_on),
         status=status_override or node.status,
+        user_status=_str_or_none(metadata.get("user_status")),
+        status_reason=_str_or_none(metadata.get("status_reason")),
+        status_detail=_str_or_none(metadata.get("status_detail")),
+        next_action=_str_or_none(metadata.get("next_action")),
         orchestrator_task_id=node.orchestrator_task_id,
         orchestrator_status=node.orchestrator_status,
         pr_number=_int_or_none(metadata.get("pr_number")),
@@ -1161,20 +983,6 @@ def _float_or_none(value: object) -> float | None:
     if isinstance(value, int | float):
         return float(value)
     return None
-
-
-def _node_status_from_orchestrator(status: str) -> str:
-    return {
-        "pending": "queued",
-        "queued": "queued",
-        "dispatched": "running",
-        "running": "running",
-        "needs_input": "needs_input",
-        "completed": "completed",
-        "failed": "failed",
-        "cancelled": "cancelled",
-        "canceled": "cancelled",
-    }.get(status, status)
 
 
 def _execution_response(execution) -> DagNodeExecutionResponse:

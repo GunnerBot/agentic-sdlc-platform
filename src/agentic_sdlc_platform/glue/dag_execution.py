@@ -1,5 +1,8 @@
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.glue.execution_policy import (
+    PLANNING_ONLY,
+    READ_ONLY_QUESTION,
+    WRITE_PR,
     bounded_graph_context,
     code_generation_policy,
     github_write_enabled,
@@ -36,6 +39,10 @@ async def build_dag_node_execution_metadata(
         None,
     )
     node_metadata = dict(getattr(node, "metadata_json", {}) or {})
+    execution_mode = normalize_execution_mode(
+        node_metadata.get("execution_mode"),
+        default=_default_execution_mode_for_node(node),
+    )
     acceptance_criteria_value = node_metadata.get("acceptance_criteria")
     acceptance_criteria = (
         [
@@ -56,8 +63,9 @@ async def build_dag_node_execution_metadata(
         "dependencies_completed": completed_dependencies,
         "context_session_id": active_session.id if active_session else None,
         "hermes_session_id": active_session.hermes_session_id if active_session else None,
+        "execution_mode": execution_mode,
         "expected_pr_reference": expected_pr_reference(dag.id, node.node_key),
-        "expected_branch": expected_branch(dag.id, node.node_key),
+        "expected_branch": expected_branch(dag.id, node.node_key, task.external_id),
         "expected_pr_body_marker": expected_pr_reference(dag.id, node.node_key),
         "code_generation_policy": code_generation_policy(),
         "pr_plan": _pr_plan_metadata(dag=dag, node=node),
@@ -69,6 +77,9 @@ async def build_dag_node_execution_metadata(
         "adversarial_review_max_turns",
         "latest_adversarial_feedback",
         "revision_requested",
+        "latest_quality_feedback",
+        "previous_completion_verification",
+        "previous_quality_gate",
     ):
         if key in node_metadata:
             metadata[key] = node_metadata[key]
@@ -175,8 +186,31 @@ def expected_pr_reference(dag_id: str, node_key: str) -> str:
     return f"dag/{dag_id}/{node_key}"
 
 
-def expected_branch(dag_id: str, node_key: str) -> str:
+def expected_branch(dag_id: str, node_key: str, external_id: str | None = None) -> str:
+    if external_id:
+        return f"agent/dag/{_branch_segment(external_id)}/{dag_id}/{node_key}"
     return f"agent/dag/{dag_id}/{node_key}"
+
+
+def _default_execution_mode_for_node(node) -> str:
+    key = str(getattr(node, "node_key", "") or "").lower()
+    title = str(getattr(node, "title", "") or "").lower()
+    text = f"{key} {title}"
+    if any(token in text for token in ("audit", "validate", "validation", "scope", "plan")):
+        return PLANNING_ONLY
+    if "question" in text or "read only" in text or "read-only" in text:
+        return READ_ONLY_QUESTION
+    return WRITE_PR
+
+
+def _branch_segment(value: str) -> str:
+    normalized = "".join(
+        char.lower() if char.isalnum() else "-"
+        for char in value.strip()
+    ).strip("-")
+    while "--" in normalized:
+        normalized = normalized.replace("--", "-")
+    return normalized or "task"
 
 
 def _pr_plan_metadata(*, dag, node) -> dict[str, object]:
@@ -200,7 +234,7 @@ def _pr_plan_metadata(*, dag, node) -> dict[str, object]:
         "depends_on_prs": dependency_keys,
         "unlocks_prs": dependent_keys,
         "ordering_strategy": "DAG dependency order, then planner order",
-        "branch_pattern": "agent/dag/<dag_id>/<node_key>",
+        "branch_pattern": "agent/dag/<external_id>/<dag_id>/<node_key>",
         "body_reference_pattern": "dag/<dag_id>/<node_key>",
     }
 

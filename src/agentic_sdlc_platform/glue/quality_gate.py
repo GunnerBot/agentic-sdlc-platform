@@ -46,13 +46,33 @@ def evaluate_completion_quality_gate(
     evidence = _test_evidence(merged) if write_quality_applies else {}
     missing: list[str] = []
     if write_quality_applies:
+        expected_branch = _str(merged.get("expected_branch"))
+        expected_pr_reference = expected_pr_reference or _str(
+            merged.get("expected_pr_reference")
+        )
+        if not _pr_url_present(evidence=evidence, external_metadata=external_metadata):
+            missing.append("GitHub PR URL is required for approved write execution")
+        if expected_branch and not _branch_matches(
+            expected_branch=expected_branch,
+            evidence=evidence,
+            external_metadata=external_metadata,
+        ):
+            missing.append(f"PR branch must be {expected_branch}")
         if not evidence:
             missing.append("test_evidence")
         else:
             for key, label in (
+                (
+                    "failing_tests_observed",
+                    "failing test evidence from the test-first red step is required",
+                ),
                 ("unit_tests_passed", "unit tests must pass"),
                 ("focused_tests_passed", "focused tests must pass"),
             ):
+                if key == "failing_tests_observed":
+                    if not _failing_test_evidence_present(evidence):
+                        missing.append(label)
+                    continue
                 if evidence.get(key) is not True:
                     missing.append(label)
 
@@ -75,6 +95,10 @@ def evaluate_completion_quality_gate(
 
             production_files = _string_list(evidence.get("production_files_changed"))
             test_files = _string_list(evidence.get("test_files_changed"))
+            if not production_files:
+                missing.append("changed production files must be reported")
+            if not test_files:
+                missing.append("relevant test files must be reported")
             if production_files and not test_files:
                 missing.append(
                     "changed production files must have relevant tests in the same PR"
@@ -114,7 +138,6 @@ def _write_quality_applies(merged: dict[str, object]) -> bool:
         or merged.get("pr_url")
         or merged.get("pr_number")
         or merged.get("pull_request")
-        or _dict(merged.get("pr_plan"))
     )
 
 
@@ -147,6 +170,43 @@ def _pr_body_has_reference(
     )
 
 
+def _pr_url_present(
+    *,
+    evidence: dict[str, object],
+    external_metadata: dict[str, object],
+) -> bool:
+    for value in (
+        evidence.get("pr_url"),
+        evidence.get("pull_request_url"),
+        evidence.get("pull_request"),
+        external_metadata.get("pr_url"),
+        external_metadata.get("pull_request_url"),
+        external_metadata.get("url"),
+        external_metadata.get("pull_request"),
+    ):
+        if _looks_like_pr_url(_str(value)):
+            return True
+    return False
+
+
+def _looks_like_pr_url(value: str | None) -> bool:
+    if not value:
+        return False
+    return "/pull/" in value and value.startswith(("https://", "http://"))
+
+
+def _branch_matches(
+    *,
+    expected_branch: str,
+    evidence: dict[str, object],
+    external_metadata: dict[str, object],
+) -> bool:
+    for key in ("branch", "branch_name", "head_branch", "pr_branch"):
+        if evidence.get(key) == expected_branch or external_metadata.get(key) == expected_branch:
+            return True
+    return False
+
+
 def _dict(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
@@ -159,6 +219,19 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str) and item.strip()]
+
+
+def _failing_test_evidence_present(evidence: dict[str, object]) -> bool:
+    if (
+        evidence.get("failing_tests_observed") is True
+        or evidence.get("red_tests_observed") is True
+        or evidence.get("test_first_failure_observed") is True
+    ):
+        return True
+    return bool(
+        _str(evidence.get("failing_test_command"))
+        and _str(evidence.get("failing_test_output"))
+    )
 
 
 def _dedupe(values: list[str]) -> list[str]:

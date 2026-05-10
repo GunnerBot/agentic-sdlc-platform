@@ -7,6 +7,7 @@ from agentic_sdlc_platform.adapters.hermes import HermesAgentAdapter
 from agentic_sdlc_platform.adapters.linear import LinearIssueAdapter
 from agentic_sdlc_platform.adapters.local_executor import LocalAgentExecutor
 from agentic_sdlc_platform.adapters.multica import MulticaTaskOrchestrator
+from agentic_sdlc_platform.adapters.multica_workspace import MulticaWorkspaceRepoRegistry
 from agentic_sdlc_platform.adapters.openai import OpenAIModelProvider
 from agentic_sdlc_platform.core.config import Settings
 from agentic_sdlc_platform.glue.channel_budget import ChannelBudgetLedger
@@ -20,6 +21,7 @@ from agentic_sdlc_platform.ports.graph_store import GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort
 from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerPort
 from agentic_sdlc_platform.ports.model_provider import ModelProviderPort
+from agentic_sdlc_platform.ports.runtime_repo_registry import RuntimeRepoRegistryPort
 from agentic_sdlc_platform.ports.source_control import SourceControlPort
 from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
 
@@ -50,6 +52,12 @@ def build_task_orchestrator(settings: Settings) -> TaskOrchestratorPort | None:
     if not settings.multica_http_enabled:
         return None
     return MulticaTaskOrchestrator(settings)
+
+
+def build_runtime_repo_registry(settings: Settings) -> RuntimeRepoRegistryPort | None:
+    if not settings.multica_http_enabled:
+        return None
+    return MulticaWorkspaceRepoRegistry(settings)
 
 
 def build_agent_executor(settings: Settings) -> AgentExecutorPort | None:

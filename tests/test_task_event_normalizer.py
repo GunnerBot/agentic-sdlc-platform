@@ -176,6 +176,7 @@ def test_normalizes_github_pull_request_update_from_branch_ticket_key() -> None:
     assert task_update.status == "pr_open"
     assert task_update.repo == "GunnerBot/agentic-sdlc-platform"
     assert task_update.metadata == {
+        "head_branch": "agent/ENG-1284-build-webhook-bridge",
         "pull_request": 17,
         "url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/17",
     }

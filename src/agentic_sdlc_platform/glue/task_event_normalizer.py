@@ -149,6 +149,9 @@ class TaskEventNormalizer:
             external_id = f"{dag_reference[0]}:{dag_reference[1]}"
 
         metadata: dict[str, object] = {}
+        head_branch = _str_value(_dict_value(pull_request.get("head")).get("ref"))
+        if head_branch:
+            metadata["head_branch"] = head_branch
         number = pull_request.get("number")
         if isinstance(number, int):
             metadata["pull_request"] = number

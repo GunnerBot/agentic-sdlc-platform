@@ -1,9 +1,18 @@
 import asyncio
 from dataclasses import dataclass
 
+from agentic_sdlc_platform.core.config import Settings
+from agentic_sdlc_platform.glue.dag_orchestrator_sync import (
+    DagNodeOrchestratorSyncService,
+    DagNodeSyncResult,
+)
 from agentic_sdlc_platform.persistence.models import AgentSession
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
+from agentic_sdlc_platform.ports.agent_executor import AgentExecutorPort
+from agentic_sdlc_platform.ports.graph_store import GraphStorePort
 from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerPort, IssueTrackerReply
+from agentic_sdlc_platform.ports.model_provider import ModelProviderPort
+from agentic_sdlc_platform.ports.runtime_repo_registry import RuntimeRepoRegistryPort
 from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
 
 
@@ -25,12 +34,27 @@ class ConversationSyncService:
         issue_tracker: IssueTrackerPort | None = None,
         slack_client=None,
         telegram_client=None,
+        graph_store: GraphStorePort | None = None,
+        model_provider: ModelProviderPort | None = None,
+        settings: Settings | None = None,
+        agent_executor: AgentExecutorPort | None = None,
+        runtime_repo_registry: RuntimeRepoRegistryPort | None = None,
     ) -> None:
         self._repository = repository
         self._task_orchestrator = task_orchestrator
         self._issue_tracker = issue_tracker
         self._slack_client = slack_client
         self._telegram_client = telegram_client
+        self._dag_sync = DagNodeOrchestratorSyncService(
+            repository=repository,
+            task_orchestrator=task_orchestrator,
+            issue_tracker=issue_tracker,
+            graph_store=graph_store,
+            model_provider=model_provider,
+            settings=settings,
+            agent_executor=agent_executor,
+            runtime_repo_registry=runtime_repo_registry,
+        )
 
     async def sync_session(self, session_id: str) -> ConversationSyncResult:
         session = await self._repository.get_agent_session(session_id)
@@ -140,6 +164,9 @@ class ConversationSyncService:
                 )
         return results
 
+    async def sync_active_dag_nodes(self, limit: int = 50) -> list[DagNodeSyncResult]:
+        return await self._dag_sync.sync_active_nodes(limit=limit)
+
 
 def _split_slack_thread_id(external_thread_id: str) -> tuple[str | None, str | None]:
     if ":" not in external_thread_id:
@@ -157,6 +184,7 @@ async def run_conversation_sync_loop(
 ) -> None:
     while not stop_event.is_set():
         await service.sync_active_sessions(limit=batch_size)
+        await service.sync_active_dag_nodes(limit=batch_size)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
         except TimeoutError:

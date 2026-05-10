@@ -100,8 +100,8 @@ async def test_openai_provider_routes_roles_to_budgeted_models() -> None:
 
     assert captured_models == [
         "gpt-5-nano",
-        "gpt-5-mini",
-        "gpt-5",
+        "gpt-5.5",
+        "gpt-5.5",
         "gpt-5.5",
     ]
 

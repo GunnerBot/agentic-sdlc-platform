@@ -47,7 +47,7 @@ def test_cost_router_uses_standard_model_for_critic_default() -> None:
     route = CostRouter().route("critic_agent")
 
     assert route.provider == "openai"
-    assert route.model == "gpt-5"
+    assert route.model == "gpt-5.5"
 
 
 def test_cost_router_keeps_premium_model_as_explicit_escalation() -> None:
@@ -59,7 +59,7 @@ def test_cost_router_keeps_premium_model_as_explicit_escalation() -> None:
 
 def test_cost_router_uses_low_cost_models_for_basic_roles() -> None:
     assert CostRouter().route("router_agent").model == "gpt-5-nano"
-    assert CostRouter().route("plan_agent").model == "gpt-5-mini"
+    assert CostRouter().route("plan_agent").model == "gpt-5.5"
 
 
 async def test_deploy_hook_follows_trunk_based_branches() -> None:

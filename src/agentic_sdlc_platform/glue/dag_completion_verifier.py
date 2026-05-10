@@ -31,6 +31,27 @@ def verify_node_completion(
 ) -> CompletionVerification:
     output = _result_output(external_metadata)
     acceptance_criteria = _string_list(metadata.get("acceptance_criteria"))
+    if _is_read_only_audit(metadata):
+        if _declares_audit_failed(output):
+            return CompletionVerification(
+                status="rework_required",
+                missing=("read-only audit did not complete",),
+                evidence={
+                    "output_excerpt": output[:4000],
+                    "pr_url": _first_pr_url(output) or external_metadata.get("pr_url"),
+                },
+            )
+        return CompletionVerification(
+            status="satisfied",
+            evidence={
+                "output_excerpt": output[:4000],
+                "pr_url": _first_pr_url(output) or external_metadata.get("pr_url"),
+                "policy": (
+                    "read-only audit nodes may document implementation next steps "
+                    "without blocking dependent implementation nodes"
+                ),
+            },
+        )
     text = output.lower()
     unresolved = _extract_unresolved_items(output)
     missing = list(unresolved)
@@ -70,6 +91,38 @@ def _result_output(metadata: dict[str, object]) -> str:
         if isinstance(value, str):
             return value
     return ""
+
+
+def _is_read_only_audit(metadata: dict[str, object]) -> bool:
+    execution_mode = metadata.get("execution_mode")
+    node_kind = metadata.get("node_execution_kind")
+    node_mode = metadata.get("node_execution_mode")
+    tdd_required = metadata.get("tdd_required")
+    expected_changes = metadata.get("expected_changes")
+    return (
+        execution_mode == "planning_only"
+        and node_kind == "exploration"
+        and node_mode == "planning_only"
+        and tdd_required is False
+        and isinstance(expected_changes, str)
+        and "no production" in expected_changes.lower()
+    )
+
+
+def _declares_audit_failed(output: str) -> bool:
+    lowered = output.lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "audit failed",
+            "could not complete the audit",
+            "blocked from auditing",
+            "unable to inspect",
+            "unable to check out",
+            "repo checkout failed",
+            "repository checkout failed",
+        )
+    )
 
 
 def _extract_unresolved_items(output: str) -> list[str]:

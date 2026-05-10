@@ -15,6 +15,10 @@ class TaskDagNodeResponse(BaseModel):
     repo: str | None = None
     depends_on: list[str]
     status: str
+    user_status: str | None = None
+    status_reason: str | None = None
+    status_detail: str | None = None
+    next_action: str | None = None
     orchestrator_task_id: str | None = None
     orchestrator_status: str | None = None
     pr_number: int | None = None

@@ -9,7 +9,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agentic_sdlc_platform.app import create_app
 from agentic_sdlc_platform.core.config import Settings
-from agentic_sdlc_platform.glue.human_override import parse_plan_approval
+from agentic_sdlc_platform.glue.human_override import (
+    parse_plan_approval,
+    parse_plan_revision,
+)
 from agentic_sdlc_platform.persistence.models import AuditEvent, Base, Task
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.task_orchestrator import TaskResponse, TaskUpdateRequest
@@ -57,6 +60,18 @@ def test_plan_approval_accepts_real_and_smoke_external_ids() -> None:
     assert real_command.external_id == "ENG-1284"
     assert smoke_command is not None
     assert smoke_command.external_id == "ENG-SMOKE-20260429-A"
+
+
+def test_plan_revision_accepts_multiline_feedback() -> None:
+    command = parse_plan_revision(
+        "/revise-plan ENG-1284 split API and worker changes\n"
+        "Keep contract tests with the API node."
+    )
+
+    assert command is not None
+    assert command.external_id == "ENG-1284"
+    assert "split API and worker changes" in command.feedback
+    assert "contract tests" in command.feedback
 
 
 def signed_slack_headers(body: bytes, secret: str) -> dict[str, str]:

@@ -475,6 +475,16 @@ class PersistenceRepository:
             )
             return result.scalars().first()
 
+    async def update_task_dag_status(self, dag_id: str, status: str) -> TaskDag:
+        async with self._session_factory() as session:
+            dag = await session.get(TaskDag, dag_id)
+            if dag is None:
+                raise LookupError(f"dag {dag_id} not found")
+            dag.status = status
+            dag.updated_at = utc_now()
+            await session.commit()
+            return await self._get_task_dag(session, dag_id)
+
     async def list_ready_dag_nodes(self, task_id: str) -> list[TaskDagNode]:
         async with self._session_factory() as session:
             result = await session.execute(
@@ -843,6 +853,33 @@ class PersistenceRepository:
             )
             if task_id is not None:
                 statement = statement.where(DagNodeExecution.task_id == task_id)
+            result = await session.execute(statement)
+            return list(result.scalars().all())
+
+    async def list_orchestrated_dag_nodes(
+        self,
+        *,
+        statuses: tuple[str, ...] = ("queued", "running"),
+        limit: int = 50,
+    ) -> list[TaskDagNode]:
+        async with self._session_factory() as session:
+            statement = (
+                select(TaskDagNode)
+                .join(TaskDag, TaskDag.id == TaskDagNode.dag_id)
+                .where(
+                    TaskDag.status != "superseded",
+                    TaskDagNode.orchestrator_task_id.is_not(None),
+                    TaskDagNode.status.in_(statuses),
+                )
+                .options(
+                    selectinload(TaskDagNode.dag).selectinload(TaskDag.nodes),
+                    selectinload(TaskDagNode.dag)
+                    .selectinload(TaskDag.task)
+                    .selectinload(Task.sessions),
+                )
+                .order_by(TaskDagNode.updated_at, TaskDagNode.id)
+                .limit(limit)
+            )
             result = await session.execute(statement)
             return list(result.scalars().all())
 

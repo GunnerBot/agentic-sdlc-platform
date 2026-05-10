@@ -64,6 +64,15 @@ class DagDecomposer:
                 acceptance_criteria = []
             if not isinstance(metadata, dict):
                 metadata = {}
+            for metadata_key in (
+                "reasoning",
+                "expected_changes",
+                "test_scope",
+                "risk_or_dependency",
+            ):
+                metadata_value = item.get(metadata_key)
+                if isinstance(metadata_value, str) and metadata_value.strip():
+                    metadata.setdefault(metadata_key, metadata_value)
             subtasks.append(
                 Subtask(
                     id=node_id,

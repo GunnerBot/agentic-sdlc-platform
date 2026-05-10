@@ -57,6 +57,12 @@ class PlanApprovalCommand:
     external_id: str
 
 
+@dataclass(frozen=True)
+class PlanRevisionCommand:
+    external_id: str
+    feedback: str
+
+
 class HumanOverrideHandler:
     def __init__(
         self,
@@ -313,3 +319,19 @@ def parse_plan_approval(text: str) -> PlanApprovalCommand | None:
     if not match:
         return None
     return PlanApprovalCommand(external_id=match.group("external_id"))
+
+
+def parse_plan_revision(text: str) -> PlanRevisionCommand | None:
+    match = re.match(
+        r"^/revise-plan\s+"
+        r"(?P<external_id>[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+)\s+"
+        r"(?P<feedback>.+)$",
+        text.strip(),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+    return PlanRevisionCommand(
+        external_id=match.group("external_id"),
+        feedback=match.group("feedback").strip(),
+    )

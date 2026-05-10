@@ -12,6 +12,10 @@ from agentic_sdlc_platform.ports.graph_store import (
     GraphQueryResult,
     GraphStoreError,
 )
+from agentic_sdlc_platform.ports.runtime_repo_registry import (
+    RuntimeRepository,
+    RuntimeRepoSyncResult,
+)
 from agentic_sdlc_platform.ports.source_control import SourceInstallation, SourceRepository
 
 
@@ -80,6 +84,25 @@ class FakeSourceControl:
         )
 
 
+class FakeRuntimeRepoRegistry:
+    provider = "multica"
+
+    def __init__(self) -> None:
+        self.sync_requests: list[list[RuntimeRepository]] = []
+
+    async def sync_repositories(
+        self,
+        repositories: list[RuntimeRepository],
+    ) -> RuntimeRepoSyncResult:
+        self.sync_requests.append(list(repositories))
+        return RuntimeRepoSyncResult(
+            provider=self.provider,
+            workspace_id="multica-workspace-1",
+            repo_count=len(repositories),
+            urls=tuple(repo.clone_url or repo.name for repo in repositories),
+        )
+
+
 async def build_repository() -> PersistenceRepository:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
@@ -87,9 +110,16 @@ async def build_repository() -> PersistenceRepository:
     return PersistenceRepository(async_sessionmaker(engine, expire_on_commit=False))
 
 
-async def test_create_repo_endpoint_registers_repo_for_multi_repo_work() -> None:
+async def test_create_repo_endpoint_registers_repo_without_runtime_checkout() -> None:
     repository = await build_repository()
-    client = TestClient(create_app(Settings(), repository=repository))
+    runtime_repo_registry = FakeRuntimeRepoRegistry()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            runtime_repo_registry=runtime_repo_registry,
+        )
+    )
 
     response = client.post(
         "/repos",
@@ -106,6 +136,7 @@ async def test_create_repo_endpoint_registers_repo_for_multi_repo_work() -> None
     assert response.json()["name"] == "erp-service"
     assert response.json()["status"] == "active"
     assert response.json()["metadata"] == {"linear_team_key": "OS"}
+    assert runtime_repo_registry.sync_requests == []
 
 
 async def test_list_and_get_repo_endpoints_return_registered_repos() -> None:
@@ -142,8 +173,14 @@ async def test_get_repo_endpoint_returns_404_for_unknown_repo() -> None:
 async def test_index_repo_endpoint_creates_graphify_index_job() -> None:
     repository = await build_repository()
     graph_store = FakeGraphStore()
+    runtime_repo_registry = FakeRuntimeRepoRegistry()
     client = TestClient(
-        create_app(Settings(), repository=repository, graph_store=graph_store)
+        create_app(
+            Settings(),
+            repository=repository,
+            graph_store=graph_store,
+            runtime_repo_registry=runtime_repo_registry,
+        )
     )
     client.post(
         "/repos",
@@ -172,12 +209,21 @@ async def test_index_repo_endpoint_creates_graphify_index_job() -> None:
             metadata={"linear_team_key": "OS"},
         )
     ]
+    assert runtime_repo_registry.sync_requests == []
 
 
 async def test_index_selected_repos_endpoint_indexes_only_requested_repos() -> None:
     repository = await build_repository()
     graph_store = FakeGraphStore()
-    client = TestClient(create_app(Settings(), repository=repository, graph_store=graph_store))
+    runtime_repo_registry = FakeRuntimeRepoRegistry()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            graph_store=graph_store,
+            runtime_repo_registry=runtime_repo_registry,
+        )
+    )
     for repo_name in [
         "atlas-tech-inc/keychain-os-erp",
         "atlas-tech-inc/webapp-monorepo",
@@ -218,6 +264,7 @@ async def test_index_selected_repos_endpoint_indexes_only_requested_repos() -> N
         "atlas-tech-inc/keychain-os-erp",
         "atlas-tech-inc/webapp-monorepo",
     ]
+    assert runtime_repo_registry.sync_requests == []
 
 
 async def test_index_selected_repos_endpoint_rejects_unknown_repos() -> None:
@@ -317,7 +364,15 @@ async def test_ask_repo_endpoint_returns_503_when_graph_store_is_disabled() -> N
 async def test_index_all_repos_indexes_only_active_repositories() -> None:
     repository = await build_repository()
     graph_store = FakeGraphStore()
-    client = TestClient(create_app(Settings(), repository=repository, graph_store=graph_store))
+    runtime_repo_registry = FakeRuntimeRepoRegistry()
+    client = TestClient(
+        create_app(
+            Settings(),
+            repository=repository,
+            graph_store=graph_store,
+            runtime_repo_registry=runtime_repo_registry,
+        )
+    )
     client.post(
         "/repos",
         json={
@@ -352,6 +407,7 @@ async def test_index_all_repos_indexes_only_active_repositories() -> None:
             metadata={},
         )
     ]
+    assert runtime_repo_registry.sync_requests == []
 
 
 async def test_index_all_repos_records_failed_jobs_when_graph_store_is_disabled() -> None:
@@ -438,11 +494,13 @@ async def test_github_app_installation_endpoint_lists_read_write_repositories() 
 async def test_github_app_sync_registers_workspace_repositories_with_write() -> None:
     repository = await build_repository()
     source_control = FakeSourceControl()
+    runtime_repo_registry = FakeRuntimeRepoRegistry()
     client = TestClient(
         create_app(
             Settings(),
             repository=repository,
             source_control=source_control,
+            runtime_repo_registry=runtime_repo_registry,
         )
     )
 
@@ -492,6 +550,7 @@ async def test_github_app_sync_registers_workspace_repositories_with_write() -> 
         "pull_requests": True,
         "push": True,
     }
+    assert runtime_repo_registry.sync_requests == []
 
 
 async def test_github_app_installation_endpoint_requires_configuration() -> None:

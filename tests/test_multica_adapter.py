@@ -150,11 +150,12 @@ def test_multica_description_keeps_branch_reference_only_in_write_mode() -> None
             source="dag",
             external_id="dag-1:design",
             title="Design webhook bridge",
-            repo="erp-service",
+            repo="acme-corp/platform-service",
             metadata={
                 "execution_mode": "write_pr",
                 "expected_branch": "agent/dag/dag-1/design",
                 "expected_pr_reference": "dag/dag-1/design",
+                "repo_clone_url": "https://github.com/acme-corp/platform-service.git",
                 "user_intent": {
                     "title": "Build webhook bridge",
                     "body": "Preserve the full Linear request body.",
@@ -169,9 +170,44 @@ def test_multica_description_keeps_branch_reference_only_in_write_mode() -> None
     assert "GitHub write enabled: true" in description
     assert "Max model retries: 1" in description
     assert "Use trunk-based development" in description
+    assert "complete TDD loop" in description
+    assert "failing red step" in description
+    assert "contract/Schemathesis tests" in description
     assert "feature flag or equivalent compatibility gate" in description
+    assert "Checkout URL: https://github.com/acme-corp/platform-service" in description
+    assert (
+        "`multica repo checkout https://github.com/acme-corp/platform-service`"
+        in description
+    )
+    assert '"repo_checkout_url": "https://github.com/acme-corp/platform-service"' in description
     assert "agent/dag/dag-1/design" in description
     assert "Preserve the full Linear request body." in description
+
+
+def test_multica_description_bounds_planning_only_audit_nodes() -> None:
+    orchestrator = MulticaTaskOrchestrator(multica_settings())
+    description = orchestrator._issue_description(
+        request=TaskRequest(
+            source="dag",
+            external_id="dag-1:audit",
+            title="Audit implementation scope",
+            repo="acme-corp/platform-service",
+            metadata={
+                "execution_mode": "planning_only",
+                "node_execution_kind": "exploration",
+                "repo_context": {
+                    "provider": "graphify",
+                    "answer": "NODE ServiceAdapter [src=service_adapter.py loc=L88]",
+                },
+            },
+        ),
+        runtime_provider="hermes",
+        agent={"id": "agent-hermes", "name": "agentic-sdlc-hermes"},
+    )
+
+    assert "This is a bounded audit node" in description
+    assert "target 8-12 source reads" in description
+    assert "do not perform broad repository scans" in description
 
 
 async def test_multica_adapter_reuses_existing_agent_for_provider_runtime() -> None:

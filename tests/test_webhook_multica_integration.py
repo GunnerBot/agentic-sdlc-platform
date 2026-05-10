@@ -170,6 +170,7 @@ async def test_github_pull_request_webhook_updates_existing_multica_task() -> No
                 "source": "github",
                 "event_type": "pull_request",
                 "external_id": "ENG-1284",
+                "head_branch": "agent/ENG-1284-build-webhook-bridge",
                 "pull_request": 17,
                 "url": "https://github.com/GunnerBot/agentic-sdlc-platform/pull/17",
             },
@@ -224,6 +225,7 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
         orchestrator_status="queued",
         metadata={
             "test_evidence": {
+                "failing_tests_observed": True,
                 "unit_tests_passed": True,
                 "focused_tests_passed": True,
                 "smoke_tests_required": False,
@@ -277,7 +279,9 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
                 "dag_id": dag.id,
                 "node_key": "design",
                 "acceptance_criteria": [],
+                "head_branch": f"agent/dag/{dag.id}/design",
                 "test_evidence": {
+                    "failing_tests_observed": True,
                     "unit_tests_passed": True,
                     "focused_tests_passed": True,
                     "smoke_tests_required": False,
@@ -295,6 +299,7 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
                     "status": "satisfied",
                     "missing": [],
                     "evidence": {
+                        "failing_tests_observed": True,
                         "unit_tests_passed": True,
                         "focused_tests_passed": True,
                         "smoke_tests_required": False,
@@ -313,38 +318,42 @@ async def test_github_pull_request_webhook_completes_dag_node_and_enqueues_next(
     assert task_orchestrator.requests[0].metadata == {
         "parent_task_id": task.id,
         "parent_external_id": "ENG-1284",
-            "dag_id": dag.id,
-            "node_key": "implement",
-            "acceptance_criteria": [],
-            "dependency_node_keys": ["design"],
-            "dependencies_completed": ["design"],
-            "context_session_id": None,
-            "hermes_session_id": None,
-            "orchestrator_idempotency_key": f"{dag.id}:implement:0",
-            "code_generation_policy": task_orchestrator.requests[0].metadata[
-                "code_generation_policy"
-            ],
-            "pr_plan": {
-                "planned_pr_count": 2,
-                "current_pr_index": 2,
-                "current_node_key": "implement",
-                "ordered_node_keys": ["design", "implement"],
-                "depends_on_prs": ["design"],
-                "unlocks_prs": [],
-                "ordering_strategy": "DAG dependency order, then planner order",
-                "branch_pattern": "agent/dag/<dag_id>/<node_key>",
-                "body_reference_pattern": "dag/<dag_id>/<node_key>",
-            },
-            "execution_policy": {
-                "terminal_command_prefix": "rtk",
-                "repo_context_policy": "graphstore_first_then_narrow_source_verification",
-                "github_write_enabled": False,
-            },
-            "repo_context": {
-                "status": "unavailable",
-                "reason": "graph store access is disabled",
-            },
-        }
+        "dag_id": dag.id,
+        "node_key": "implement",
+        "acceptance_criteria": [],
+        "dependency_node_keys": ["design"],
+        "dependencies_completed": ["design"],
+        "context_session_id": None,
+        "hermes_session_id": None,
+        "orchestrator_idempotency_key": f"{dag.id}:implement:0",
+        "execution_mode": "write_pr",
+        "expected_branch": f"agent/dag/eng-1284/{dag.id}/implement",
+        "expected_pr_reference": f"dag/{dag.id}/implement",
+        "expected_pr_body_marker": f"dag/{dag.id}/implement",
+        "code_generation_policy": task_orchestrator.requests[0].metadata[
+            "code_generation_policy"
+        ],
+        "pr_plan": {
+            "planned_pr_count": 2,
+            "current_pr_index": 2,
+            "current_node_key": "implement",
+            "ordered_node_keys": ["design", "implement"],
+            "depends_on_prs": ["design"],
+            "unlocks_prs": [],
+            "ordering_strategy": "DAG dependency order, then planner order",
+            "branch_pattern": "agent/dag/<external_id>/<dag_id>/<node_key>",
+            "body_reference_pattern": "dag/<dag_id>/<node_key>",
+        },
+        "execution_policy": {
+            "terminal_command_prefix": "rtk",
+            "repo_context_policy": "graphstore_first_then_narrow_source_verification",
+            "github_write_enabled": True,
+        },
+        "repo_context": {
+            "status": "unavailable",
+            "reason": "graph store access is disabled",
+        },
+    }
     async with repository._session_factory() as session:
         nodes = (
             await session.scalars(

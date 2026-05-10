@@ -28,6 +28,7 @@ from agentic_sdlc_platform.core.dependencies import (
     build_issue_tracker,
     build_model_provider,
     build_repository,
+    build_runtime_repo_registry,
     build_source_control,
     build_task_orchestrator,
 )
@@ -43,6 +44,7 @@ from agentic_sdlc_platform.ports.graph_store import GraphStorePort
 from agentic_sdlc_platform.ports.hermes_session import HermesSessionPort
 from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerPort
 from agentic_sdlc_platform.ports.model_provider import ModelProviderPort
+from agentic_sdlc_platform.ports.runtime_repo_registry import RuntimeRepoRegistryPort
 from agentic_sdlc_platform.ports.source_control import SourceControlPort
 from agentic_sdlc_platform.ports.task_orchestrator import TaskOrchestratorPort
 
@@ -68,6 +70,7 @@ def create_app(
     issue_tracker: IssueTrackerPort | None = None,
     agent_executor: AgentExecutorPort | None = None,
     source_control: SourceControlPort | None = None,
+    runtime_repo_registry: RuntimeRepoRegistryPort | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     app = FastAPI(
@@ -103,6 +106,11 @@ def create_app(
     app.state.issue_tracker = issue_tracker or build_issue_tracker(resolved_settings)
     app.state.agent_executor = agent_executor or build_agent_executor(resolved_settings)
     app.state.source_control = source_control or build_source_control(resolved_settings)
+    app.state.runtime_repo_registry = (
+        runtime_repo_registry
+        if runtime_repo_registry is not None or repository is not None
+        else build_runtime_repo_registry(resolved_settings)
+    )
     app.state.slack_client = SlackClient(resolved_settings)
     app.state.telegram_client = TelegramClient(resolved_settings)
     app.state.conversation_sync_stop_event = None
@@ -215,6 +223,11 @@ async def _start_conversation_sync_loop(app: FastAPI) -> None:
                 issue_tracker=app.state.issue_tracker,
                 slack_client=app.state.slack_client,
                 telegram_client=app.state.telegram_client,
+                graph_store=app.state.graph_store,
+                model_provider=app.state.model_provider,
+                settings=app.state.settings,
+                agent_executor=app.state.agent_executor,
+                runtime_repo_registry=app.state.runtime_repo_registry,
             ),
             interval_seconds=app.state.settings.conversation_sync_interval_seconds,
             batch_size=app.state.settings.conversation_sync_batch_size,

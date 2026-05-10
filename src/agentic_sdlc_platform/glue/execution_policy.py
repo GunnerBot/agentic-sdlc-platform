@@ -26,17 +26,26 @@ def code_generation_policy() -> dict[str, object]:
         ),
         "feature_flag_required_for_common_code": True,
         "tests_policy": "implementation_and_relevant_tests_same_pr",
+        "tdd_loop_required": True,
         "test_first_required": True,
         "test_first_policy": (
-            "For write-capable DAG nodes, create or update relevant tests before "
-            "production code edits, then keep tests and implementation in the same PR."
+            "For write-capable DAG nodes, first create or update the focused unit, "
+            "regression, or contract tests and run them to capture a failing red step. "
+            "Then make production code changes in the same PR and rerun the focused "
+            "and configured test gates to green."
+        ),
+        "separate_test_node_policy": (
+            "Do not split implementation and its tests into separate DAG nodes or PRs. "
+            "Each implementation node must contain its own test-first loop. Only "
+            "explicit test-hardening work may be test-only."
         ),
         "changed_file_test_gate": True,
         "contract_tests_required_for_api_changes": True,
         "open_pr_allowed_only_after_tests_passing": True,
         "completion_gate": (
-            "Do not mark a node completed or fixed until unit, focused, contract-when-relevant, "
-            "and configured smoke checks pass, and test evidence is persisted."
+            "Do not mark a node completed or fixed until failing test evidence, "
+            "unit/focused passing evidence, contract-when-relevant evidence, and "
+            "configured smoke evidence are persisted."
         ),
         "merge_order_policy": (
             "merge PRs in DAG dependency order; do not merge a dependent PR first"

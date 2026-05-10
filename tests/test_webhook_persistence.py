@@ -17,7 +17,7 @@ async def build_repository() -> PersistenceRepository:
 
 async def test_linear_webhook_persists_inbound_event_and_audit_event() -> None:
     repository = await build_repository()
-    client = TestClient(create_app(Settings(), repository=repository))
+    client = TestClient(create_app(Settings(_env_file=None), repository=repository))
 
     response = client.post(
         "/webhooks/linear",
@@ -49,7 +49,7 @@ async def test_linear_webhook_persists_inbound_event_and_audit_event() -> None:
 
 async def test_linear_webhook_duplicate_delivery_is_idempotent() -> None:
     repository = await build_repository()
-    client = TestClient(create_app(Settings(), repository=repository))
+    client = TestClient(create_app(Settings(_env_file=None), repository=repository))
     headers = {"Linear-Delivery": "delivery-1"}
 
     first = client.post("/webhooks/linear", content=b'{"type":"Issue"}', headers=headers)
@@ -63,7 +63,7 @@ async def test_linear_webhook_duplicate_delivery_is_idempotent() -> None:
 
 async def test_github_webhook_persists_delivery_id() -> None:
     repository = await build_repository()
-    client = TestClient(create_app(Settings(), repository=repository))
+    client = TestClient(create_app(Settings(_env_file=None), repository=repository))
 
     response = client.post(
         "/webhooks/github",
@@ -82,7 +82,7 @@ async def test_github_webhook_persists_delivery_id() -> None:
 
 async def test_linear_issue_webhook_creates_internal_task() -> None:
     repository = await build_repository()
-    client = TestClient(create_app(Settings(), repository=repository))
+    client = TestClient(create_app(Settings(_env_file=None), repository=repository))
 
     response = client.post(
         "/webhooks/linear",

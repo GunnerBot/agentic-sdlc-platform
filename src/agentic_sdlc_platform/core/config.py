@@ -86,15 +86,15 @@ class Settings(BaseSettings):
     claude_max_retries: int = 2
     openai_base_url: str = "https://api.openai.com/v1"
     openai_api_key: str | None = Field(default=None, repr=False)
-    openai_default_model: str = "gpt-5-mini"
+    openai_default_model: str = "gpt-5.5"
     openai_fallback_model: str = "gpt-5"
     openai_router_model: str = "gpt-5-nano"
     openai_summary_model: str = "gpt-5-nano"
     openai_qa_model: str = "gpt-5-mini"
-    openai_planner_model: str = "gpt-5-mini"
-    openai_planner_escalation_model: str = "gpt-5"
-    openai_write_model: str = "gpt-5-mini"
-    openai_write_escalation_model: str = "gpt-5"
+    openai_planner_model: str = "gpt-5.5"
+    openai_planner_escalation_model: str = "gpt-5.5"
+    openai_write_model: str = "gpt-5.5"
+    openai_write_escalation_model: str = "gpt-5.5"
     openai_premium_escalation_model: str = "gpt-5.5"
     openai_timeout_seconds: float = 30.0
     openai_max_retries: int = 1

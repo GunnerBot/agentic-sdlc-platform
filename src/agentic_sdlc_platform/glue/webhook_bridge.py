@@ -14,7 +14,7 @@ from agentic_sdlc_platform.glue.dag_execution import (
 )
 from agentic_sdlc_platform.glue.dag_templates import build_dag_template
 from agentic_sdlc_platform.glue.execution_policy import (
-    WRITE_PR,
+    PLANNING_ONLY,
     bounded_graph_context,
     execution_policy_metadata,
     normalize_execution_mode,
@@ -23,9 +23,11 @@ from agentic_sdlc_platform.glue.execution_policy import (
 from agentic_sdlc_platform.glue.human_override import (
     HumanOverrideCommand,
     HumanOverrideHandler,
+    PlanRevisionCommand,
     TaskInfoCommand,
     parse_human_override,
     parse_plan_approval,
+    parse_plan_revision,
     parse_task_info,
 )
 from agentic_sdlc_platform.glue.llm_observability import record_llm_cost_ledger
@@ -33,8 +35,15 @@ from agentic_sdlc_platform.glue.quality_gate import (
     evaluate_completion_quality_gate,
     quality_gate_metadata,
 )
+from agentic_sdlc_platform.glue.runtime_repo_sync import (
+    sync_runtime_repositories_for_execution,
+)
 from agentic_sdlc_platform.glue.spec_ingestion import (
+    DesignAsset,
+    RepoMatch,
+    RepoScope,
     SpecIngestionBundle,
+    TextSource,
     ingest_linear_spec,
     linear_design_references,
     linear_document_urls,
@@ -74,6 +83,10 @@ from agentic_sdlc_platform.ports.model_provider import (
     ModelProviderPort,
     ModelRequest,
 )
+from agentic_sdlc_platform.ports.runtime_repo_registry import (
+    RuntimeRepoRegistryError,
+    RuntimeRepoRegistryPort,
+)
 from agentic_sdlc_platform.ports.task_orchestrator import (
     TaskCommentRequest,
     TaskOrchestratorPort,
@@ -95,6 +108,13 @@ class LinearDagPlan:
     node_keys: list[str]
     repo_contexts: dict[str, object]
     fallback_reason: str | None = None
+    validation_error: str | None = None
+    validation_errors: list[str] | None = None
+    planner_attempts: int = 0
+    validation_node_added: bool = False
+    node_quality_gates_enabled: bool = True
+    planning_failed: bool = False
+    failure_message: str | None = None
     model_provider: str | None = None
     model: str | None = None
 
@@ -112,6 +132,7 @@ class WebhookBridge:
         design_context: DesignContextPort | None = None,
         agent_executor: AgentExecutorPort | None = None,
         model_provider: ModelProviderPort | None = None,
+        runtime_repo_registry: RuntimeRepoRegistryPort | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
@@ -123,6 +144,7 @@ class WebhookBridge:
         self._design_context = design_context
         self._agent_executor = agent_executor
         self._model_provider = model_provider
+        self._runtime_repo_registry = runtime_repo_registry
         self._normalizer = TaskEventNormalizer(
             linear_agent_user_id=settings.linear_agent_user_id,
             default_execution_mode=settings.agent_default_execution_mode,
@@ -268,6 +290,17 @@ class WebhookBridge:
                 body=body,
                 actor=actor,
                 external_id=approval_command.external_id,
+            )
+
+        revision_command = parse_plan_revision(body)
+        if revision_command is not None:
+            return await self._handle_linear_plan_revision_command(
+                agent_session_id=agent_session.id,
+                issue_id=issue_id,
+                comment_id=comment_id,
+                body=body,
+                actor=actor,
+                command=revision_command,
             )
 
         info_command = parse_task_info(body)
@@ -556,6 +589,7 @@ class WebhookBridge:
             repo=repo_name,
             status="queued",
         )
+        task = await self._repository.get_task(task.id) or task
         task_metadata: dict[str, object] = {
             "repo_provider": repo.provider,
             "repo_clone_url": repo.clone_url,
@@ -571,9 +605,154 @@ class WebhookBridge:
         if repo_context is not None:
             task_metadata["repo_context"] = repo_context
 
+        restored = _restored_linear_spec_from_task(task)
+        if restored is not None:
+            restored_event, restored_bundle, hydrated_spec_artifact_id = restored
+            dag_task_event = replace(
+                restored_event,
+                issue_id=restored_event.issue_id or issue_id,
+                repo=repo_name,
+            )
+            dag_spec_bundle = _linear_spec_bundle_with_resolved_repo(
+                restored_bundle,
+                repo_name,
+            )
+        else:
+            hydrated_spec_artifact_id = None
+            dag_task_event = replace(clarification_event, repo=repo_name)
+            dag_spec_bundle = _linear_spec_bundle_with_resolved_repo(
+                spec_bundle,
+                repo_name,
+            )
+        if self._linear_spec_dag_requested(dag_spec_bundle):
+            dag_plan = await self._plan_linear_spec_dag(
+                task_id=task.id,
+                task_event=dag_task_event,
+                spec_bundle=dag_spec_bundle,
+                registered_repos=registered_repos,
+            )
+            if dag_plan.planning_failed or not dag_plan.subtasks:
+                task = await self._repository.update_task_status(
+                    task_id=task.id,
+                    status="blocked",
+                )
+                reply_body = _linear_planning_failed_reply(
+                    external_id=task.external_id,
+                    dag_plan=dag_plan,
+                )
+                if self._issue_tracker is not None:
+                    await self._issue_tracker.reply(
+                        IssueTrackerReply(issue_id=issue_id, body=reply_body)
+                    )
+                return task.id
+
+            dag = await self._repository.create_task_dag(
+                task_id=task.id,
+                subtasks=dag_plan.subtasks,
+            )
+            node_metadata = _linear_spec_node_metadata(
+                task_event=dag_task_event,
+                spec_bundle=dag_spec_bundle,
+                dag_plan=dag_plan,
+                hydrated_spec_artifact_id=hydrated_spec_artifact_id,
+            )
+            node_metadata["repo_clarification"] = {
+                "comment_id": comment_id,
+                "actor": actor,
+                "resolved_repo": repo_name,
+            }
+            for node in dag.nodes:
+                await self._repository.update_dag_node_metadata(
+                    dag_id=dag.id,
+                    node_key=node.node_key,
+                    metadata=node_metadata,
+                )
+
+            planned_node_keys = [node.node_key for node in dag.nodes]
+            plan_approval_required = self._settings.linear_plan_approval_required
+            first_dag_node: str | None = None
+            first_dag_node_status: str | None = None
+            if plan_approval_required:
+                task = await self._repository.update_task_status(
+                    task_id=task.id,
+                    status="needs_plan_approval",
+                )
+            elif self._task_orchestrator is not None:
+                ready_nodes = [
+                    node
+                    for node in dag.nodes
+                    if node.status == "ready" and not node.depends_on
+                ]
+                queued_nodes = await self._enqueue_ready_dag_nodes(
+                    dag=dag,
+                    task=task,
+                    ready_nodes=ready_nodes,
+                )
+                if queued_nodes:
+                    first_dag_node = queued_nodes[0].node_key
+                    first_dag_node_status = queued_nodes[0].status
+
+            reply_body = _linear_assignment_reply(
+                external_id=task.external_id,
+                repo=repo_name,
+                dag_template="linear-spec",
+                first_dag_node=first_dag_node,
+                first_dag_node_status=first_dag_node_status,
+                spec_bundle=dag_spec_bundle,
+                dag_plan=dag_plan,
+                dag_id=dag.id,
+                planned_node_keys=planned_node_keys,
+                plan_approval_required=plan_approval_required,
+            )
+            await self._repository.record_session_event(
+                session_id=agent_session_id,
+                direction="outbound",
+                event_type="repo_clarification_resolved",
+                actor="system",
+                message=reply_body,
+                metadata={
+                    "comment_id": comment_id,
+                    "resolved_repo": repo_name,
+                    "dag_id": dag.id,
+                    "node_keys": planned_node_keys,
+                },
+            )
+            if self._issue_tracker is not None:
+                await self._issue_tracker.reply(
+                    IssueTrackerReply(issue_id=issue_id, body=reply_body)
+                )
+            await self._repository.record_audit_event(
+                action="task.repo_clarification_resolved_to_dag",
+                actor=actor,
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "provider": "linear",
+                    "issue_id": issue_id,
+                    "comment_id": comment_id,
+                    "repo": repo_name,
+                    "dag_id": dag.id,
+                    "node_keys": planned_node_keys,
+                    "planning_strategy": dag_plan.strategy,
+                },
+            )
+            return task.id
+
         external_task_id = task.orchestrator_task_id
         external_status = task.orchestrator_status
         if self._task_orchestrator is not None:
+            runtime_sync = await sync_runtime_repositories_for_execution(
+                repository=self._repository,
+                runtime_repo_registry=self._runtime_repo_registry,
+                requested_repo=repo_name,
+            )
+            if runtime_sync is not None:
+                task_metadata["runtime_repo_sync"] = {
+                    "provider": runtime_sync.provider,
+                    "workspace_id": runtime_sync.workspace_id,
+                    "repo_count": runtime_sync.repo_count,
+                    "urls": list(runtime_sync.urls),
+                }
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
                     source=task.source,
@@ -671,7 +850,14 @@ class WebhookBridge:
                 )
             return None
 
-        dag = task.dags[0]
+        dag = _latest_task_dag(task)
+        if dag is None:
+            reply_body = f"Task {external_id} has no active plan to approve."
+            if self._issue_tracker is not None:
+                await self._issue_tracker.reply(
+                    IssueTrackerReply(issue_id=issue_id, body=reply_body)
+                )
+            return task.id
         ready_nodes = await self._repository.list_ready_dag_nodes_for_dag(dag.id)
         queued_nodes = []
         if self._task_orchestrator is not None:
@@ -683,7 +869,6 @@ class WebhookBridge:
                 task=dag.task,
                 ready_nodes=ready_nodes,
                 extra_metadata={
-                    "execution_mode": WRITE_PR,
                     "plan_approved": True,
                     "plan_approved_by": actor,
                     "plan_approval_comment_id": comment_id,
@@ -722,6 +907,178 @@ class WebhookBridge:
                 "comment_id": comment_id,
                 "dag_id": dag.id,
                 "queued_nodes": queued_names,
+            },
+        )
+        return task.id
+
+    async def _handle_linear_plan_revision_command(
+        self,
+        agent_session_id: str,
+        issue_id: str,
+        comment_id: str | None,
+        body: str,
+        actor: str,
+        command: PlanRevisionCommand,
+    ) -> str | None:
+        await self._repository.record_session_event(
+            session_id=agent_session_id,
+            direction="inbound",
+            event_type="revise_plan_command",
+            actor=actor,
+            message=body,
+            metadata={"comment_id": comment_id} if comment_id else {},
+        )
+        task = await self._repository.find_task_by_external_id(command.external_id)
+        if task is None:
+            reply_body = f"Task {command.external_id} has no plan to revise."
+            if self._issue_tracker is not None:
+                await self._issue_tracker.reply(
+                    IssueTrackerReply(issue_id=issue_id, body=reply_body)
+                )
+            return None
+
+        current_dag = _latest_task_dag(task)
+        if current_dag is None:
+            reply_body = f"Task {command.external_id} has no plan to revise."
+            if self._issue_tracker is not None:
+                await self._issue_tracker.reply(
+                    IssueTrackerReply(issue_id=issue_id, body=reply_body)
+                )
+            return task.id
+        if _dag_execution_started(current_dag):
+            reply_body = (
+                f"Plan revision rejected for {command.external_id}: execution has "
+                "already started. Add implementation feedback as a normal issue "
+                "comment or use the node change workflow."
+            )
+            await self._repository.record_session_event(
+                session_id=agent_session_id,
+                direction="outbound",
+                event_type="plan_revision_rejected",
+                actor="system",
+                message=reply_body,
+                metadata={"dag_id": current_dag.id, "comment_id": comment_id},
+            )
+            if self._issue_tracker is not None:
+                await self._issue_tracker.reply(
+                    IssueTrackerReply(issue_id=issue_id, body=reply_body)
+                )
+            return task.id
+
+        restored = _restored_linear_spec_from_task(task)
+        if restored is None:
+            reply_body = (
+                f"Plan revision rejected for {command.external_id}: the hydrated "
+                "Linear spec artifact is missing."
+            )
+            if self._issue_tracker is not None:
+                await self._issue_tracker.reply(
+                    IssueTrackerReply(issue_id=issue_id, body=reply_body)
+                )
+            return task.id
+
+        task_event, spec_bundle, hydrated_spec_artifact_id = restored
+        registered_repos = await self._repository.list_repos(status="active")
+        dag_plan = await self._plan_linear_spec_dag(
+            task_id=task.id,
+            task_event=task_event,
+            spec_bundle=spec_bundle,
+            registered_repos=registered_repos,
+            revision_feedback=command.feedback,
+            previous_subtasks=_subtasks_from_dag(current_dag),
+        )
+        if dag_plan.planning_failed or not dag_plan.subtasks:
+            reply_body = _linear_planning_failed_reply(
+                external_id=command.external_id,
+                dag_plan=dag_plan,
+            )
+            await self._repository.record_audit_event(
+                action="task.dag_revision_planning_failed",
+                actor=actor,
+                target_type="task",
+                target_id=task.id,
+                metadata={
+                    "previous_dag_id": current_dag.id,
+                    "fallback_reason": dag_plan.fallback_reason,
+                    "validation_errors": dag_plan.validation_errors or [],
+                    "planner_attempts": dag_plan.planner_attempts,
+                    "feedback": command.feedback,
+                },
+            )
+            if self._issue_tracker is not None:
+                await self._issue_tracker.reply(
+                    IssueTrackerReply(issue_id=issue_id, body=reply_body)
+                )
+            return task.id
+
+        await self._repository.update_task_dag_status(current_dag.id, "superseded")
+        new_dag = await self._repository.create_task_dag(
+            task_id=task.id,
+            subtasks=dag_plan.subtasks,
+        )
+        node_metadata = _linear_spec_node_metadata(
+            task_event=task_event,
+            spec_bundle=spec_bundle,
+            dag_plan=dag_plan,
+            hydrated_spec_artifact_id=hydrated_spec_artifact_id,
+        )
+        node_metadata["revision_feedback"] = command.feedback
+        node_metadata["supersedes_dag_id"] = current_dag.id
+        for node in new_dag.nodes:
+            await self._repository.update_dag_node_metadata(
+                dag_id=new_dag.id,
+                node_key=node.node_key,
+                metadata=node_metadata,
+            )
+        await self._repository.update_task_status(
+            task_id=task.id,
+            status="needs_plan_approval",
+        )
+        planned_node_keys = [node.node_key for node in new_dag.nodes]
+        reply_body = _linear_assignment_reply(
+            external_id=command.external_id,
+            repo=task.repo,
+            dag_template="linear-spec",
+            first_dag_node=None,
+            first_dag_node_status=None,
+            spec_bundle=spec_bundle,
+            dag_plan=dag_plan,
+            dag_id=new_dag.id,
+            planned_node_keys=planned_node_keys,
+            plan_approval_required=True,
+            revision_feedback=command.feedback,
+        )
+        await self._repository.record_session_event(
+            session_id=agent_session_id,
+            direction="outbound",
+            event_type="plan_revised",
+            actor="system",
+            message=reply_body,
+            metadata={
+                "comment_id": comment_id,
+                "previous_dag_id": current_dag.id,
+                "dag_id": new_dag.id,
+                "node_keys": planned_node_keys,
+            },
+        )
+        if self._issue_tracker is not None:
+            await self._issue_tracker.reply(
+                IssueTrackerReply(issue_id=issue_id, body=reply_body)
+            )
+        await self._repository.record_audit_event(
+            action="task.plan_revised",
+            actor=actor,
+            target_type="task",
+            target_id=task.id,
+            metadata={
+                "provider": "linear",
+                "issue_id": issue_id,
+                "comment_id": comment_id,
+                "previous_dag_id": current_dag.id,
+                "dag_id": new_dag.id,
+                "node_keys": planned_node_keys,
+                "feedback": command.feedback,
+                "planning_strategy": dag_plan.strategy,
             },
         )
         return task.id
@@ -874,6 +1231,8 @@ class WebhookBridge:
         )
         repo_name: str | None = None
         dag_template: str | None = None
+        dag = None
+        dag_plan: LinearDagPlan | None = None
         first_dag_node: str | None = None
         first_dag_node_status: str | None = None
         planned_node_keys: list[str] = []
@@ -946,6 +1305,18 @@ class WebhookBridge:
                 repo=effective_repo,
             )
         if self._task_orchestrator is not None and not parent_orchestration_deferred:
+            runtime_sync = await sync_runtime_repositories_for_execution(
+                repository=self._repository,
+                runtime_repo_registry=self._runtime_repo_registry,
+                requested_repo=effective_repo,
+            )
+            if runtime_sync is not None:
+                task_metadata["runtime_repo_sync"] = {
+                    "provider": runtime_sync.provider,
+                    "workspace_id": runtime_sync.workspace_id,
+                    "repo_count": runtime_sync.repo_count,
+                    "urls": list(runtime_sync.urls),
+                }
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
                     source=task_event.source,
@@ -1047,6 +1418,7 @@ class WebhookBridge:
             source == "linear"
             and task_event.issue_id
             and self._hermes_session is not None
+            and not parent_orchestration_deferred
         ):
             try:
                 await self._start_linear_agent_session(
@@ -1098,6 +1470,39 @@ class WebhookBridge:
                 spec_bundle=spec_bundle,
                 registered_repos=registered_repos,
             )
+            if dag_plan.planning_failed or not dag_plan.subtasks:
+                task = await self._repository.update_task_status(
+                    task_id=task.id,
+                    status="planning_failed",
+                )
+                await self._repository.record_audit_event(
+                    action="task.dag_planning_failed",
+                    actor="system",
+                    target_type="task",
+                    target_id=task.id,
+                    metadata={
+                        "template": dag_template,
+                        "strategy": dag_plan.strategy,
+                        "fallback_reason": dag_plan.fallback_reason,
+                        "validation_error": dag_plan.validation_error,
+                        "validation_errors": dag_plan.validation_errors or [],
+                        "planner_attempts": dag_plan.planner_attempts,
+                        "model_provider": dag_plan.model_provider,
+                        "model": dag_plan.model,
+                        "failure_message": dag_plan.failure_message,
+                    },
+                )
+                if self._issue_tracker is not None and task_event.issue_id:
+                    await self._issue_tracker.reply(
+                        IssueTrackerReply(
+                            issue_id=task_event.issue_id,
+                            body=_linear_planning_failed_reply(
+                                external_id=task_event.external_id,
+                                dag_plan=dag_plan,
+                            ),
+                        )
+                    )
+                return task.id
             dag = await self._repository.create_task_dag(
                 task_id=task.id,
                 subtasks=dag_plan.subtasks,
@@ -1127,6 +1532,11 @@ class WebhookBridge:
                     "node_count": len(dag.nodes),
                     "node_keys": planned_node_keys,
                     "repo_contexts": dag_plan.repo_contexts,
+                    "validation_error": dag_plan.validation_error,
+                    "validation_errors": dag_plan.validation_errors or [],
+                    "planner_attempts": dag_plan.planner_attempts,
+                    "validation_node_added": dag_plan.validation_node_added,
+                    "node_quality_gates_enabled": dag_plan.node_quality_gates_enabled,
                     "model_provider": dag_plan.model_provider,
                     "model": dag_plan.model,
                 },
@@ -1184,6 +1594,8 @@ class WebhookBridge:
                 first_dag_node=first_dag_node,
                 first_dag_node_status=first_dag_node_status,
                 spec_bundle=spec_bundle,
+                dag_plan=dag_plan,
+                dag_id=dag.id if dag is not None else None,
                 planned_node_keys=planned_node_keys,
                 plan_approval_required=plan_approval_required,
             )
@@ -1358,13 +1770,18 @@ class WebhookBridge:
         task_event: NormalizedTaskEvent,
         spec_bundle: SpecIngestionBundle,
         registered_repos: list[object],
+        revision_feedback: str | None = None,
+        previous_subtasks: list[Subtask] | None = None,
     ) -> LinearDagPlan:
         repo_names = list(spec_bundle.selected_repos)
         repo_contexts: dict[str, object] = {}
         fallback_reason: str | None = None
         model_provider: str | None = None
         model: str | None = None
+        validation_error: str | None = None
+        validation_errors: list[str] = []
         planned_subtasks: list[Subtask] = []
+        planner_attempts = 0
 
         if self._model_planning_configured():
             repo_contexts = await self._linear_planner_repo_contexts(
@@ -1372,60 +1789,146 @@ class WebhookBridge:
                 spec_bundle=spec_bundle,
                 repo_names=repo_names,
             )
-            prompt = _linear_spec_planner_prompt(
+            base_prompt = _linear_spec_planner_prompt(
                 task_event=task_event,
                 spec_bundle=spec_bundle,
                 repo_contexts=repo_contexts,
+                revision_feedback=revision_feedback,
+                previous_subtasks=previous_subtasks,
             )
             try:
-                response = await self._model_provider.complete(
-                    ModelRequest(
-                        role="plan_agent",
-                        prompt=prompt,
-                        metadata={"source": "linear", "external_id": task_event.external_id},
+                for attempt in range(3):
+                    prompt = (
+                        base_prompt
+                        if attempt == 0
+                        else _linear_spec_planner_retry_prompt(
+                            base_prompt,
+                            validation_error or "model plan failed validation",
+                            escalation=attempt == 2,
+                        )
                     )
-                )
-                model_provider = response.provider
-                model = response.model
-                await record_llm_cost_ledger(
-                    repository=self._repository,
-                    task_id=task_id,
-                    usage=response.usage,
-                    source="model_provider.plan_agent",
-                    source_id=response.request_id,
-                    metadata={
-                        "provider": response.provider,
-                        "model": response.model,
+                    request_metadata = {
+                        "source": "linear",
                         "external_id": task_event.external_id,
-                    },
-                )
-                parsed_subtasks = DagDecomposer().parse_subtasks(response.content)
-                planned_subtasks = _valid_planned_subtasks(
-                    subtasks=parsed_subtasks,
-                    allowed_repos=set(repo_names),
-                )
+                        "attempt": str(attempt + 1),
+                    }
+                    if attempt == 2:
+                        escalation_model = (
+                            self._settings.openai_planner_escalation_model
+                            if self._settings.model_provider == "openai"
+                            else self._settings.claude_default_model or ""
+                        )
+                        if escalation_model:
+                            request_metadata["model"] = escalation_model
+                    response = await self._model_provider.complete(
+                        ModelRequest(
+                            role="plan_agent",
+                            prompt=prompt,
+                            metadata=request_metadata,
+                        )
+                    )
+                    planner_attempts = attempt + 1
+                    model_provider = response.provider
+                    model = response.model
+                    await record_llm_cost_ledger(
+                        repository=self._repository,
+                        task_id=task_id,
+                        usage=response.usage,
+                        source=(
+                            "model_provider.plan_agent"
+                            if attempt == 0
+                            else (
+                                "model_provider.plan_agent.escalation"
+                                if attempt == 2
+                                else "model_provider.plan_agent.retry"
+                            )
+                        ),
+                        source_id=response.request_id,
+                        metadata={
+                            "provider": response.provider,
+                            "model": response.model,
+                            "external_id": task_event.external_id,
+                            "attempt": attempt + 1,
+                        },
+                    )
+                    parsed_subtasks = DagDecomposer().parse_subtasks(response.content)
+                    planned_subtasks, validation_error = _valid_planned_subtasks(
+                        subtasks=parsed_subtasks,
+                        allowed_repos=set(repo_names),
+                    )
+                    if validation_error:
+                        validation_errors.append(validation_error)
+                    planned_subtasks = _prepare_linear_spec_subtasks(
+                        planned_subtasks,
+                        task_event=task_event,
+                        spec_bundle=spec_bundle,
+                        revision_feedback=revision_feedback,
+                        repo_names=repo_names,
+                    )
+                    if planned_subtasks:
+                        break
                 if not planned_subtasks:
                     fallback_reason = "invalid_model_plan"
-            except ModelProviderError:
+            except ModelProviderError as exc:
                 fallback_reason = "model_provider_error"
+                validation_error = str(exc)
+                validation_errors.append(str(exc))
 
         if planned_subtasks:
             return LinearDagPlan(
                 subtasks=planned_subtasks,
-                strategy="model",
+                strategy="model" if not validation_errors else "model_repaired",
                 node_keys=[subtask.id for subtask in planned_subtasks],
                 repo_contexts=repo_contexts,
+                validation_error=validation_error,
+                validation_errors=validation_errors,
+                planner_attempts=planner_attempts,
+                validation_node_added=False,
+                node_quality_gates_enabled=True,
                 model_provider=model_provider,
                 model=model,
             )
 
-        fallback_subtasks = spec_bundle.to_repo_subtasks()
+        fallback_reason = fallback_reason or "model_planning_unavailable"
+        fallback_subtasks = _prepare_linear_spec_subtasks(
+            _deterministic_linear_spec_subtasks(
+                task_event=task_event,
+                spec_bundle=spec_bundle,
+                validation_errors=validation_errors,
+                revision_feedback=revision_feedback,
+            ),
+            task_event=task_event,
+            spec_bundle=spec_bundle,
+            revision_feedback=revision_feedback,
+            repo_names=repo_names,
+        )
+        if fallback_subtasks:
+            return LinearDagPlan(
+                subtasks=fallback_subtasks,
+                strategy="semantic_fallback",
+                node_keys=[subtask.id for subtask in fallback_subtasks],
+                repo_contexts=repo_contexts,
+                fallback_reason=fallback_reason,
+                validation_error=validation_error,
+                validation_errors=validation_errors,
+                planner_attempts=planner_attempts,
+                validation_node_added=False,
+                node_quality_gates_enabled=True,
+                model_provider=model_provider,
+                model=model,
+            )
+
         return LinearDagPlan(
-            subtasks=fallback_subtasks,
-            strategy="repo_fallback",
-            node_keys=[subtask.id for subtask in fallback_subtasks],
+            subtasks=[],
+            strategy="planning_failed",
+            node_keys=[],
             repo_contexts=repo_contexts,
-            fallback_reason=fallback_reason or "model_planning_unavailable",
+            fallback_reason=fallback_reason,
+            validation_error=validation_error,
+            validation_errors=validation_errors,
+            planner_attempts=planner_attempts,
+            planning_failed=True,
+            failure_message="The planner could not produce a DAG and no repository scope exists.",
             model_provider=model_provider,
             model=model,
         )
@@ -1444,10 +1947,7 @@ class WebhookBridge:
         return True
 
     def _linear_spec_dag_requested(self, spec_bundle: SpecIngestionBundle) -> bool:
-        return spec_bundle.repo_scope.scope == "multi_repo" or (
-            spec_bundle.repo_scope.scope == "single_repo"
-            and self._model_planning_configured()
-        )
+        return spec_bundle.repo_scope.scope in {"single_repo", "multi_repo"}
 
     def _defer_parent_orchestration_for_dag(
         self,
@@ -1575,6 +2075,12 @@ class WebhookBridge:
             if node.orchestrator_task_id:
                 queued_nodes.append(node)
                 continue
+            node = await self._repository.update_dag_node_status(
+                dag_id=dag.id,
+                node_key=node.node_key,
+                status="queued",
+                orchestrator_status="queued",
+            )
             metadata = await build_dag_node_execution_metadata(
                 dag=dag,
                 task=task,
@@ -1588,6 +2094,9 @@ class WebhookBridge:
                 metadata.update(node_metadata)
             if extra_metadata:
                 metadata.update(extra_metadata)
+            node_execution_mode = _str_value(node_metadata.get("node_execution_mode"))
+            if node_execution_mode:
+                metadata["execution_mode"] = node_execution_mode
             metadata["execution_policy"] = execution_policy_metadata(
                 normalize_execution_mode(
                     metadata.get("execution_mode"),
@@ -1606,6 +2115,24 @@ class WebhookBridge:
                     default=self._settings.agent_default_execution_mode,
                 ),
             )
+            try:
+                runtime_sync = await sync_runtime_repositories_for_execution(
+                    repository=self._repository,
+                    runtime_repo_registry=self._runtime_repo_registry,
+                    requested_repo=node.repo,
+                )
+            except RuntimeRepoRegistryError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=str(exc),
+                ) from exc
+            if runtime_sync is not None:
+                metadata["runtime_repo_sync"] = {
+                    "provider": runtime_sync.provider,
+                    "workspace_id": runtime_sync.workspace_id,
+                    "repo_count": runtime_sync.repo_count,
+                    "urls": list(runtime_sync.urls),
+                }
             external_task = await self._task_orchestrator.create_task(
                 TaskRequest(
                     source="dag",
@@ -1868,7 +2395,7 @@ class WebhookBridge:
         orchestration_status = task_update.status
         node_status = task_update.status
         quality_gate = None
-        if task_update.status == "merged":
+        if task_update.status in {"merged", "in_review"}:
             quality_gate = evaluate_completion_quality_gate(
                 metadata=dict(node.metadata_json) if node.metadata_json else {},
                 external_metadata=task_update.metadata or {},
@@ -1876,9 +2403,12 @@ class WebhookBridge:
                     f"dag/{task_update.dag_id}/{task_update.dag_node_key}"
                 ),
             )
-            if quality_gate.satisfied:
+            if quality_gate.satisfied and task_update.status == "merged":
                 orchestration_status = "completed"
                 node_status = "completed"
+            elif quality_gate.satisfied:
+                orchestration_status = task_update.status
+                node_status = task_update.status
             else:
                 orchestration_status = "needs_changes"
                 node_status = "needs_changes"
@@ -1930,6 +2460,7 @@ class WebhookBridge:
                     task=dag.task,
                     ready_nodes=ready_nodes,
                 )
+            await self._sync_active_runtime_repositories()
         else:
             await self._repository.update_dag_node_status(
                 dag_id=task_update.dag_id,
@@ -1946,6 +2477,15 @@ class WebhookBridge:
                 },
             )
             await self._update_latest_execution_from_pr(task_update, node_status)
+            if node_status not in {
+                "queued",
+                "running",
+                "needs_input",
+                "needs_changes",
+                "pr_open",
+                "in_review",
+            }:
+                await self._sync_active_runtime_repositories()
 
         await self._repository.record_audit_event(
             action="task.dag_node_updated_from_github",
@@ -1963,6 +2503,22 @@ class WebhookBridge:
             },
         )
         return dag.task_id
+
+    async def _sync_active_runtime_repositories(self) -> None:
+        try:
+            await sync_runtime_repositories_for_execution(
+                repository=self._repository,
+                runtime_repo_registry=self._runtime_repo_registry,
+                requested_repo=None,
+            )
+        except RuntimeRepoRegistryError as exc:
+            await self._repository.record_audit_event(
+                action="runtime_repo_sync.prune_failed",
+                actor="system",
+                target_type="runtime_repo_registry",
+                target_id=getattr(self._runtime_repo_registry, "provider", "unknown"),
+                metadata={"error": str(exc)},
+            )
 
     async def _update_latest_execution_from_pr(
         self,
@@ -2035,6 +2591,10 @@ def _dict_value(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _list_value(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
 def _str_value(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
@@ -2072,13 +2632,22 @@ def _linear_assignment_reply(
     first_dag_node: str | None,
     first_dag_node_status: str | None,
     spec_bundle: SpecIngestionBundle | None = None,
+    dag_plan: LinearDagPlan | None = None,
+    dag_id: str | None = None,
     planned_node_keys: list[str] | None = None,
     plan_approval_required: bool = False,
+    revision_feedback: str | None = None,
 ) -> str:
     lines = [
-        f"Accepted {external_id}.",
+        (
+            f"Revised plan for {external_id}."
+            if revision_feedback
+            else f"Accepted {external_id}."
+        ),
         f"Repo: {repo or 'none'}.",
     ]
+    if revision_feedback:
+        lines.append(f"Revision feedback: {revision_feedback}")
     if spec_bundle is not None:
         repos = ", ".join(spec_bundle.selected_repos) or "none"
         lines.append(f"Spec repo scope: {spec_bundle.repo_scope.scope} ({repos}).")
@@ -2092,13 +2661,81 @@ def _linear_assignment_reply(
         lines.append(
             f"Planned nodes: {len(planned_node_keys)} ({', '.join(planned_node_keys)})."
         )
+    if dag_plan is not None:
+        lines.append(f"Planning strategy: {dag_plan.strategy}.")
+        if dag_plan.node_quality_gates_enabled:
+            lines.append(
+                "Validation: each node is quality-gated before downstream nodes run."
+            )
+        if dag_plan.fallback_reason:
+            lines.append(f"Fallback reason: {dag_plan.fallback_reason}.")
+        if dag_plan.validation_errors:
+            lines.append(
+                "Planner validation notes: "
+                + "; ".join(dag_plan.validation_errors[:3])
+                + ("." if len(dag_plan.validation_errors) <= 3 else "; ...")
+            )
+        if dag_id:
+            lines.append(f"Plan id: {dag_id}.")
+        if dag_plan.subtasks:
+            lines.append("Plan detail:")
+            for index, subtask in enumerate(dag_plan.subtasks, start=1):
+                lines.extend(_linear_plan_node_lines(index, subtask))
     if plan_approval_required:
         lines.append(f"Plan approval required: reply /approve-plan {external_id} to start.")
+        lines.append(
+            f"To change this plan before execution: /revise-plan {external_id} <feedback>."
+        )
     if first_dag_node:
         lines.append(f"First DAG node queued: {first_dag_node} ({first_dag_node_status}).")
     else:
         lines.append("First DAG node queued: none.")
     lines.append(f"Commands: /status {external_id}, /context {external_id}, /agents {external_id}.")
+    return "\n".join(lines)
+
+
+def _linear_plan_node_lines(index: int, subtask: Subtask) -> list[str]:
+    metadata = subtask.metadata
+    lines = [
+        f"{index}. `{subtask.id}` - {subtask.title}",
+        f"   Repo: {subtask.repo or 'none'}",
+        f"   Depends on: {', '.join(subtask.depends_on) if subtask.depends_on else 'none'}",
+    ]
+    for key, label in (
+        ("reasoning", "Why"),
+        ("expected_changes", "Expected changes"),
+        ("test_scope", "Tests"),
+        ("risk_or_dependency", "Risk/dependency"),
+    ):
+        value = _str_value(metadata.get(key))
+        if value:
+            lines.append(f"   {label}: {_compact_line(value)}")
+    criteria = [
+        criterion
+        for criterion in subtask.acceptance_criteria[:3]
+        if isinstance(criterion, str) and criterion.strip()
+    ]
+    if criteria:
+        lines.append("   Acceptance: " + " | ".join(_compact_line(item) for item in criteria))
+    return lines
+
+
+def _linear_planning_failed_reply(
+    *,
+    external_id: str,
+    dag_plan: LinearDagPlan,
+) -> str:
+    lines = [
+        f"Planning failed for {external_id}; no execution was queued.",
+        f"Strategy: {dag_plan.strategy}.",
+    ]
+    if dag_plan.fallback_reason:
+        lines.append(f"Reason: {dag_plan.fallback_reason}.")
+    if dag_plan.validation_errors:
+        lines.append("Validation errors: " + "; ".join(dag_plan.validation_errors[:5]))
+    if dag_plan.failure_message:
+        lines.append(dag_plan.failure_message)
+    lines.append(f"Revise with: /revise-plan {external_id} <feedback>.")
     return "\n".join(lines)
 
 
@@ -2148,23 +2785,100 @@ def _linear_spec_planner_prompt(
     task_event: NormalizedTaskEvent,
     spec_bundle: SpecIngestionBundle,
     repo_contexts: dict[str, object],
+    revision_feedback: str | None = None,
+    previous_subtasks: list[Subtask] | None = None,
 ) -> str:
-    return "\n".join(
+    lines = [
+        "Create a reviewable implementation DAG for this Linear ticket.",
+        "Return only JSON: an array of objects with id, title, repo, depends_on, "
+        "acceptance_criteria, and metadata.",
+        "Every id must be snake_case and unique.",
+        "Every code node must name exactly one repo from the allowed repos.",
+        "For metadata include: reasoning, expected_changes, test_scope, and "
+        "risk_or_dependency. The Linear plan comment will show these fields to the human.",
+        "Plan for trunk-based development: each executable DAG node should map to "
+        "one small PR branched from the repo default branch.",
+        "Decompose by reviewable code boundaries when the task needs it: "
+        "types/dataclasses/schemas, clients/adapters, services/utilities, then the "
+        "final stitching or runtime wiring logic. Do not split just to create more nodes.",
+        "Use multiple nodes in the same repo when that makes PRs easier to review, "
+        "but each implementation node must be a complete test-first coding loop.",
+        "Put final stitching/integration nodes after their foundations and make their "
+        "dependencies explicit.",
+        "Do not create standalone test nodes for code changes. Merge unit, "
+        "regression, contract, and Schemathesis tests into the same implementation "
+        "node/PR that changes the production code.",
+        "Implementation node titles should make the test scope explicit, for example "
+        "`Implement <capability> with unit tests`.",
+        "A read-only audit or discovery node is allowed before implementation when "
+        "the code area is uncertain; it must not make production changes.",
+        "Only use a test-only node when the ticket is explicitly test-hardening "
+        "without production code changes.",
+        "Use dependencies when one PR should land before another.",
+        "Do not create final validation nodes. The platform validates every node "
+        "before dependent nodes can run and performs task-level completion checks.",
+        f"Ticket: {task_event.external_id} - {task_event.title}",
+        f"Allowed repos: {', '.join(spec_bundle.selected_repos)}",
+    ]
+    if previous_subtasks:
+        lines.extend(
+            [
+                "Current plan to revise:",
+                json.dumps(
+                    [_subtask_plan_summary(subtask) for subtask in previous_subtasks],
+                    sort_keys=True,
+                ),
+            ]
+        )
+    if revision_feedback:
+        lines.extend(
+            [
+                "Human revision feedback:",
+                revision_feedback,
+                "Revise the DAG to account for the feedback before approval.",
+            ]
+        )
+    lines.extend(
         [
-            "Create a reviewable implementation DAG for this Linear ticket.",
-            "Return only JSON: an array of objects with id, title, repo, and depends_on.",
-            "Every id must be snake_case and unique.",
-            "Every code node must name exactly one repo from the allowed repos.",
-            "Use multiple nodes in the same repo when that makes PRs easier to review.",
-            "Use dependencies when one PR should land before another.",
-            f"Ticket: {task_event.external_id} - {task_event.title}",
-            f"Allowed repos: {', '.join(spec_bundle.selected_repos)}",
             "Spec:",
             _truncated_spec_text(spec_bundle),
             "Design assets:",
             json.dumps(spec_bundle.to_metadata()["design_assets"], sort_keys=True),
             "GraphStore planning context:",
             json.dumps(repo_contexts, sort_keys=True),
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _linear_spec_planner_retry_prompt(
+    original_prompt: str,
+    validation_error: str,
+    *,
+    escalation: bool = False,
+) -> str:
+    return "\n".join(
+        [
+            original_prompt,
+            "",
+            "The previous JSON DAG was rejected by validation.",
+            f"Validation error: {validation_error}",
+            (
+                "This is the escalation attempt. Produce a valid DAG; if the ticket is "
+                "ambiguous, include an audit/discovery node instead of collapsing scope."
+                if escalation
+                else "Repair the DAG using the validation error."
+            ),
+            "Return a corrected JSON array only.",
+            "Do not split tests into standalone nodes for production code changes; "
+            "merge those test requirements into the implementation node that owns "
+            "the production change.",
+            "Do not include a final validation node; platform quality gates validate "
+            "each node before downstream execution.",
+            "Keep trunk-based PR slicing: foundations first, final stitching or "
+            "runtime wiring last when the task has multiple code boundaries.",
+            "Every depends_on value must reference another returned node id, and the "
+            "graph must be acyclic.",
         ]
     )
 
@@ -2175,14 +2889,23 @@ def _linear_spec_node_metadata(
     dag_plan: LinearDagPlan,
     hydrated_spec_artifact_id: str | None = None,
 ) -> dict[str, object]:
-    execution_mode = normalize_execution_mode(task_event.execution_mode)
     return {
         "spec_ingestion": spec_bundle.to_metadata(),
         "hydrated_spec_artifact_id": hydrated_spec_artifact_id,
         "planning_strategy": dag_plan.strategy,
-        "execution_mode": execution_mode,
+        "planner_attempts": dag_plan.planner_attempts,
+        "planner_validation_errors": dag_plan.validation_errors or [],
+        "planner_fallback_reason": dag_plan.fallback_reason,
+        "validation_node_added": dag_plan.validation_node_added,
+        "node_quality_gates_enabled": dag_plan.node_quality_gates_enabled,
+        "completion_gate": {
+            "mode": "per_node_quality_gates",
+            "description": (
+                "Each DAG node must satisfy platform validation before dependent "
+                "nodes are queued; final task completion is computed by the backend."
+            ),
+        },
         "user_intent": _user_intent_metadata(task_event),
-        "execution_policy": execution_policy_metadata(execution_mode),
         "linear_task": {
             "external_id": task_event.external_id,
             "issue_id": task_event.issue_id,
@@ -2192,7 +2915,7 @@ def _linear_spec_node_metadata(
         },
         "execution_contract": {
             "one_code_pr_per_executable_node": True,
-            "branch_reference_format": "agent/dag/<dag_id>/<node_key>",
+            "branch_reference_format": "agent/dag/<external_id>/<dag_id>/<node_key>",
             "pr_reference_format": "dag/<dag_id>/<node_key>",
             "requires_write_execution_mode": True,
         },
@@ -2222,25 +2945,723 @@ def _truncated_spec_text(spec_bundle: SpecIngestionBundle, limit: int = 6000) ->
 def _valid_planned_subtasks(
     subtasks: list[Subtask],
     allowed_repos: set[str],
-) -> list[Subtask]:
+) -> tuple[list[Subtask], str | None]:
+    validation_error = _planned_subtasks_validation_error(subtasks, allowed_repos)
+    if validation_error == "split_test_nodes":
+        repaired = _merge_test_only_nodes_into_implementations(subtasks)
+        repair_error = _planned_subtasks_validation_error(repaired, allowed_repos)
+        if repair_error is None:
+            return repaired, None
+        return [], f"{validation_error}; repair_failed={repair_error}"
+    if validation_error is not None:
+        return [], validation_error
+    return subtasks, None
+
+
+def _planned_subtasks_validation_error(
+    subtasks: list[Subtask],
+    allowed_repos: set[str],
+) -> str | None:
     if not subtasks:
-        return []
+        return "empty_or_unparseable_plan"
+    if any(_is_validation_node(subtask) for subtask in subtasks):
+        return "validation_nodes_not_allowed"
+    if _has_split_test_nodes(subtasks):
+        return "split_test_nodes"
     node_ids = [subtask.id for subtask in subtasks]
     if len(set(node_ids)) != len(node_ids):
-        return []
+        return "duplicate_node_ids"
     if any(not _valid_node_key(subtask.id) for subtask in subtasks):
-        return []
+        invalid = [subtask.id for subtask in subtasks if not _valid_node_key(subtask.id)]
+        return f"invalid_node_keys: {', '.join(invalid)}"
     if any(subtask.repo not in allowed_repos for subtask in subtasks):
-        return []
+        invalid_repos = sorted(
+            {
+                str(subtask.repo)
+                for subtask in subtasks
+                if subtask.repo not in allowed_repos
+            }
+        )
+        return f"repo_outside_allowed_set: {', '.join(invalid_repos)}"
     node_id_set = set(node_ids)
     for subtask in subtasks:
         if any(dependency not in node_id_set for dependency in subtask.depends_on):
-            return []
+            missing = [
+                dependency
+                for dependency in subtask.depends_on
+                if dependency not in node_id_set
+            ]
+            return f"missing_dependencies_for_{subtask.id}: {', '.join(missing)}"
         if subtask.id in subtask.depends_on:
-            return []
+            return f"self_dependency: {subtask.id}"
     if _has_dependency_cycle(subtasks):
-        return []
+        return "dependency_cycle"
+    if not any(_is_implementation_node(subtask) for subtask in subtasks):
+        return "missing_implementation_nodes"
+    return None
+
+
+def _decorate_linear_spec_subtasks(subtasks: list[Subtask]) -> list[Subtask]:
+    return [_decorate_linear_spec_subtask(subtask) for subtask in subtasks]
+
+
+def _prepare_linear_spec_subtasks(
+    subtasks: list[Subtask],
+    *,
+    task_event: NormalizedTaskEvent,
+    spec_bundle: SpecIngestionBundle,
+    revision_feedback: str | None,
+    repo_names: list[str],
+) -> list[Subtask]:
+    subtasks = _decorate_linear_spec_subtasks(subtasks)
+    subtasks = _tag_revision_feedback_subtasks(
+        subtasks,
+        revision_feedback=revision_feedback,
+    )
     return subtasks
+
+
+def _tag_revision_feedback_subtasks(
+    subtasks: list[Subtask],
+    *,
+    revision_feedback: str | None,
+) -> list[Subtask]:
+    if not revision_feedback:
+        return subtasks
+
+    tagged: list[Subtask] = []
+    for subtask in subtasks:
+        metadata = dict(subtask.metadata)
+        metadata.setdefault("revision_feedback", revision_feedback)
+        tagged.append(
+            replace(
+                subtask,
+                metadata=metadata,
+            )
+        )
+    return tagged
+
+
+def _unique_subtask_id(base: str, subtasks: list[Subtask]) -> str:
+    existing = {subtask.id for subtask in subtasks}
+    if base not in existing:
+        return base
+    suffix = 2
+    while f"{base}_{suffix}" in existing:
+        suffix += 1
+    return f"{base}_{suffix}"
+
+
+def _deterministic_linear_spec_subtasks(
+    *,
+    task_event: NormalizedTaskEvent,
+    spec_bundle: SpecIngestionBundle,
+    validation_errors: list[str],
+    revision_feedback: str | None,
+) -> list[Subtask]:
+    repo_names = list(spec_bundle.selected_repos)
+    if not repo_names:
+        return []
+    ticket_key = _node_key(task_event.external_id)
+    fallback_metadata = {
+        "planner": "deterministic_semantic_fallback",
+        "planner_repair": "semantic_fallback_after_invalid_model_plan",
+        "planner_validation_errors": list(validation_errors),
+    }
+    if revision_feedback:
+        fallback_metadata["revision_feedback"] = revision_feedback
+
+    if len(repo_names) == 1:
+        repo = repo_names[0]
+        return [
+            Subtask(
+                id=f"audit_{ticket_key}_scope",
+                title=f"Audit {task_event.external_id} implementation scope",
+                repo=repo,
+                metadata={
+                    **fallback_metadata,
+                    "node_execution_kind": "exploration",
+                    "reasoning": "Model planning was invalid, so first narrow the exact code path.",
+                    "expected_changes": "No production edits; identify files, tests, and risks.",
+                    "test_scope": "Identify focused tests to write before implementation.",
+                    "risk_or_dependency": "Prevents a broad one-node implementation fallback.",
+                },
+            ),
+            Subtask(
+                id=f"implement_{ticket_key}_foundation_with_tests",
+                title=f"Implement {task_event.external_id} foundation with tests",
+                repo=repo,
+                depends_on=(f"audit_{ticket_key}_scope",),
+                metadata={
+                    **fallback_metadata,
+                    "reasoning": (
+                        "Creates the foundational types, clients, adapters, helpers, or "
+                        "other reusable code needed by the requested change."
+                    ),
+                    "expected_changes": (
+                        "Add the smallest reviewable foundation for the requested behavior."
+                    ),
+                    "test_scope": (
+                        "Write failing focused tests for the new foundation first, then "
+                        "production code and green checks."
+                    ),
+                    "risk_or_dependency": "Depends on the audit node identifying the exact scope.",
+                },
+            ),
+            Subtask(
+                id=f"wire_{ticket_key}_behavior_with_tests",
+                title=f"Wire {task_event.external_id} behavior with tests",
+                repo=repo,
+                depends_on=(f"implement_{ticket_key}_foundation_with_tests",),
+                metadata={
+                    **fallback_metadata,
+                    "reasoning": (
+                        "Connects the foundation into the runtime flow after the shared "
+                        "pieces are available."
+                    ),
+                    "expected_changes": (
+                        "Apply final stitching or runtime wiring for the requested behavior."
+                    ),
+                    "test_scope": (
+                        "Regression or integration-focused tests that prove the wired "
+                        "behavior works end to end within the repo boundary."
+                    ),
+                    "risk_or_dependency": (
+                        "Runs after the foundation PR so trunk-based changes stay small "
+                        "and ordered."
+                    ),
+                },
+            ),
+        ]
+
+    audit_id = f"audit_{ticket_key}_cross_repo_scope"
+    subtasks = [
+        Subtask(
+            id=audit_id,
+            title=f"Audit {task_event.external_id} cross-repo scope",
+            repo=repo_names[0],
+            metadata={
+                **fallback_metadata,
+                "node_execution_kind": "exploration",
+                "reasoning": "Model planning was invalid for a multi-repo ticket.",
+                "expected_changes": "No production edits; define repo boundaries and merge order.",
+                "test_scope": "Identify per-repo tests and contract checks.",
+                "risk_or_dependency": (
+                    "Prevents cross-repo PRs from being generated in the wrong order."
+                ),
+            },
+        )
+    ]
+    implementation_node_ids: list[str] = []
+    for repo in repo_names:
+        repo_key = _node_key(repo)
+        node_id = f"implement_{repo_key}_with_tests"
+        implementation_node_ids.append(node_id)
+        subtasks.append(
+            Subtask(
+                id=node_id,
+                title=f"Implement {task_event.external_id} changes in {repo} with tests",
+                repo=repo,
+                depends_on=(audit_id,),
+                metadata={
+                    **fallback_metadata,
+                    "reasoning": f"Owns the test-first implementation loop for {repo}.",
+                    "expected_changes": (
+                        f"Implement the repo-local portion of {task_event.external_id}."
+                    ),
+                    "test_scope": (
+                        "Focused unit/regression and contract tests when interfaces change."
+                    ),
+                    "risk_or_dependency": (
+                        "Depends on cross-repo scope and must preserve DAG merge order."
+                    ),
+                },
+            )
+        )
+    stitch_repo = repo_names[0]
+    subtasks.append(
+        Subtask(
+            id=f"stitch_{ticket_key}_cross_repo_flow_with_tests",
+            title=f"Stitch {task_event.external_id} cross-repo flow with tests",
+            repo=stitch_repo,
+            depends_on=tuple(implementation_node_ids),
+            metadata={
+                **fallback_metadata,
+                "reasoning": (
+                    "Performs final integration after repo-local PRs are available."
+                ),
+                "expected_changes": (
+                    "Wire the cross-repo behavior or contracts in the owning integration repo."
+                ),
+                "test_scope": (
+                    "Focused integration or contract tests proving the cross-repo flow is "
+                    "consistent."
+                ),
+                "risk_or_dependency": (
+                    "Depends on all repo-local implementation nodes and should be the last "
+                    "trunk-based PR in the fallback DAG."
+                ),
+            },
+        )
+    )
+    return subtasks
+
+
+def _merge_test_only_nodes_into_implementations(subtasks: list[Subtask]) -> list[Subtask]:
+    targets_by_test_id: dict[str, str] = {}
+    merged_by_id = {subtask.id: subtask for subtask in subtasks}
+
+    for subtask in subtasks:
+        if not _is_test_only_node(subtask):
+            continue
+        target = _test_node_merge_target(subtask, subtasks)
+        if target is None:
+            return subtasks
+        targets_by_test_id[subtask.id] = target.id
+        merged_by_id[target.id] = _merge_test_node_into_target(
+            target=merged_by_id[target.id],
+            test_node=subtask,
+        )
+
+    if not targets_by_test_id:
+        return subtasks
+
+    repaired: list[Subtask] = []
+    for subtask in subtasks:
+        if subtask.id in targets_by_test_id:
+            continue
+        current = merged_by_id[subtask.id]
+        rewritten_depends_on = _rewrite_merged_dependencies(
+            node_id=current.id,
+            depends_on=current.depends_on,
+            replacements=targets_by_test_id,
+        )
+        repaired.append(replace(current, depends_on=tuple(rewritten_depends_on)))
+    return repaired
+
+
+def _test_node_merge_target(test_node: Subtask, subtasks: list[Subtask]) -> Subtask | None:
+    implementation_nodes = [
+        subtask
+        for subtask in subtasks
+        if not _is_test_only_node(subtask) and not _is_exploration_node(subtask)
+    ]
+    same_repo = [
+        subtask for subtask in implementation_nodes if subtask.repo == test_node.repo
+    ]
+    candidates = same_repo if test_node.repo else implementation_nodes
+    if not candidates:
+        return None
+
+    by_id = {subtask.id: subtask for subtask in candidates}
+    for dependency in reversed(test_node.depends_on):
+        if dependency in by_id:
+            return by_id[dependency]
+    return candidates[0]
+
+
+def _merge_test_node_into_target(*, target: Subtask, test_node: Subtask) -> Subtask:
+    acceptance_criteria = list(target.acceptance_criteria)
+    _append_unique(
+        acceptance_criteria,
+        f"Include test scope from merged planner node `{test_node.id}`: {test_node.title}.",
+    )
+    for criterion in test_node.acceptance_criteria:
+        _append_unique(acceptance_criteria, criterion)
+
+    metadata = dict(target.metadata)
+    existing_merged = metadata.get("merged_test_nodes", [])
+    merged_test_nodes = [
+        item
+        for item in (existing_merged if isinstance(existing_merged, list) else [])
+        if isinstance(item, str)
+    ]
+    _append_unique(merged_test_nodes, test_node.id)
+    metadata["merged_test_nodes"] = merged_test_nodes
+    metadata["planner_repair"] = "merged_test_nodes_into_implementation"
+
+    depends_on = _dedupe(
+        [
+            *target.depends_on,
+            *[
+                dependency
+                for dependency in test_node.depends_on
+                if dependency != target.id
+            ],
+        ]
+    )
+    title = target.title
+    if "test" not in title.lower():
+        title = f"{title} with tests"
+    return replace(
+        target,
+        title=title,
+        depends_on=tuple(depends_on),
+        acceptance_criteria=tuple(acceptance_criteria),
+        metadata=metadata,
+    )
+
+
+def _rewrite_merged_dependencies(
+    *,
+    node_id: str,
+    depends_on: tuple[str, ...],
+    replacements: dict[str, str],
+) -> list[str]:
+    rewritten: list[str] = []
+    for dependency in depends_on:
+        replacement = replacements.get(dependency, dependency)
+        if replacement == node_id:
+            continue
+        _append_unique(rewritten, replacement)
+    return rewritten
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for value in values:
+        _append_unique(deduped, value)
+    return deduped
+
+
+def _decorate_linear_spec_subtask(subtask: Subtask) -> Subtask:
+    metadata = dict(subtask.metadata)
+    acceptance_criteria = list(subtask.acceptance_criteria)
+    if _is_validation_node(subtask):
+        metadata.setdefault("node_execution_kind", "final_validation")
+        metadata.setdefault("node_execution_mode", PLANNING_ONLY)
+        metadata.setdefault("tdd_required", False)
+        metadata.setdefault("same_pr_tests_required", False)
+        return replace(
+            subtask,
+            acceptance_criteria=tuple(acceptance_criteria),
+            metadata=metadata,
+        )
+
+    if _is_exploration_node(subtask):
+        metadata.setdefault("node_execution_kind", "exploration")
+        metadata.setdefault("node_execution_mode", PLANNING_ONLY)
+        metadata.setdefault("tdd_required", False)
+        _append_unique(
+            acceptance_criteria,
+            "Audit and document the relevant code paths without production code changes.",
+        )
+        return replace(
+            subtask,
+            acceptance_criteria=tuple(acceptance_criteria),
+            metadata=metadata,
+        )
+
+    metadata.setdefault("node_execution_kind", "implementation")
+    metadata.setdefault("tdd_required", True)
+    metadata.setdefault("same_pr_tests_required", True)
+    metadata.setdefault("contract_tests_required_for_api_changes", True)
+    _append_unique(
+        acceptance_criteria,
+        (
+            "Create or update focused tests first and capture failing-test evidence "
+            "before production edits."
+        ),
+    )
+    _append_unique(
+        acceptance_criteria,
+        (
+            "Implement production code and keep the implementation plus relevant "
+            "unit/regression tests in the same PR."
+        ),
+    )
+    _append_unique(
+        acceptance_criteria,
+        (
+            "If endpoint, schema, webhook, or public contract behavior changes, "
+            "add or update contract/Schemathesis tests in the same PR."
+        ),
+    )
+    _append_unique(
+        acceptance_criteria,
+        (
+            "Persist final evidence for failing red-step tests and passing focused, "
+            "unit, contract-when-relevant, and configured smoke checks."
+        ),
+    )
+    return replace(
+        subtask,
+        acceptance_criteria=tuple(acceptance_criteria),
+        metadata=metadata,
+    )
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    if value not in values:
+        values.append(value)
+
+
+def _has_split_test_nodes(subtasks: list[Subtask]) -> bool:
+    if len(subtasks) < 2:
+        return False
+    has_implementation = any(
+        _is_implementation_node(subtask)
+        for subtask in subtasks
+    )
+    if not has_implementation:
+        return False
+    return any(
+        _is_test_only_node(subtask)
+        and _str_value(subtask.metadata.get("node_execution_kind")) != "test_hardening"
+        for subtask in subtasks
+    )
+
+
+def _is_test_only_node(subtask: Subtask) -> bool:
+    if _is_validation_node(subtask):
+        return False
+    if subtask.id.endswith("_with_tests"):
+        return False
+    text = f"{subtask.id} {subtask.title}".lower()
+    if (
+        (subtask.id.endswith("_tests") and not subtask.id.endswith("_with_tests"))
+        or subtask.id.endswith("_regression_tests")
+        or text.startswith("add tests")
+        or text.startswith("add unit tests")
+        or text.startswith("add regression tests")
+        or " add tests " in f" {text} "
+        or " add unit tests " in f" {text} "
+        or " add regression tests " in f" {text} "
+    ):
+        return True
+    has_test_signal = any(
+        token in text
+        for token in (
+            "test",
+            "tests",
+            "regression",
+            "schemathesis",
+            "contract_test",
+            "contract tests",
+        )
+    )
+    has_implementation_signal = any(
+        token in text
+        for token in (
+            "implement",
+            "add ",
+            "add sync",
+            "wire",
+            "refactor",
+            "remove",
+            "cleanup",
+            "support",
+            "build",
+            "expose",
+        )
+    )
+    return has_test_signal and not has_implementation_signal
+
+
+def _is_implementation_node(subtask: Subtask) -> bool:
+    return (
+        not _is_test_only_node(subtask)
+        and not _is_validation_node(subtask)
+        and not _is_exploration_node(subtask)
+    )
+
+
+def _is_exploration_node(subtask: Subtask) -> bool:
+    if _is_validation_node(subtask):
+        return False
+    kind = _str_value(subtask.metadata.get("node_execution_kind"))
+    if kind in {"exploration", "audit", "planning"}:
+        return True
+    text = f"{subtask.id} {subtask.title}".lower()
+    if any(token in text for token in ("implement", "refactor", "wire", "remove", "add ")):
+        return False
+    return any(
+        token in text
+        for token in (
+            "audit",
+            "analyze",
+            "investigate",
+            "inspect",
+            "discover",
+            "map ",
+            "scope ",
+        )
+    )
+
+
+def _is_validation_node(subtask: Subtask) -> bool:
+    kind = _str_value(subtask.metadata.get("node_execution_kind"))
+    return (
+        kind == "final_validation"
+        or subtask.metadata.get("validation_node") is True
+        or subtask.id.startswith("validate_")
+    )
+
+
+def _subtask_plan_summary(subtask: Subtask) -> dict[str, object]:
+    return {
+        "id": subtask.id,
+        "title": subtask.title,
+        "repo": subtask.repo,
+        "depends_on": list(subtask.depends_on),
+        "acceptance_criteria": list(subtask.acceptance_criteria),
+        "metadata": dict(subtask.metadata),
+    }
+
+
+def _subtasks_from_dag(dag) -> list[Subtask]:
+    subtasks: list[Subtask] = []
+    for node in getattr(dag, "nodes", []) or []:
+        metadata = dict(getattr(node, "metadata_json", {}) or {})
+        criteria_value = metadata.get("acceptance_criteria")
+        criteria = (
+            tuple(item for item in criteria_value if isinstance(item, str))
+            if isinstance(criteria_value, list)
+            else ()
+        )
+        subtasks.append(
+            Subtask(
+                id=node.node_key,
+                title=node.title,
+                repo=node.repo,
+                depends_on=tuple(getattr(node, "depends_on", ()) or ()),
+                acceptance_criteria=criteria,
+                metadata=metadata,
+            )
+        )
+    return subtasks
+
+
+def _latest_task_dag(task) -> object | None:
+    dags = list(getattr(task, "dags", []) or [])
+    active_dags = [dag for dag in dags if getattr(dag, "status", None) != "superseded"]
+    if not active_dags:
+        return None
+    return sorted(
+        active_dags,
+        key=lambda dag: (getattr(dag, "created_at", None), getattr(dag, "id", "")),
+        reverse=True,
+    )[0]
+
+
+def _dag_execution_started(dag) -> bool:
+    for node in getattr(dag, "nodes", []) or []:
+        if getattr(node, "orchestrator_task_id", None):
+            return True
+        if getattr(node, "status", None) not in {"ready", "blocked"}:
+            return True
+    return False
+
+
+def _restored_linear_spec_from_task(
+    task,
+) -> tuple[NormalizedTaskEvent, SpecIngestionBundle, str | None] | None:
+    artifacts = [
+        artifact
+        for artifact in getattr(task, "artifacts", []) or []
+        if getattr(artifact, "kind", None) == "hydrated_spec"
+    ]
+    if not artifacts:
+        return None
+    artifact = sorted(
+        artifacts,
+        key=lambda item: (getattr(item, "created_at", None), getattr(item, "id", "")),
+        reverse=True,
+    )[0]
+    content = _dict_value(getattr(artifact, "content_json", None))
+    task_data = _dict_value(content.get("task"))
+    repo_scope_data = _dict_value(content.get("repo_scope"))
+    repo_matches = []
+    for item in _list_value(repo_scope_data.get("repos")):
+        row = _dict_value(item)
+        repo = _str_value(row.get("repo"))
+        if repo:
+            repo_matches.append(
+                RepoMatch(repo=repo, reason=_str_value(row.get("reason")) or "artifact")
+            )
+    text_sources = []
+    for item in _list_value(content.get("text_sources")):
+        row = _dict_value(item)
+        text = _str_value(row.get("text"))
+        if text is None:
+            continue
+        text_sources.append(
+            TextSource(
+                kind=_str_value(row.get("kind")) or "linear",
+                title=_str_value(row.get("title")) or "Linear spec",
+                text=text,
+            )
+        )
+    design_assets = []
+    for item in _list_value(content.get("design_assets")):
+        row = _dict_value(item)
+        design_assets.append(
+            DesignAsset(
+                kind=_str_value(row.get("kind")) or "asset",
+                title=_str_value(row.get("title")) or "Design asset",
+                url=_str_value(row.get("url")),
+                content_type=_str_value(row.get("content_type")),
+            )
+        )
+    if not text_sources:
+        return None
+    task_event = NormalizedTaskEvent(
+        source=_str_value(task_data.get("source")) or getattr(task, "source", "linear"),
+        external_id=_str_value(task_data.get("external_id")) or task.external_id,
+        title=_str_value(task_data.get("title")) or task.title,
+        issue_id=_str_value(task_data.get("issue_id")),
+        repo=getattr(task, "repo", None),
+        url=_str_value(task_data.get("url")),
+        body=_str_value(task_data.get("body")),
+    )
+    spec_bundle = SpecIngestionBundle(
+        source=_str_value(content.get("source")) or "linear",
+        text_sources=tuple(text_sources),
+        design_assets=tuple(design_assets),
+        repo_scope=RepoScope(
+            scope=_str_value(repo_scope_data.get("scope")) or "unspecified",
+            repos=tuple(repo_matches),
+            unknown_repos=tuple(
+                value
+                for value in _list_value(repo_scope_data.get("unknown_repos"))
+                if isinstance(value, str)
+            ),
+        ),
+    )
+    return task_event, spec_bundle, getattr(artifact, "id", None)
+
+
+def _linear_spec_bundle_with_resolved_repo(
+    spec_bundle: SpecIngestionBundle,
+    repo_name: str,
+) -> SpecIngestionBundle:
+    return SpecIngestionBundle(
+        source=spec_bundle.source,
+        text_sources=spec_bundle.text_sources,
+        design_assets=spec_bundle.design_assets,
+        repo_scope=RepoScope(
+            scope="single_repo",
+            repos=(RepoMatch(repo=repo_name, reason="repo clarification"),),
+            unknown_repos=(),
+        ),
+    )
+
+
+def _node_key(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", value.lower()).strip("_")
+    normalized = re.sub(r"_+", "_", normalized)
+    if not normalized:
+        normalized = "node"
+    if not normalized[0].isalpha():
+        normalized = f"node_{normalized}"
+    return normalized[:64]
+
+
+def _compact_line(value: str, limit: int = 180) -> str:
+    compacted = " ".join(value.split())
+    if len(compacted) <= limit:
+        return compacted
+    return f"{compacted[: limit - 13].rstrip()}...[truncated]"
 
 
 def _valid_node_key(value: str) -> bool:

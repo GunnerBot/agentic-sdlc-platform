@@ -273,6 +273,9 @@ class MulticaTaskOrchestrator:
                     "Execute the assigned DAG node exactly as described. "
                     "Use the expected branch and PR reference from the issue description. "
                     "When running shell commands, prefix them with `rtk`. "
+                    "For write-capable tasks, keep working until a GitHub PR exists on the "
+                    "expected branch with the expected DAG reference and test evidence; do "
+                    "not ask the user to choose between local setup and PR creation. "
                     "For repository questions, prefer supplied indexed graph context before "
                     "broad codebase scans, then verify conclusions against checked-out source."
                 ),
@@ -392,6 +395,7 @@ class MulticaTaskOrchestrator:
             "source": request.source,
             "external_id": request.external_id,
             "repo": request.repo,
+            "repo_checkout_url": _repo_checkout_url(request.repo, metadata),
             "runtime_provider": runtime_provider,
             "execution_mode": execution_mode,
             "github_write_enabled": github_write,
@@ -451,31 +455,86 @@ class MulticaTaskOrchestrator:
         ]
         if not github_write:
             mode_lines.append("Repository writes are disabled for this execution mode.")
+        checkout_url = _repo_checkout_url(request.repo, metadata)
+        checkout_line = f"Checkout URL: {checkout_url}\n" if checkout_url else ""
+        checkout_policy = (
+            f"- Before source reads or edits, check out the repo with "
+            f"`multica repo checkout {checkout_url}`.\n"
+            if checkout_url
+            else ""
+        )
+        bounded_audit_policy = ""
+        if (
+            execution_mode == "planning_only"
+            and _str(metadata.get("node_execution_kind")) == "exploration"
+        ):
+            bounded_audit_policy = (
+                "- This is a bounded audit node: use supplied graphify context as the "
+                "starting file/symbol list and do not perform broad repository scans.\n"
+                "- Verify only the narrow source files needed for the acceptance criteria; "
+                "target 8-12 source reads and stop once the requested map is complete.\n"
+                "- If graphify context is too broad or has no references, run at most a "
+                "small set of exact-symbol searches for the ticket terms, then summarize "
+                "confidence and gaps instead of continuing exploratory search.\n"
+            )
         return (
             f"Execute agentic SDLC task `{request.external_id}`.\n\n"
             f"Title: {request.title}\n"
             f"Repo: {request.repo or 'not specified'}\n"
+            f"{checkout_line}"
             f"Runtime provider: {runtime_provider}\n"
             f"{chr(10).join(mode_lines)}\n\n"
             "Full user intent:\n"
             f"{user_intent_text}\n\n"
             "Runtime policy:\n"
             "- Prefix shell commands with `rtk`.\n"
+            f"{checkout_policy}"
             "- Use indexed repo context first when available; verify with source reads.\n\n"
+            f"{bounded_audit_policy}"
             "Code generation policy:\n"
             "- Use trunk-based development: branch from the repo default/trunk branch.\n"
+            "- If `expected_branch` is present, create and work on that exact branch name "
+            "before editing files. Do not use runtime-generated branch names for PR work.\n"
             "- Keep PRs small and ordered by the DAG dependency order shown in the payload.\n"
+            "- For every implementation DAG node, run a complete TDD loop in one PR: "
+            "write or update the focused test first, run it and capture the failing red "
+            "step, implement the production change, then rerun focused/unit tests to green.\n"
+            "- If tests fail because dependencies or optional imports are missing, do not "
+            "stop and ask the user for an A/B choice. Inspect repo-native setup files "
+            "such as pyproject.toml, uv.lock, requirements*.txt, Makefile, or docs; run "
+            "the appropriate `rtk uv sync`, `rtk make setup`, or repo-native install/test "
+            "commands; then rerun focused tests. Only mark blocked after these automatic "
+            "recovery attempts are exhausted, and include the exact commands and errors.\n"
+            "- If endpoint, schema, webhook, or public API behavior changes, add or update "
+            "contract/Schemathesis tests in the same PR and include passing evidence.\n"
             "- When modifying shared/common/existing behavior, guard the change behind a "
             "feature flag or equivalent compatibility gate unless the task explicitly "
             "requires a breaking global change.\n"
-            "- Put implementation and relevant tests in the same PR for the DAG node.\n\n"
+            "- Do not split implementation and its tests into separate DAG nodes or PRs. "
+            "Only explicitly-scoped test-hardening work may be test-only.\n"
+            "- For write_pr mode, completion requires committing, pushing, and opening a "
+            "GitHub PR. The PR body must include the expected DAG reference. Do not set "
+            "the issue to in_review/completed and do not report done until the PR URL, "
+            "expected branch, red-step evidence, and green focused/unit evidence are present.\n\n"
             "Acceptance criteria for this DAG node:\n"
             f"{acceptance_text}\n\n"
             "Completion rule:\n"
             "- Do not report the task complete if any acceptance criterion remains as "
             "a next step or follow-up.\n"
             "- If a criterion is blocked by missing product/DB ownership detail, state "
-            "the blocker explicitly instead of opening a partial PR as done.\n\n"
+            "the blocker explicitly instead of opening a partial PR as done.\n"
+            "- Missing test dependencies, import errors, absent local virtualenvs, and "
+            "similar tooling failures are automatic recovery work, not a reason to ask "
+            "for human choice before attempting repo-native setup.\n\n"
+            "Required completion evidence for implementation nodes:\n"
+            "- `test_evidence.failing_tests_observed=true` or equivalent failing-test "
+            "command/output from the red step.\n"
+            "- `test_evidence.unit_tests_passed=true` and "
+            "`test_evidence.focused_tests_passed=true` after implementation.\n"
+            "- `test_evidence.contract_tests_passed=true` when API, schema, webhook, "
+            "or contract files changed.\n"
+            "- `test_evidence.production_files_changed` and "
+            "`test_evidence.test_files_changed` for same-PR code/test verification.\n\n"
             "Execution payload:\n"
             "```json\n"
             f"{json.dumps(execution_payload, indent=2, sort_keys=True)}\n"
@@ -668,6 +727,20 @@ def _user_intent_text(*, title: str, body: str | None, url: str | None) -> str:
     if body:
         lines.extend(["Body:", body])
     return "\n".join(lines)
+
+
+def _repo_checkout_url(repo: str | None, metadata: dict[str, object]) -> str | None:
+    for key in ("multica_checkout_url", "repo_checkout_url", "repo_clone_url"):
+        value = _str(metadata.get(key))
+        if value:
+            return _without_git_suffix(value.strip().rstrip("/"))
+    if repo and "/" in repo:
+        return f"https://github.com/{repo.strip('/')}"
+    return None
+
+
+def _without_git_suffix(url: str) -> str:
+    return url[:-4] if url.endswith(".git") else url
 
 
 def _json_dict(value: object, label: str) -> dict[str, object]:

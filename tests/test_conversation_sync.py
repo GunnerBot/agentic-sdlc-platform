@@ -2,10 +2,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agentic_sdlc_platform.glue.conversation_sync import ConversationSyncService
+from agentic_sdlc_platform.glue.dag_decomposer import Subtask
 from agentic_sdlc_platform.persistence.models import AuditEvent, Base
 from agentic_sdlc_platform.persistence.repository import PersistenceRepository
 from agentic_sdlc_platform.ports.issue_tracker import IssueTrackerReply
-from agentic_sdlc_platform.ports.task_orchestrator import TaskConversationMessage
+from agentic_sdlc_platform.ports.task_orchestrator import (
+    TaskConversationMessage,
+    TaskReadRequest,
+    TaskRequest,
+    TaskResponse,
+)
 
 
 class FakeTaskOrchestrator:
@@ -25,6 +31,36 @@ class FakeTaskOrchestrator:
     async def list_comments(self, external_task_id: str, metadata=None):
         self.listed.append((external_task_id, metadata or {}))
         return self.comments
+
+
+class FakeDagTaskOrchestrator(FakeTaskOrchestrator):
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads: list[TaskReadRequest] = []
+        self.requests: list[TaskRequest] = []
+
+    async def read_task(self, request: TaskReadRequest) -> TaskResponse:
+        self.reads.append(request)
+        return TaskResponse(
+            external_task_id=request.external_task_id,
+            status="completed",
+            metadata={
+                "result_output": "Audit completed. No implementation changes were made.",
+                "multica_runtime_provider": "hermes",
+            },
+        )
+
+    async def create_task(self, request: TaskRequest) -> TaskResponse:
+        self.requests.append(request)
+        return TaskResponse(
+            external_task_id="next-multica-task",
+            status="queued",
+            metadata={
+                "multica_issue_id": "next-issue",
+                "multica_task_id": "next-multica-task",
+                "multica_runtime_provider": "hermes",
+            },
+        )
 
 
 class FakeIssueTracker:
@@ -165,6 +201,56 @@ async def test_conversation_sync_service_syncs_all_active_orchestrator_sessions(
     results = await service.sync_active_sessions()
 
     assert [(result.provider, result.new_messages) for result in results] == [("linear", 1)]
+
+
+async def test_conversation_sync_service_advances_completed_dag_nodes() -> None:
+    repository = await build_repository()
+    task_id = await create_task(repository)
+    dag = await repository.create_task_dag(
+        task_id=task_id,
+        subtasks=[
+            Subtask(
+                "audit_existing_flow",
+                "Audit existing flow",
+                repo="erp-service",
+                metadata={"execution_mode": "planning_only"},
+            ),
+            Subtask(
+                "implement_sync_client",
+                "Implement sync client with tests",
+                repo="erp-service",
+                depends_on=("audit_existing_flow",),
+            ),
+        ],
+    )
+    await repository.mark_dag_node_orchestrated(
+        dag_id=dag.id,
+        node_key="audit_existing_flow",
+        orchestrator_task_id="audit-task",
+        orchestrator_status="queued",
+        metadata={"execution_mode": "planning_only", "multica_issue_id": "issue-1"},
+    )
+    orchestrator = FakeDagTaskOrchestrator()
+    service = ConversationSyncService(
+        repository=repository,
+        task_orchestrator=orchestrator,
+    )
+
+    results = await service.sync_active_dag_nodes()
+    refreshed = await repository.get_task_dag(dag.id)
+    nodes = {node.node_key: node for node in refreshed.nodes}
+
+    assert [(result.node_key, result.status, result.queued_nodes) for result in results] == [
+        ("audit_existing_flow", "completed", ("implement_sync_client",))
+    ]
+    assert nodes["audit_existing_flow"].status == "completed"
+    assert nodes["implement_sync_client"].status == "queued"
+    assert nodes["implement_sync_client"].orchestrator_task_id == "next-multica-task"
+    assert orchestrator.requests[0].metadata["execution_mode"] == "write_pr"
+    assert orchestrator.requests[0].metadata["execution_policy"]["github_write_enabled"] is True
+    assert orchestrator.requests[0].metadata["expected_branch"].startswith(
+        f"agent/dag/eng-1284/{dag.id}/implement_sync_client"
+    )
 
 
 async def test_conversation_sync_service_mirrors_slack_thread_replies() -> None:
