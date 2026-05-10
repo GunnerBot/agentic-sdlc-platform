@@ -293,6 +293,24 @@ def test_openapi_contract_includes_adversarial_review_node_operation() -> None:
     )
 
 
+def test_openapi_contract_exposes_dag_node_user_status_contract() -> None:
+    raw_schema = contract_app.openapi()
+
+    node_schema = raw_schema["components"]["schemas"]["TaskDagNodeResponse"]
+    properties = node_schema["properties"]
+    for field in ("user_status", "status_reason", "status_detail", "next_action"):
+        assert field in properties
+        assert {"type": "string"} in properties[field]["anyOf"]
+        assert {"type": "null"} in properties[field]["anyOf"]
+
+    sync_response_schema = raw_schema["paths"][
+        "/tasks/{task_id}/dag/{dag_id}/nodes/{node_key}/sync-orchestrator"
+    ]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert sync_response_schema == {
+        "$ref": "#/components/schemas/TaskDagNodeResponse"
+    }
+
+
 @schema.parametrize()
 @settings(
     max_examples=25,
