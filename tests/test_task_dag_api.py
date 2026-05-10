@@ -1085,6 +1085,10 @@ async def test_sync_completed_node_exposes_external_quota_failure() -> None:
     assert response.json()["status"] == "blocked_external"
     assert response.json()["user_status"] == "blocked_external"
     assert response.json()["status_reason"] == "openai_quota_exceeded"
+    assert response.json()["status_detail"] == (
+        "The model provider rejected the run because the configured OpenAI "
+        "key has no available quota."
+    )
     assert response.json()["next_action"] == (
         "Fix the OpenAI key/quota, then retry this DAG node."
     )

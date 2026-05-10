@@ -626,7 +626,10 @@ def _external_failure(metadata: dict[str, object]) -> dict[str, str] | None:
     if "exceeded your current quota" in text or "insufficient_quota" in text:
         return {
             "reason": "openai_quota_exceeded",
-            "detail": "The model provider rejected the run because the configured OpenAI key has no available quota.",
+            "detail": (
+                "The model provider rejected the run because the configured OpenAI key "
+                "has no available quota."
+            ),
             "next_action": "Fix the OpenAI key/quota, then retry this DAG node.",
         }
     if "rate limit reached" in text or "tokens per min" in text:
